@@ -33,6 +33,14 @@ const TOKEN = 'tga-gestion-R7nQ4xK8jL';
 // porque los números no estaban alineados todavía).
 const VENTAS_MES_MINIMO = '2026-03';
 
+// Vendedores oficiales — siempre aparecen en el ranking del mes aunque
+// tengan 0 ventas. El orden acá no importa (el ranking se ordena por
+// cantidad descendente en el frontend).
+const VENDEDORES_OFICIALES = [
+  'Jorge Fazzini', 'Jose Castro', 'Marta Castro', 'Antonio Loisi',
+  'Ines Alonso', 'Gisela Buena', 'Tomas Bandiera', 'Julian Naddeo', 'TG',
+];
+
 function doGet(e) {
   const params = (e && e.parameter) || {};
   if (String(params.token || '').trim() !== TOKEN) {
@@ -211,8 +219,9 @@ function getVentas() {
     return { ventas: [], meses: [], updatedAt: new Date().toISOString() };
   }
 
-  // Leemos A..Z (26 cols) — necesitamos hasta Z (gcia neta acum).
-  const range   = sh.getRange(1, 1, lastRow, 26);
+  // Leemos A..AM (39 cols). Necesitamos hasta AG (vendedor, col 33),
+  // pero leo el rango entero por las dudas que Fer sume más adelante.
+  const range   = sh.getRange(1, 1, lastRow, 39);
   const display = range.getDisplayValues();
   const raw     = range.getValues();
 
@@ -246,6 +255,10 @@ function getVentas() {
 
     cuentaPorMes[mesKey] = (cuentaPorMes[mesKey] || 0) + 1;
 
+    // AG = col 33, index 32 → vendedor (texto libre, mapeamos a oficial)
+    const vendedorRaw = String(drow[32] || '').trim();
+    const vendedor    = _matchVendedor(vendedorRaw);   // string oficial o null
+
     ventas.push({
       ventaNum:        ventaNum,                                // A
       fechaPvIso:      _isoDate(fechaPv),                       // B → ISO
@@ -263,6 +276,8 @@ function getVentas() {
       gciaVtaPesos:    toNumber(rrow[23]),                      // X
       gciaVtaPct:      _pctFromDisplay(drow[24], rrow[24]),     // Y
       gciaNetaAcum:    toNumber(rrow[25]),                      // Z
+      vendedor:        vendedor,                                // AG → oficial
+      vendedorRaw:     vendedorRaw,                             // AG → tal cual
     });
   }
 
@@ -277,8 +292,48 @@ function getVentas() {
     ventas:    ventas,
     meses:     meses,
     mesActual: _yyyyMm(new Date()),
+    vendedoresOficiales: VENDEDORES_OFICIALES,
     updatedAt: new Date().toISOString(),
   };
+}
+
+// Mapea un texto libre del campo "vendedor" a uno de los 9 oficiales,
+// o devuelve null si no reconoce.
+// Reglas:
+//   - case + acento-insensitive
+//   - "TG", "TG-PATRI", "TG ALGO", "Maximiliano..." → 'TG'
+//   - Apellidos únicos: Fazzini, Loisi, Alonso, Buena, Bandiera, Naddeo
+//   - Castro: si menciona "marta" → Marta; sino → Jose
+function _matchVendedor(raw) {
+  const n = _norm(raw);
+  if (!n) return null;
+
+  // TG (gerencia): la palabra "tg" (token aislado o con guion / espacio) o Maximiliano
+  if (/(^|[\s\-])tg($|[\s\-])/.test(n)) return 'TG';
+  if (n.indexOf('maximiliano') >= 0)     return 'TG';
+
+  if (n.indexOf('fazzini')  >= 0) return 'Jorge Fazzini';
+  if (n.indexOf('loisi')    >= 0) return 'Antonio Loisi';
+  if (n.indexOf('alonso')   >= 0) return 'Ines Alonso';
+  if (n.indexOf('buena')    >= 0) return 'Gisela Buena';
+  if (n.indexOf('bandiera') >= 0) return 'Tomas Bandiera';
+  if (n.indexOf('naddeo')   >= 0) return 'Julian Naddeo';
+
+  // Castro: dos personas (Jose y Marta) — desambiguar por primer nombre
+  if (n.indexOf('castro') >= 0 || n.indexOf('marta') >= 0 || /\bjose\b/.test(n)) {
+    if (n.indexOf('marta') >= 0) return 'Marta Castro';
+    return 'Jose Castro';
+  }
+
+  return null;  // No matchea ningún oficial → se reporta como "no reconocido"
+}
+
+function _norm(s) {
+  // Lowercase, sin acentos, trim. Uso \u escape para que el regex sea claro
+  // y no dependa de encoding del archivo.
+  return String(s || '').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .trim();
 }
 
 function _yyyyMm(d) {

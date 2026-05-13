@@ -290,6 +290,54 @@ table.ventas-tbl.resumida .col-extra { display: none; }
 .mes-row select:focus { border-color: var(--vw-blue); }
 table.ventas-tbl tbody td.gcia-pos { color: var(--green-dark); font-weight: 600; }
 
+/* Ranking de vendedores */
+.ranking-wrap {
+  background: white; border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 18px 20px;
+  margin-bottom: 22px;
+}
+.ranking-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 12px; flex-wrap: wrap; gap: 8px;
+}
+.ranking-head h3 { font-size: 16px; font-weight: 700; color: var(--vw-blue); }
+.ranking-head .muted { font-size: 12px; color: var(--vw-grey-4); }
+table.ranking-tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+table.ranking-tbl thead th {
+  font-size: 10.5px; font-weight: 600;
+  color: var(--vw-grey-4); text-transform: uppercase; letter-spacing: 0.4px;
+  padding: 6px 10px; text-align: left;
+  border-bottom: 1px solid var(--vw-grey-2);
+  background: transparent;
+}
+table.ranking-tbl thead th.num { text-align: right; }
+table.ranking-tbl thead th.ctr { text-align: center; }
+table.ranking-tbl tbody td {
+  padding: 9px 10px; border-bottom: 1px solid var(--vw-grey-2);
+  font-variant-numeric: tabular-nums;
+}
+table.ranking-tbl tbody td.num { text-align: right; }
+table.ranking-tbl tbody td.ctr { text-align: center; }
+table.ranking-tbl tbody td.pos {
+  font-weight: 700; color: var(--vw-grey-3); width: 32px;
+}
+table.ranking-tbl tbody td.vname { font-weight: 600; color: var(--vw-black); }
+table.ranking-tbl tbody tr.top td.pos    { color: var(--green); font-size: 16px; }
+table.ranking-tbl tbody tr.top td.vname  { color: var(--vw-blue); }
+table.ranking-tbl tbody tr.zero td       { color: var(--vw-grey-3); }
+table.ranking-tbl tbody tr.zero td.vname { color: var(--vw-grey-4); font-weight: 500; }
+
+.ranking-otros {
+  margin-top: 14px; padding: 12px 16px;
+  background: var(--orange-soft); color: var(--orange-dark);
+  border-radius: 8px; border-left: 4px solid var(--orange);
+  font-size: 12px;
+}
+.ranking-otros .hd { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+.ranking-otros .dd { margin-bottom: 8px; line-height: 1.5; }
+.ranking-otros ul { list-style: disc inside; padding-left: 0; }
+.ranking-otros li { padding: 2px 0; }
+
 /* Sección de calculadora (arriba de la tabla, no inline) */
 .calc-section {
   background: white; border-radius: var(--radius);
@@ -1232,6 +1280,9 @@ function renderVentas() {
   html += kpi('Gcia. % promedio', fmtPct(gciaPctAvg), '', '');
   html += '</div>';
 
+  // ----- Ranking de vendedores del mes -----
+  html += renderRankingVendedores(delMes);
+
   // ----- Tabla -----
   html += '<div class="table-wrap">'
         + '  <div class="table-head">'
@@ -1268,6 +1319,81 @@ function renderVentas() {
         + '</div>';
 
   wrap.innerHTML = html;
+}
+
+// Vendedores oficiales — siempre aparecen en el ranking, aunque tengan 0.
+const VENDEDORES_OFICIALES = [
+  'Jorge Fazzini', 'Jose Castro', 'Marta Castro', 'Antonio Loisi',
+  'Ines Alonso', 'Gisela Buena', 'Tomas Bandiera', 'Julian Naddeo', 'TG',
+];
+
+function renderRankingVendedores(delMes) {
+  // Inicializo los 9 oficiales en 0
+  const conteo = {};
+  for (const v of VENDEDORES_OFICIALES) conteo[v] = { cantidad: 0, gcia: 0 };
+
+  // No reconocidos: agrupados por nombre crudo
+  const otros = {};   // rawName → { cantidad, gcia }
+
+  for (const v of delMes) {
+    if (v.vendedor && conteo[v.vendedor]) {
+      conteo[v.vendedor].cantidad++;
+      conteo[v.vendedor].gcia += v.gciaVtaPesos || 0;
+    } else if (v.vendedorRaw) {
+      const k = v.vendedorRaw;
+      if (!otros[k]) otros[k] = { cantidad: 0, gcia: 0 };
+      otros[k].cantidad++;
+      otros[k].gcia += v.gciaVtaPesos || 0;
+    }
+  }
+
+  // Ordeno: cantidad desc, después gcia desc, después nombre
+  const ranking = VENDEDORES_OFICIALES.map(n => ({ nombre: n, ...conteo[n] }))
+    .sort((a, b) =>
+      b.cantidad - a.cantidad
+      || b.gcia - a.gcia
+      || a.nombre.localeCompare(b.nombre)
+    );
+
+  let html = '<div class="ranking-wrap">';
+  html += '  <div class="ranking-head"><h3>🏆 Ranking de vendedores</h3>';
+  html += '    <div class="muted">' + delMes.length + ' ' + (delMes.length === 1 ? 'venta' : 'ventas') + ' del mes</div>';
+  html += '  </div>';
+  html += '  <table class="ranking-tbl">';
+  html += '    <thead><tr>'
+        + '      <th class="ctr">#</th><th>Vendedor</th>'
+        + '      <th class="num">Ventas</th><th class="num">Gcia $</th>'
+        + '    </tr></thead><tbody>';
+  let pos = 0;
+  for (const r of ranking) {
+    pos++;
+    const cls = r.cantidad === 0 ? 'zero' : (pos === 1 && r.cantidad > 0 ? 'top' : '');
+    html += '<tr class="' + cls + '">';
+    html += '  <td class="ctr pos">' + pos + '</td>';
+    html += '  <td class="vname">' + escapeHtml(r.nombre) + '</td>';
+    html += '  <td class="num">' + r.cantidad + '</td>';
+    html += '  <td class="num">' + (r.cantidad ? fmtPesos(r.gcia) : '—') + '</td>';
+    html += '</tr>';
+  }
+  html += '    </tbody></table>';
+
+  // Otros (no reconocidos)
+  const otrosKeys = Object.keys(otros);
+  if (otrosKeys.length) {
+    html += '<div class="ranking-otros">'
+          + '  <div class="hd">⚠️ Nombres no reconocidos (' + otrosKeys.length + ')</div>'
+          + '  <div class="dd">Estos nombres están en la planilla pero no matchean ninguno de los 9 oficiales. Avisame para agregarlos o ajustar la regla de mapeo.</div>'
+          + '  <ul>';
+    for (const k of otrosKeys.sort((a, b) => otros[b].cantidad - otros[a].cantidad)) {
+      const o = otros[k];
+      html += '<li><b>' + escapeHtml(k) + '</b> — ' + o.cantidad + ' ' + (o.cantidad === 1 ? 'venta' : 'ventas') + ' · ' + fmtPesos(o.gcia) + '</li>';
+    }
+    html += '  </ul>';
+    html += '</div>';
+  }
+
+  html += '</div>';
+  return html;
 }
 
 function filaVenta(v) {
