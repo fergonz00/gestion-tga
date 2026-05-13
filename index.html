@@ -276,13 +276,22 @@ tbody tr.vendida-en-expo:hover { background: rgba(239, 68, 68, 0.08); }
   font-size: 12px; color: var(--vw-grey-4); font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.5px;
 }
-.calc-select-row select {
+.calc-select-row select,
+.calc-select-row .calc-combo {
   flex: 1; min-width: 240px;
   padding: 9px 12px; border: 1px solid var(--vw-grey-2);
   border-radius: 8px; font-size: 13px;
   background: white; outline: none;
 }
-.calc-select-row select:focus { border-color: var(--vw-blue); }
+.calc-select-row select:focus,
+.calc-select-row .calc-combo:focus { border-color: var(--vw-blue); }
+.calc-clear {
+  background: var(--vw-grey-1); color: var(--vw-grey-4);
+  padding: 8px 12px; border-radius: 8px;
+  font-size: 13px; font-weight: 600;
+  flex: 0 0 auto;
+}
+.calc-clear:hover { background: var(--vw-grey-2); color: var(--red); }
 
 /* Contexto numérico de la unidad elegida */
 .calc-ctx-row {
@@ -864,8 +873,41 @@ function toggleCalcSection() {
 function setCalcUnidad(serie) {
   calcSerie = serie || '';
   renderStock();
-  // Foco a uno de los inputs si hay unidad elegida
   if (calcSerie) {
+    setTimeout(() => {
+      const inp = document.getElementById('calcDtoInput');
+      if (inp) inp.focus();
+    }, 0);
+  } else {
+    // limpieza: foco al combo para que pueda elegir otra rápido
+    setTimeout(() => {
+      const inp = document.getElementById('calcUnidadInput');
+      if (inp) inp.focus();
+    }, 0);
+  }
+}
+
+// Label que mostramos en el combo. Lo armo en un solo lugar para que matchear
+// sea trivial (compara el value del input con _calcLabel(u) hasta encontrar
+// coincidencia exacta).
+function _calcLabel(u) {
+  return u.unidad + (u.color ? ' · ' + u.color : '') + ' · ' + u.serie;
+}
+
+// El usuario escribe o elige una opción del datalist. Cuando lo escrito
+// coincide exacto con el label de una unidad, la seleccionamos. Si va
+// tipiando algo parcial todavía no matchea — esperamos.
+function onCalcUnidadInput(text) {
+  const t = String(text || '').trim();
+  if (!t) {
+    // Vaciaron el input → limpio la selección
+    if (calcSerie) { calcSerie = ''; renderStock(); }
+    return;
+  }
+  const u = stockData.unidades.find(x => _calcLabel(x) === t);
+  if (u && u.serie !== calcSerie) {
+    calcSerie = u.serie;
+    renderStock();
     setTimeout(() => {
       const inp = document.getElementById('calcDtoInput');
       if (inp) inp.focus();
@@ -887,18 +929,31 @@ function renderCalcSection() {
         + '    <p>Elegí una unidad y probá un % de dto o un precio pedido. El resultado se calcula en vivo, no toca la planilla.</p>'
         + '  </div>';
 
-  // Desplegable
+  // Combo input + datalist: el usuario puede escribir (modelo, color, serie)
+  // o abrir el dropdown con la flechita. El value del input es el label
+  // completo; cuando matchea exacto a alguna unidad, se selecciona.
+  const currentLabel = (() => {
+    if (!calcSerie) return '';
+    const cu = stockData.unidades.find(x => x.serie === calcSerie);
+    return cu ? _calcLabel(cu) : '';
+  })();
+
   html += '  <div class="calc-select-row">'
-        + '    <label for="calcUnidadSel">Unidad:</label>'
-        + '    <select id="calcUnidadSel" onchange="setCalcUnidad(this.value)">'
-        + '      <option value="">— Elegir unidad —</option>';
+        + '    <label for="calcUnidadInput">Unidad:</label>'
+        + '    <input type="text" id="calcUnidadInput" class="calc-combo"'
+        + '           list="calcUnidadList"'
+        + '           value="' + escapeHtml(currentLabel) + '"'
+        + '           oninput="onCalcUnidadInput(this.value)"'
+        + '           placeholder="Escribí modelo, color o serie...">'
+        + '    <datalist id="calcUnidadList">';
   for (const e of elegibles) {
-    const sel = e.serie === calcSerie ? ' selected' : '';
-    const label = e.serie + ' · ' + e.unidad + (e.color ? ' · ' + e.color : '');
-    html += '      <option value="' + escapeHtml(e.serie) + '"' + sel + '>' + escapeHtml(label) + '</option>';
+    html += '      <option value="' + escapeHtml(_calcLabel(e)) + '">';
   }
-  html += '    </select>'
-        + '  </div>';
+  html += '    </datalist>';
+  if (calcSerie) {
+    html += '    <button class="calc-clear" onclick="setCalcUnidad(\'\')" title="Limpiar selección">✕</button>';
+  }
+  html += '  </div>';
 
   // Bloques (solo si hay unidad elegida)
   if (u) {
