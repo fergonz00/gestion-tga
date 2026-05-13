@@ -290,6 +290,18 @@ table.ventas-tbl.resumida .col-extra { display: none; }
 .mes-row select:focus { border-color: var(--vw-blue); }
 table.ventas-tbl tbody td.gcia-pos { color: var(--green-dark); font-weight: 600; }
 
+/* Botón toggle del ranking */
+.rank-toggle {
+  background: var(--vw-blue); color: white;
+  padding: 8px 14px; border-radius: 100px;
+  font-size: 13px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+}
+.rank-toggle:hover { background: var(--vw-blue-light); }
+.rank-toggle.open { background: var(--green); }
+.rank-toggle.open:hover { background: var(--green-dark); }
+
 /* Ranking de vendedores */
 .ranking-wrap {
   background: white; border-radius: var(--radius);
@@ -646,6 +658,7 @@ let vistaResumida = false;
 let ventasData = null;            // { ventas, meses, mesActual, updatedAt }
 let mesSeleccionado = '';         // 'yyyy-mm'
 let vistaResumidaVentas = false;  // oculta IVA / acc / costo / serie / color
+let rankingOpen = false;          // toggle de la sección "Ranking de vendedores"
 
 // Filtros activos
 let filtros = {
@@ -919,6 +932,11 @@ function toggleVistaResumida() {
 
 function toggleVistaResumidaVentas() {
   vistaResumidaVentas = !vistaResumidaVentas;
+  renderVentas();
+}
+
+function toggleRanking() {
+  rankingOpen = !rankingOpen;
   renderVentas();
 }
 
@@ -1267,6 +1285,7 @@ function renderVentas() {
     }
   }
   html += '  </select>';
+  html += '  <button class="rank-toggle ' + (rankingOpen ? 'open' : '') + '" onclick="toggleRanking()">🏆 ' + (rankingOpen ? 'Ocultar ranking' : 'Ranking de vendedores') + '</button>';
   html += '  <label class="toggle-resumida">'
         + '    <input type="checkbox" ' + (vistaResumidaVentas ? 'checked' : '') + ' onchange="toggleVistaResumidaVentas()"> Vista resumida'
         + '  </label>';
@@ -1279,8 +1298,10 @@ function renderVentas() {
   html += kpi('Gcia. % promedio', fmtPct(gciaPctAvg), '', '');
   html += '</div>';
 
-  // ----- Ranking de vendedores del mes -----
-  html += renderRankingVendedores(delMes);
+  // ----- Ranking de vendedores del mes (solo si está abierto) -----
+  if (rankingOpen) {
+    html += renderRankingVendedores(delMes, mesSeleccionado);
+  }
 
   // ----- Tabla -----
   html += '<div class="table-wrap">'
@@ -1320,19 +1341,31 @@ function renderVentas() {
   wrap.innerHTML = html;
 }
 
-// Vendedores oficiales — siempre aparecen en el ranking, aunque tengan 0.
+// Vendedores oficiales. `desde` (opcional, formato 'yyyy-mm') = mes desde el
+// cual el vendedor está activo; meses anteriores NO lo cuentan ni lo muestran
+// en el ranking (útil para incorporaciones nuevas).
 const VENDEDORES_OFICIALES = [
-  'Jorge Fazzini', 'Jose Castro', 'Marta Castro', 'Antonio Loisi',
-  'Ines Alonso', 'Gisela Buena', 'Tomas Bandiera', 'Julian Naddeo', 'TG',
+  { nombre: 'Jorge Fazzini' },
+  { nombre: 'Jose Castro' },
+  { nombre: 'Marta Castro' },
+  { nombre: 'Antonio Loisi' },
+  { nombre: 'Ines Alonso' },
+  { nombre: 'Gisela Buena' },
+  { nombre: 'Tomas Bandiera', desde: '2026-05' },   // entró en mayo
+  { nombre: 'Julian Naddeo' },
+  { nombre: 'TG' },
 ];
 
-function renderRankingVendedores(delMes) {
-  // Inicializo los 9 oficiales en 0
+function renderRankingVendedores(delMes, mesKey) {
+  // Filtro los oficiales activos para este mes
+  const activos = VENDEDORES_OFICIALES.filter(v => !v.desde || v.desde <= mesKey);
+
+  // Inicializo en 0
   const conteo = {};
-  for (const v of VENDEDORES_OFICIALES) conteo[v] = { cantidad: 0, gcia: 0 };
+  for (const v of activos) conteo[v.nombre] = { cantidad: 0, gcia: 0 };
 
   // No reconocidos: agrupados por nombre crudo
-  const otros = {};   // rawName → { cantidad, gcia }
+  const otros = {};
 
   for (const v of delMes) {
     if (v.vendedor && conteo[v.vendedor]) {
@@ -1347,7 +1380,7 @@ function renderRankingVendedores(delMes) {
   }
 
   // Ordeno: cantidad desc, después gcia desc, después nombre
-  const ranking = VENDEDORES_OFICIALES.map(n => ({ nombre: n, ...conteo[n] }))
+  const ranking = activos.map(v => ({ nombre: v.nombre, ...conteo[v.nombre] }))
     .sort((a, b) =>
       b.cantidad - a.cantidad
       || b.gcia - a.gcia
