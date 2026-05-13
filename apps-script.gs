@@ -29,6 +29,10 @@
 
 const TOKEN = 'tga-gestion-R7nQ4xK8jL';
 
+// Mes mínimo desde el cual mostramos ventas (los anteriores no se incluyen
+// porque los números no estaban alineados todavía).
+const VENTAS_MES_MINIMO = '2026-03';
+
 function doGet(e) {
   const params = (e && e.parameter) || {};
   if (String(params.token || '').trim() !== TOKEN) {
@@ -37,7 +41,8 @@ function doGet(e) {
 
   const tipo = String(params.tipo || 'stock').toLowerCase();
   try {
-    if (tipo === 'stock') return jsonResponse(getStock());
+    if (tipo === 'stock')  return jsonResponse(getStock());
+    if (tipo === 'ventas') return jsonResponse(getVentas());
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
@@ -133,6 +138,113 @@ function getStock() {
     unidades:  unidades,
     updatedAt: new Date().toISOString(),
   };
+}
+
+// =======================================================================
+// VENTAS
+// =======================================================================
+// Hoja "ventas" = espejo (IMPORTRANGE) de "PVs" de la planilla madre.
+// Columnas que importan al front (A..J + X..Z):
+//   A # venta del mes      H # serie
+//   B fecha preventa       I modelo vendido
+//   C # preventa           J color vendido
+//   D monto fc venta       X gcia x venta $
+//   E IVA %                Y gcia x venta %
+//   F acc                  Z gcia neta acumulada $
+//   G costo histórico
+//
+// Filtro: solo desde VENTAS_MES_MINIMO (2026-03) en adelante.
+// Orden: igual que la planilla (no reordenamos).
+function getVentas() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName('ventas') || ss.getSheets().find(s =>
+    /^pvs?$/i.test(s.getName()) || /^ventas/i.test(s.getName())
+  );
+  if (!sh) throw new Error('No encontré la hoja "ventas"');
+
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) {
+    return { ventas: [], meses: [], updatedAt: new Date().toISOString() };
+  }
+
+  // Leemos A..Z (26 cols) — necesitamos hasta Z (gcia neta acum).
+  const range   = sh.getRange(1, 1, lastRow, 26);
+  const display = range.getDisplayValues();
+  const raw     = range.getValues();
+
+  // Header detection: primera fila cuyo A diga algo tipo "n" / "nro" / "venta"
+  // y cuyo B diga "fecha". Fallback: fila 1.
+  let headerRow = -1;
+  for (let i = 0; i < Math.min(5, display.length); i++) {
+    const a = String(display[i][0] || '').toLowerCase().trim();
+    const b = String(display[i][1] || '').toLowerCase().trim();
+    if (/(nro|n\b|venta|#)/.test(a) && /fecha/.test(b)) { headerRow = i; break; }
+  }
+  if (headerRow < 0) headerRow = 0;
+
+  const ventas = [];
+  const cuentaPorMes = {};   // 'yyyy-mm' → cuántas
+
+  for (let i = headerRow + 1; i < display.length; i++) {
+    const drow = display[i];
+    const rrow = raw[i];
+
+    // Fecha preventa (col B)
+    const fechaPv = _parseFecha(rrow[1], drow[1]);
+    if (!fechaPv) continue;                              // sin fecha → saltea
+    const mesKey = _yyyyMm(fechaPv);
+    if (mesKey < VENTAS_MES_MINIMO) continue;            // pre-marzo: ignorar
+
+    // Número de venta (col A) — saltea filas vacías sin número y sin serie
+    const ventaNum = toNumber(rrow[0]);
+    const serie    = String(drow[7] || '').trim();
+    if (!ventaNum && !serie) continue;
+
+    cuentaPorMes[mesKey] = (cuentaPorMes[mesKey] || 0) + 1;
+
+    ventas.push({
+      ventaNum:        ventaNum,                                // A
+      fechaPvIso:      _isoDate(fechaPv),                       // B → ISO
+      fechaPvStr:      String(drow[1] || '').trim(),            // B → display
+      mesKey:          mesKey,                                  // 'yyyy-mm'
+      preventaNum:     String(drow[2] || '').trim(),            // C
+      montoFc:         toNumber(rrow[3]),                       // D
+      iva:             _pctFromDisplay(drow[4], rrow[4]),       // E (puntos %)
+      acc:             toNumber(rrow[5]),                       // F (asumimos monto)
+      accStr:          String(drow[5] || '').trim(),            // F display por las dudas
+      costoHist:       toNumber(rrow[6]),                       // G
+      serie:           serie,                                   // H
+      modelo:          String(drow[8] || '').trim(),            // I
+      color:           String(drow[9] || '').trim(),            // J
+      gciaVtaPesos:    toNumber(rrow[23]),                      // X
+      gciaVtaPct:      _pctFromDisplay(drow[24], rrow[24]),     // Y
+      gciaNetaAcum:    toNumber(rrow[25]),                      // Z
+    });
+  }
+
+  // Lista de meses presentes, ordenados desc (mes más reciente primero)
+  const meses = Object.keys(cuentaPorMes).sort().reverse().map(k => ({
+    mesKey: k,
+    label:  _mesLabel(k),
+    cuenta: cuentaPorMes[k],
+  }));
+
+  return {
+    ventas:    ventas,
+    meses:     meses,
+    mesActual: _yyyyMm(new Date()),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function _yyyyMm(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+
+function _mesLabel(yyyyMm) {
+  const nombres = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const [y, m] = yyyyMm.split('-');
+  return nombres[parseInt(m, 10) - 1] + ' ' + y;
 }
 
 // =======================================================================

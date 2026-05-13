@@ -271,6 +271,24 @@ tbody tr.vendida-en-expo:hover { background: rgba(239, 68, 68, 0.08); }
    apiladas), porque el selector aplica a th/td indistintamente. */
 table.stock-tbl.resumida .col-extra { display: none; }
 
+/* ========== VENTAS ========== */
+.mes-row {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 16px; flex-wrap: wrap;
+}
+.mes-row label {
+  font-size: 11px; color: var(--vw-grey-3); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.mes-row select {
+  padding: 9px 14px; border: 1px solid var(--vw-grey-2);
+  border-radius: 8px; font-size: 13px; font-weight: 600;
+  background: white; outline: none; color: var(--vw-blue);
+  min-width: 220px;
+}
+.mes-row select:focus { border-color: var(--vw-blue); }
+table.ventas-tbl tbody td.gcia-pos { color: var(--green-dark); font-weight: 600; }
+
 /* Sección de calculadora (arriba de la tabla, no inline) */
 .calc-section {
   background: white; border-radius: var(--radius);
@@ -424,38 +442,39 @@ table.stock-tbl.resumida .col-extra { display: none; }
   .table-scroll { overflow-x: visible; }
   .table-wrap .table-head { padding: 12px 14px; }
 
-  table.stock-tbl thead { display: none; }
-  table.stock-tbl, table.stock-tbl tbody { display: block; width: 100%; }
-  table.stock-tbl tr {
+  /* Tablas responsivas — aplica a stock y ventas por igual */
+  table.responsive-cards thead { display: none; }
+  table.responsive-cards,
+  table.responsive-cards tbody { display: block; width: 100%; }
+  table.responsive-cards tr {
     display: block;
     border: 1px solid var(--vw-grey-2);
-    border-bottom: 1px solid var(--vw-grey-2);
     border-radius: 10px;
     margin: 10px 12px;
     padding: 12px 14px;
     background: white;
     box-shadow: 0 1px 4px rgba(0,30,80,0.04);
   }
-  table.stock-tbl tr.expo {
+  table.responsive-cards tr.expo {
     background: linear-gradient(to bottom, rgba(139,92,246,0.05), white 60px);
     border-left: 3px solid var(--purple);
   }
-  table.stock-tbl tr.vendida-en-expo {
+  table.responsive-cards tr.vendida-en-expo {
     background: rgba(239,68,68,0.05);
     border-left: 3px solid var(--red);
   }
-  table.stock-tbl tr:hover { background: white; }
-  table.stock-tbl tr.expo:hover {
+  table.responsive-cards tr:hover { background: white; }
+  table.responsive-cards tr.expo:hover {
     background: linear-gradient(to bottom, rgba(139,92,246,0.08), white 60px);
   }
 
-  table.stock-tbl td {
+  table.responsive-cards td {
     display: flex; justify-content: space-between; align-items: center;
     padding: 6px 0; border: none;
     text-align: right !important;
     gap: 12px;
   }
-  table.stock-tbl td::before {
+  table.responsive-cards td::before {
     content: attr(data-label);
     font-size: 10.5px; font-weight: 600;
     color: var(--vw-grey-3);
@@ -463,20 +482,22 @@ table.stock-tbl.resumida .col-extra { display: none; }
     flex: 0 0 auto;
   }
   /* La serie va destacada arriba sin label */
-  table.stock-tbl td[data-label="Serie"] {
+  table.responsive-cards td[data-label="Serie"] {
     padding-top: 0; padding-bottom: 8px;
     margin-bottom: 6px; border-bottom: 1px dashed var(--vw-grey-2);
     font-size: 14px;
   }
-  table.stock-tbl td[data-label="Serie"]::before { display: none; }
-  table.stock-tbl td[data-label="Serie"] .serie { font-size: 14px; }
-  /* La unidad ocupa una fila completa, sin alinear a la derecha */
-  table.stock-tbl td[data-label="Unidad"] {
+  table.responsive-cards td[data-label="Serie"]::before { display: none; }
+  table.responsive-cards td[data-label="Serie"] .serie { font-size: 14px; }
+  /* Unidad / Modelo ocupan una fila completa, alineadas a la izquierda */
+  table.responsive-cards td[data-label="Unidad"],
+  table.responsive-cards td[data-label="Modelo"] {
     display: block; padding: 4px 0 8px;
     text-align: left !important;
     font-weight: 600; color: var(--vw-blue);
   }
-  table.stock-tbl td[data-label="Unidad"]::before {
+  table.responsive-cards td[data-label="Unidad"]::before,
+  table.responsive-cards td[data-label="Modelo"]::before {
     display: block; margin-bottom: 2px;
   }
 }
@@ -528,11 +549,13 @@ table.stock-tbl.resumida .col-extra { display: none; }
 
     <!-- =================== VENTAS =================== -->
     <section class="panel" id="panelVentas">
-      <div class="placeholder">
-        <div class="ico">📈</div>
-        <div class="ttl">Ventas del mes</div>
-        <div>Próximamente. Hablamos qué columnas y desglose querés ver acá.</div>
+      <div class="toolbar">
+        <div class="updated" id="updatedAtVentas">—</div>
+        <div class="actions">
+          <button class="refresh" id="btnRefreshVentas" onclick="loadVentas(true)">Actualizar</button>
+        </div>
       </div>
+      <div id="ventasContent"></div>
     </section>
 
     <!-- =================== PATENTAMIENTOS =================== -->
@@ -570,6 +593,10 @@ let calcSerie = '';            // serie de la unidad elegida en el desplegable
 
 // Vista resumida del stock: solo serie, antig., unidad y color
 let vistaResumida = false;
+
+// Ventas
+let ventasData = null;            // { ventas, meses, mesActual, updatedAt }
+let mesSeleccionado = '';         // 'yyyy-mm'
 
 // Filtros activos
 let filtros = {
@@ -619,6 +646,8 @@ function setTab(tab) {
   };
   const el = document.getElementById(map[tab]);
   if (el) el.classList.add('active');
+  // Lazy load por tab
+  if (tab === 'ventas' && !ventasData) loadVentas(false);
 }
 
 // =======================================================================
@@ -742,7 +771,7 @@ function renderStock() {
         + '    <div class="count">' + visibles.length + ' visibles · ' + enStock + ' en stock</div>'
         + '  </div>'
         + '  <div class="table-scroll">'
-        + '    <table class="stock-tbl ' + (vistaResumida ? 'resumida' : '') + '">'
+        + '    <table class="stock-tbl responsive-cards ' + (vistaResumida ? 'resumida' : '') + '">'
         + '      <thead><tr>'
         + '        <th>Serie</th>'
         + '        <th class="ctr">Antig.</th>'
@@ -1078,6 +1107,160 @@ function recalcPrecio() {
   out.className = 'calc-result ' + (nuevoRdo < 0 ? 'bad' : nuevoRdo < u.rdoActualPct ? 'neutral' : 'good');
   out.querySelector('.val').textContent = fmtPct(nuevoRdo);
   out.querySelector('.delta').textContent = (delta >= 0 ? '+' : '') + fmtPct(delta, 2);
+}
+
+// =======================================================================
+// VENTAS · fetch
+// =======================================================================
+async function loadVentas(forzar) {
+  if (ventasData && !forzar) { renderVentas(); return; }
+
+  const btn  = document.getElementById('btnRefreshVentas');
+  const wrap = document.getElementById('ventasContent');
+  if (btn) { btn.disabled = true; btn.textContent = 'Cargando...'; }
+  wrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>Cargando ventas...</div></div>';
+
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) {
+    wrap.innerHTML = '<div class="errbox"><div class="ttl">⚙️ Falta conectar la planilla</div>'
+      + '<div>Pegá la URL del Apps Script en <code>index.html</code>.</div></div>';
+    if (btn) { btn.disabled = false; btn.textContent = 'Actualizar'; }
+    return;
+  }
+
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=ventas';
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    ventasData = data;
+    // Default: mes vigente si tiene datos, sino el más reciente disponible
+    if (!mesSeleccionado || !data.meses.find(m => m.mesKey === mesSeleccionado)) {
+      const conMesActual = data.meses.find(m => m.mesKey === data.mesActual);
+      mesSeleccionado = conMesActual ? data.mesActual : (data.meses[0] ? data.meses[0].mesKey : '');
+    }
+    renderVentas();
+    const upd = document.getElementById('updatedAtVentas');
+    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+  } catch (e) {
+    console.error(e);
+    wrap.innerHTML = '<div class="errbox"><div class="ttl">⚠️ No se pudieron cargar las ventas</div>'
+      + '<div>' + escapeHtml(e.message || String(e)) + '</div></div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Actualizar'; }
+  }
+}
+
+function setMesVentas(mesKey) {
+  mesSeleccionado = mesKey || '';
+  renderVentas();
+}
+
+// =======================================================================
+// VENTAS · render
+// =======================================================================
+function renderVentas() {
+  const wrap = document.getElementById('ventasContent');
+  if (!ventasData || !Array.isArray(ventasData.ventas)) {
+    wrap.innerHTML = '<div class="empty">Sin datos.</div>';
+    return;
+  }
+
+  const todas = ventasData.ventas;
+  const meses = ventasData.meses || [];
+  const delMes = todas.filter(v => v.mesKey === mesSeleccionado);
+
+  // KPIs del mes
+  const cantidad   = delMes.length;
+  const gciaTotal  = delMes.reduce((a, v) => a + (v.gciaVtaPesos || 0), 0);
+  const gciaPctAvg = delMes.length
+    ? delMes.reduce((a, v) => a + (v.gciaVtaPct || 0), 0) / delMes.length
+    : 0;
+  // Gcia neta acumulada: tomamos la última fila del mes (es el acumulado al cierre del mes hasta esa fecha)
+  const ultima = delMes[delMes.length - 1];
+  const acumMes = ultima ? ultima.gciaNetaAcum : 0;
+
+  let html = '';
+
+  // ----- Selector de mes -----
+  html += '<div class="mes-row">';
+  html += '  <label for="mesSel">Mes:</label>';
+  html += '  <select id="mesSel" onchange="setMesVentas(this.value)">';
+  if (!meses.length) {
+    html += '    <option value="">— Sin meses con ventas —</option>';
+  } else {
+    for (const m of meses) {
+      const sel = m.mesKey === mesSeleccionado ? ' selected' : '';
+      html += '    <option value="' + m.mesKey + '"' + sel + '>' + escapeHtml(m.label) + ' · ' + m.cuenta + '</option>';
+    }
+  }
+  html += '  </select>';
+  html += '</div>';
+
+  // ----- KPIs -----
+  html += '<div class="cards">';
+  html += kpi('Ventas en el mes', cantidad, '', cantidad ? 'good' : '');
+  html += kpi('Gcia. del mes', fmtPesos(gciaTotal), '', gciaTotal > 0 ? 'good' : '');
+  html += kpi('Gcia. % promedio', fmtPct(gciaPctAvg), '', '');
+  html += kpi('Gcia. neta acumulada', fmtPesos(acumMes), 'al cierre del mes', '');
+  html += '</div>';
+
+  // ----- Tabla -----
+  html += '<div class="table-wrap">'
+        + '  <div class="table-head">'
+        + '    <h3>' + (meses.find(m => m.mesKey === mesSeleccionado)?.label || 'Sin mes seleccionado') + '</h3>'
+        + '    <div class="count">' + cantidad + ' ' + (cantidad === 1 ? 'venta' : 'ventas') + '</div>'
+        + '  </div>'
+        + '  <div class="table-scroll">'
+        + '    <table class="ventas-tbl responsive-cards">'
+        + '      <thead><tr>'
+        + '        <th class="ctr">#</th>'
+        + '        <th>Fecha PV</th>'
+        + '        <th># PV</th>'
+        + '        <th class="num">Monto FC</th>'
+        + '        <th class="num">IVA</th>'
+        + '        <th class="num">Acc</th>'
+        + '        <th class="num">Costo hist.</th>'
+        + '        <th>Serie</th>'
+        + '        <th>Modelo</th>'
+        + '        <th>Color</th>'
+        + '        <th class="num">Gcia $</th>'
+        + '        <th class="num">Gcia %</th>'
+        + '        <th class="num">Gcia neta acum.</th>'
+        + '      </tr></thead>'
+        + '      <tbody>';
+
+  if (!delMes.length) {
+    html += '<tr><td colspan="13" class="empty">No hay ventas registradas en ' + escapeHtml(meses.find(m => m.mesKey === mesSeleccionado)?.label || 'este mes') + '.</td></tr>';
+  } else {
+    for (const v of delMes) html += filaVenta(v);
+  }
+
+  html += '      </tbody>'
+        + '    </table>'
+        + '  </div>'
+        + '</div>';
+
+  wrap.innerHTML = html;
+}
+
+function filaVenta(v) {
+  let html = '<tr>';
+  html += '<td class="ctr" data-label="#">' + (v.ventaNum || '—') + '</td>';
+  html += '<td data-label="Fecha PV">' + escapeHtml(v.fechaPvStr || fmtFechaCorta(v.fechaPvIso)) + '</td>';
+  html += '<td data-label="# PV">' + escapeHtml(v.preventaNum || '—') + '</td>';
+  html += '<td class="num" data-label="Monto FC">' + fmtPesos(v.montoFc) + '</td>';
+  html += '<td class="num" data-label="IVA">' + (v.iva ? fmtPct(v.iva, 1) : '—') + '</td>';
+  html += '<td class="num" data-label="Acc">' + (v.acc ? fmtPesos(v.acc) : (v.accStr || '—')) + '</td>';
+  html += '<td class="num" data-label="Costo hist.">' + fmtPesos(v.costoHist) + '</td>';
+  html += '<td data-label="Serie"><span class="serie">' + escapeHtml(v.serie) + '</span></td>';
+  html += '<td data-label="Modelo">' + escapeHtml(v.modelo) + '</td>';
+  html += '<td data-label="Color">' + escapeHtml(v.color) + '</td>';
+  html += '<td class="num gcia-pos" data-label="Gcia $">' + fmtPesos(v.gciaVtaPesos) + '</td>';
+  html += '<td class="num gcia-pos" data-label="Gcia %">' + fmtPct(v.gciaVtaPct) + '</td>';
+  html += '<td class="num" data-label="Gcia neta acum.">' + fmtPesos(v.gciaNetaAcum) + '</td>';
+  html += '</tr>';
+  return html;
 }
 
 // =======================================================================
