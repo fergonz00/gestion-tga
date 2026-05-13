@@ -263,11 +263,18 @@ tbody tr.vendida-en-expo:hover { background: rgba(239, 68, 68, 0.08); }
   border-top: 3px solid var(--vw-blue);
 }
 .calc-section-head h3 {
-  font-size: 16px; font-weight: 700; color: var(--vw-blue); margin-bottom: 4px;
+  font-size: 18px; font-weight: 700; color: var(--vw-blue); margin-bottom: 4px;
 }
 .calc-section-head p {
   font-size: 12px; color: var(--vw-grey-4); margin-bottom: 14px; line-height: 1.5;
 }
+.calc-back {
+  background: transparent; color: var(--vw-grey-4);
+  padding: 6px 12px 6px 8px; border-radius: 6px;
+  font-size: 12px; font-weight: 600;
+  margin-bottom: 12px;
+}
+.calc-back:hover { background: var(--vw-grey-1); color: var(--vw-blue); }
 .calc-select-row {
   display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
   flex-wrap: wrap;
@@ -652,10 +659,19 @@ function renderStock() {
     wrap.innerHTML = '<div class="empty">Sin datos.</div>';
     return;
   }
+
+  // ===== Modo CALCULADORA exclusiva =====
+  // Cuando la calc está abierta no se ve el resto (KPIs, filtros, tabla).
+  // Solo la calc + botón "Volver al stock".
+  if (calcOpen) {
+    wrap.innerHTML = renderCalcSection();
+    return;
+  }
+
+  // ===== Modo STOCK normal =====
   const todas = stockData.unidades;
   const visibles = aplicarFiltros(todas);
 
-  // ----- KPIs (sobre el universo, no sobre las visibles) -----
   const enStock = todas.filter(u => !u.vendido).length;
   const impagas = todas.filter(u => !u.vendido && u.pagoEstado === 'impaga').length;
   const enIndep = todas.filter(u => !u.vendido && u.exposicion === 'INDEPENDENCIA').length;
@@ -670,7 +686,6 @@ function renderStock() {
   html += kpi('Entre Ríos',   enErios, 'en exposición', enErios ? 'expo-er' : '');
   html += '</div>';
 
-  // Aviso si hay unidades vendidas que siguen marcadas con salón de exposición.
   if (reemplazar > 0) {
     html += '<div class="aviso-reemplazar">'
           + '  <span class="ico">🔄</span>'
@@ -678,9 +693,9 @@ function renderStock() {
           + '</div>';
   }
 
-  // ----- Toolbar interna: calculadora + filtros -----
+  // Toolbar: botón calc + filtros
   html += '<div class="filter-row">';
-  html += '  <button class="calc-toggle" onclick="toggleCalcSection()">🧮 ' + (calcOpen ? 'Cerrar calculadora' : 'Calculadora de precios') + '</button>';
+  html += '  <button class="calc-toggle" onclick="toggleCalcSection()">🧮 Calculadora de precios</button>';
   html += '  <div class="search">'
         + '    <span style="color:var(--vw-grey-3);font-size:13px">🔍</span>'
         + '    <input type="text" id="stockSearch" placeholder="Serie, modelo, color..." value="' + escapeHtml(filtros.search) + '">'
@@ -698,12 +713,7 @@ function renderStock() {
   ]);
   html += '</div>';
 
-  // ----- Calculadora (sección colapsable arriba de la tabla) -----
-  if (calcOpen) {
-    html += renderCalcSection();
-  }
-
-  // ----- Tabla -----
+  // Tabla
   html += '<div class="table-wrap">'
         + '  <div class="table-head">'
         + '    <h3>Unidades</h3>'
@@ -887,11 +897,11 @@ function setCalcUnidad(serie) {
   }
 }
 
-// Label que mostramos en el combo. Lo armo en un solo lugar para que matchear
-// sea trivial (compara el value del input con _calcLabel(u) hasta encontrar
-// coincidencia exacta).
+// Label del combo: solo el modelo (col C `unidad`). Asumimos que las unidades
+// del mismo modelo comparten oferta/lista/rdo/dto, por lo que basta una entrada
+// por modelo en el desplegable.
 function _calcLabel(u) {
-  return u.unidad + (u.color ? ' · ' + u.color : '') + ' · ' + u.serie;
+  return u.unidad;
 }
 
 // El usuario escribe o elige una opción del datalist. Cuando lo escrito
@@ -916,35 +926,41 @@ function onCalcUnidadInput(text) {
 }
 
 function renderCalcSection() {
-  // Unidades elegibles: solo las en stock (no vendidas) y con lista > 0.
-  const elegibles = stockData.unidades
-    .filter(u => !u.vendido && u.lista > 0)
-    .sort((a, b) => (a.unidad || '').localeCompare(b.unidad || ''));
+  // Elegibles: solo en stock (no vendidas) y con lista > 0.
+  // Dedupe por modelo (col C `unidad`): si hay 10 Amarok Comfortline, una sola
+  // entrada. Tomamos la primera ocurrencia — los precios deberían ser iguales
+  // para todas las unidades del mismo modelo.
+  const elegiblesAll = stockData.unidades.filter(u => !u.vendido && u.lista > 0);
+  const seen = new Set();
+  const elegibles = [];
+  for (const u of elegiblesAll) {
+    const k = (u.unidad || '').trim();
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    elegibles.push(u);
+  }
+  elegibles.sort((a, b) => (a.unidad || '').localeCompare(b.unidad || ''));
 
   const u = calcSerie ? stockData.unidades.find(x => x.serie === calcSerie) : null;
 
   let html = '<div class="calc-section">';
   html += '  <div class="calc-section-head">'
+        + '    <button class="calc-back" onclick="toggleCalcSection()">← Volver al stock</button>'
         + '    <h3>🧮 Calculadora de precio</h3>'
-        + '    <p>Elegí una unidad y probá un % de dto o un precio pedido. El resultado se calcula en vivo, no toca la planilla.</p>'
+        + '    <p>Elegí un modelo y probá un % de dto o un precio pedido. El cálculo es en vivo, no toca la planilla.</p>'
         + '  </div>';
 
-  // Combo input + datalist: el usuario puede escribir (modelo, color, serie)
-  // o abrir el dropdown con la flechita. El value del input es el label
-  // completo; cuando matchea exacto a alguna unidad, se selecciona.
-  const currentLabel = (() => {
-    if (!calcSerie) return '';
-    const cu = stockData.unidades.find(x => x.serie === calcSerie);
-    return cu ? _calcLabel(cu) : '';
-  })();
+  // Combo input + datalist (1 entrada por modelo). El value del input matchea
+  // _calcLabel(u) = u.unidad. Cuando matchea exacto, seleccionamos.
+  const currentLabel = u ? _calcLabel(u) : '';
 
   html += '  <div class="calc-select-row">'
-        + '    <label for="calcUnidadInput">Unidad:</label>'
+        + '    <label for="calcUnidadInput">Modelo:</label>'
         + '    <input type="text" id="calcUnidadInput" class="calc-combo"'
         + '           list="calcUnidadList"'
         + '           value="' + escapeHtml(currentLabel) + '"'
         + '           oninput="onCalcUnidadInput(this.value)"'
-        + '           placeholder="Escribí modelo, color o serie...">'
+        + '           placeholder="Escribí el modelo...">'
         + '    <datalist id="calcUnidadList">';
   for (const e of elegibles) {
     html += '      <option value="' + escapeHtml(_calcLabel(e)) + '">';
