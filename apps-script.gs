@@ -41,12 +41,56 @@ function doGet(e) {
 
   const tipo = String(params.tipo || 'stock').toLowerCase();
   try {
-    if (tipo === 'stock')  return jsonResponse(getStock());
-    if (tipo === 'ventas') return jsonResponse(getVentas());
+    if (tipo === 'stock')       return jsonResponse(getStock());
+    if (tipo === 'ventas')      return jsonResponse(getVentas());
+    if (tipo === 'ventasdebug') return jsonResponse(getVentasDebug(params));
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
   }
+}
+
+// Devuelve TODAS las filas de la hoja ventas sin filtrar (excepto vacías
+// totales), con las columnas crudas que más nos importan + el mesKey calculado.
+// Para diagnosticar conteos. Opcional: ?desde=N&hasta=M filtra por # venta.
+function getVentasDebug(params) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName('ventas') || ss.getSheets()[0];
+  if (!sh) throw new Error('No hay hoja ventas');
+
+  const lastRow = sh.getLastRow();
+  const range   = sh.getRange(1, 1, lastRow, 26);
+  const display = range.getDisplayValues();
+  const raw     = range.getValues();
+
+  const desde = params.desde ? parseInt(params.desde, 10) : null;
+  const hasta = params.hasta ? parseInt(params.hasta, 10) : null;
+
+  const filas = [];
+  for (let i = 0; i < display.length; i++) {
+    const drow = display[i];
+    const rrow = raw[i];
+    const num    = drow[0];
+    const fechaS = drow[1];
+    const serie  = drow[7];
+    if (!num && !fechaS && !serie) continue; // fila vacía total
+
+    const fecha = _parseFecha(rrow[1], drow[1]);
+    const numN = toNumber(rrow[0]);
+    if (desde !== null && numN < desde) continue;
+    if (hasta !== null && numN > hasta) continue;
+
+    filas.push({
+      sheetRow: i + 1,                          // fila real en la planilla (1-based)
+      A:        String(num || ''),
+      B:        String(fechaS || ''),
+      H:        String(serie || ''),
+      parsedFecha: fecha ? _isoDate(fecha) : null,
+      mesKey:      fecha ? _yyyyMm(fecha) : null,
+    });
+  }
+
+  return { filas: filas, total: filas.length };
 }
 
 function jsonResponse(obj) {

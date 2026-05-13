@@ -626,6 +626,24 @@ function enterApp(session) {
   document.getElementById('appScreen').classList.remove('hidden');
   document.getElementById('userName').textContent = session.nombre || session.usuario;
   loadStock(false);
+  startAutoRefresh();
+}
+
+// Auto-refresh cada 10 minutos. Refresca solo la tab activa para no
+// gastar cuota del Apps Script en data que nadie está viendo. Si el usuario
+// está editando algo de la calculadora, lo dejo en paz (calc abierta = no toco).
+const AUTO_REFRESH_MS = 10 * 60 * 1000;
+let _autoRefreshTimer = null;
+function startAutoRefresh() {
+  if (_autoRefreshTimer) clearInterval(_autoRefreshTimer);
+  _autoRefreshTimer = setInterval(() => {
+    const activo = document.querySelector('.tab.active')?.dataset.tab;
+    if (activo === 'stock' && !calcOpen) {
+      loadStock(true);
+    } else if (activo === 'ventas') {
+      loadVentas(true);
+    }
+  }, AUTO_REFRESH_MS);
 }
 function logout() {
   clearSharedCookie();
