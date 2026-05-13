@@ -350,6 +350,93 @@ table.ranking-tbl tbody tr.zero td.vname { color: var(--vw-grey-4); font-weight:
 .ranking-otros ul { list-style: disc inside; padding-left: 0; }
 .ranking-otros li { padding: 2px 0; }
 
+/* ========== PATENTAMIENTOS ========== */
+.kpi-input {
+  width: 100%; max-width: 110px;
+  padding: 4px 8px; border: 1px solid var(--vw-blue);
+  border-radius: 6px; font-size: 20px; font-weight: 700;
+  color: var(--vw-blue); background: white;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font);
+}
+.kpi-input:focus { outline: 2px solid var(--vw-blue); }
+
+.pat-filterinfo {
+  background: var(--vw-blue); color: white;
+  padding: 8px 14px; border-radius: 8px;
+  font-size: 13px; margin-bottom: 14px;
+}
+
+.pat-progress {
+  background: white; padding: 16px 20px; border-radius: var(--radius);
+  box-shadow: var(--shadow); margin-bottom: 18px;
+}
+.pat-progress .prow {
+  display: grid; grid-template-columns: 220px 1fr 180px;
+  align-items: center; gap: 14px; padding: 8px 0;
+}
+.pat-progress .prow .lab { font-size: 12px; color: var(--vw-grey-4); font-weight: 600; }
+.pat-progress .prow .bar {
+  height: 14px; background: var(--vw-grey-1); border-radius: 100px;
+  overflow: hidden;
+}
+.pat-progress .prow .fill {
+  height: 100%; border-radius: 100px; transition: width 0.4s ease;
+}
+.pat-progress .prow .fill.good    { background: linear-gradient(90deg, var(--green), var(--green-dark)); }
+.pat-progress .prow .fill.neutral { background: linear-gradient(90deg, var(--vw-blue-light), var(--vw-blue)); }
+.pat-progress .prow .val {
+  font-size: 12.5px; color: var(--vw-grey-4); text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 700px) {
+  .pat-progress .prow {
+    grid-template-columns: 1fr; gap: 4px; padding: 10px 0;
+  }
+  .pat-progress .prow .val { text-align: left; }
+}
+
+.desgloses {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px; margin-bottom: 22px;
+}
+.desg {
+  background: white; padding: 14px 16px; border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.desg .hd {
+  font-size: 11px; color: var(--vw-grey-3);
+  text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700;
+  margin-bottom: 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--vw-grey-2);
+}
+.desg .empty-mini { font-size: 12px; color: var(--vw-grey-3); padding: 8px 0; }
+.desg .dr {
+  display: grid; grid-template-columns: minmax(0, 90px) 1fr auto;
+  align-items: center; gap: 10px; padding: 5px 0;
+  font-size: 12px;
+}
+.desg .dr-k {
+  color: var(--vw-black); font-weight: 600; font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.desg .dr-bar {
+  height: 8px; background: var(--vw-grey-1); border-radius: 100px;
+  overflow: hidden;
+}
+.desg .dr-fill {
+  height: 100%; background: var(--vw-blue);
+  border-radius: 100px; transition: width 0.3s ease;
+}
+.desg .dr-v {
+  font-size: 11.5px; color: var(--vw-grey-4);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+/* Resumida en patentamientos: oculta col-extra (Serie/Admin/Tipo/Rev-Part/Cliente/Dominio) */
+table.patent-tbl.resumida .col-extra { display: none; }
+
 /* Sección de calculadora (arriba de la tabla, no inline) */
 .calc-section {
   background: white; border-radius: var(--radius);
@@ -620,11 +707,13 @@ table.ranking-tbl tbody tr.zero td.vname { color: var(--vw-grey-4); font-weight:
 
     <!-- =================== PATENTAMIENTOS =================== -->
     <section class="panel" id="panelPatentamientos">
-      <div class="placeholder">
-        <div class="ico">🪪</div>
-        <div class="ttl">Patentamientos del mes</div>
-        <div>Próximamente. Hablamos qué columnas y desglose querés ver acá.</div>
+      <div class="toolbar">
+        <div class="updated" id="updatedAtPatent">—</div>
+        <div class="actions">
+          <button class="refresh" id="btnRefreshPatent" onclick="loadPatentamientos(true)">Actualizar</button>
+        </div>
       </div>
+      <div id="patentContent"></div>
     </section>
   </main>
 </div>
@@ -659,6 +748,24 @@ let ventasData = null;            // { ventas, meses, mesActual, updatedAt }
 let mesSeleccionado = '';         // 'yyyy-mm'
 let vistaResumidaVentas = false;  // oculta IVA / acc / costo / serie / color
 let rankingOpen = false;          // toggle de la sección "Ranking de vendedores"
+
+// Patentamientos
+let patentData = null;            // { carpetas, meses, mesActual, updatedAt }
+let mesSelPat = '';
+let vendedorFiltroPat = '';       // filtro por vendedor (drill-down)
+let vistaResumidaPat = false;     // toggle vista resumida en patentamientos
+// Objetivos del mes (cantidad de carpetas a patentar). Defaults pasados por
+// Fer; persistidos en localStorage para que pueda editarlos vivo.
+const OBJETIVOS_PAT_DEFAULT = { '2026-04': 63, '2026-05': 54 };
+let objetivosPat = (() => {
+  try {
+    const s = localStorage.getItem('gestion_objetivos_pat');
+    return s ? Object.assign({}, OBJETIVOS_PAT_DEFAULT, JSON.parse(s)) : Object.assign({}, OBJETIVOS_PAT_DEFAULT);
+  } catch { return Object.assign({}, OBJETIVOS_PAT_DEFAULT); }
+})();
+function saveObjetivosPat() {
+  try { localStorage.setItem('gestion_objetivos_pat', JSON.stringify(objetivosPat)); } catch {}
+}
 
 // Filtros activos
 let filtros = {
@@ -704,6 +811,8 @@ function startAutoRefresh() {
       loadStock(true);
     } else if (activo === 'ventas') {
       loadVentas(true);
+    } else if (activo === 'patentamientos') {
+      loadPatentamientos(true);
     }
   }, AUTO_REFRESH_MS);
 }
@@ -728,6 +837,7 @@ function setTab(tab) {
   if (el) el.classList.add('active');
   // Lazy load por tab
   if (tab === 'ventas' && !ventasData) loadVentas(false);
+  if (tab === 'patentamientos' && !patentData) loadPatentamientos(false);
 }
 
 // =======================================================================
@@ -1444,6 +1554,262 @@ function filaVenta(v) {
   html += '<td class="num gcia-pos" data-label="Gcia %">' + fmtPct(v.gciaVtaPct) + '</td>';
   html += '</tr>';
   return html;
+}
+
+// =======================================================================
+// PATENTAMIENTOS · fetch
+// =======================================================================
+async function loadPatentamientos(forzar) {
+  if (patentData && !forzar) { renderPatentamientos(); return; }
+
+  const btn  = document.getElementById('btnRefreshPatent');
+  const wrap = document.getElementById('patentContent');
+  if (btn) { btn.disabled = true; btn.textContent = 'Cargando...'; }
+  wrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>Cargando patentamientos...</div></div>';
+
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) {
+    wrap.innerHTML = '<div class="errbox"><div class="ttl">⚙️ Falta conectar la planilla</div></div>';
+    if (btn) { btn.disabled = false; btn.textContent = 'Actualizar'; }
+    return;
+  }
+
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=patentamientos';
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    patentData = data;
+    if (!mesSelPat || !data.meses.find(m => m.mesKey === mesSelPat)) {
+      const conMesActual = data.meses.find(m => m.mesKey === data.mesActual);
+      mesSelPat = conMesActual ? data.mesActual : (data.meses[0] ? data.meses[0].mesKey : '');
+    }
+    renderPatentamientos();
+    const upd = document.getElementById('updatedAtPatent');
+    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+  } catch (e) {
+    console.error(e);
+    wrap.innerHTML = '<div class="errbox"><div class="ttl">⚠️ No se pudieron cargar los patentamientos</div>'
+      + '<div>' + escapeHtml(e.message || String(e)) + '</div></div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Actualizar'; }
+  }
+}
+
+function setMesPat(mesKey)       { mesSelPat = mesKey || ''; renderPatentamientos(); }
+function setVendedorFiltroPat(v) { vendedorFiltroPat = v || ''; renderPatentamientos(); }
+function toggleVistaResumidaPat(){ vistaResumidaPat = !vistaResumidaPat; renderPatentamientos(); }
+function setObjetivoPat(val) {
+  const n = parseInt(val, 10);
+  if (!isNaN(n) && n >= 0) {
+    objetivosPat[mesSelPat] = n;
+    saveObjetivosPat();
+    renderPatentamientos();
+  }
+}
+
+// =======================================================================
+// PATENTAMIENTOS · render
+// =======================================================================
+function renderPatentamientos() {
+  const wrap = document.getElementById('patentContent');
+  if (!patentData || !Array.isArray(patentData.carpetas)) {
+    wrap.innerHTML = '<div class="empty">Sin datos.</div>';
+    return;
+  }
+
+  const todas  = patentData.carpetas;
+  const meses  = patentData.meses || [];
+  let delMes   = todas.filter(c => c.mesKey === mesSelPat);
+
+  // Filtro por vendedor (drill-down)
+  if (vendedorFiltroPat) {
+    delMes = delMes.filter(c => c.vendedor === vendedorFiltroPat);
+  }
+
+  // KPIs base
+  const total       = delMes.length;
+  const patentadas  = delMes.filter(c => c.patentada).length;
+  const pendientes  = total - patentadas;
+  const objetivo    = objetivosPat[mesSelPat] || 0;
+  const restanObj   = Math.max(0, objetivo - patentadas);
+
+  // Desgloses (% por grupo)
+  const porPatenta = _agruparCount(delMes, c => c.patentaA || '—');     // TG / CLIENTE / REVENTA
+  const porAdmin   = _agruparCount(delMes, c => c.admin || '—');
+  const porTipo    = _agruparCount(delMes, c => c.tipoCarpeta || '—');  // TRAD / PLAN AHORRO / FINANCIA
+  const porRevPart = _agruparCount(delMes, c => c.reventaOParticular || '—');
+  const porVend    = _agruparCount(delMes, c => c.vendedor || (c.vendedorRaw || '—'));
+
+  let html = '';
+
+  // ----- Selector de mes + filtro vendedor + vista resumida -----
+  html += '<div class="mes-row">';
+  html += '  <label for="mesSelPat">Mes:</label>';
+  html += '  <select id="mesSelPat" onchange="setMesPat(this.value)">';
+  if (!meses.length) {
+    html += '    <option value="">— Sin meses cargados —</option>';
+  } else {
+    for (const m of meses) {
+      const sel = m.mesKey === mesSelPat ? ' selected' : '';
+      html += '    <option value="' + m.mesKey + '"' + sel + '>' + escapeHtml(m.label) + ' · ' + m.cuenta + '</option>';
+    }
+  }
+  html += '  </select>';
+
+  // Filtro vendedor (drill-down)
+  const vendedoresDelMes = Object.keys(_agruparCount(todas.filter(c => c.mesKey === mesSelPat), c => c.vendedor || '')).filter(Boolean);
+  html += '  <select id="vendFiltroPat" onchange="setVendedorFiltroPat(this.value)" style="min-width:200px">';
+  html += '    <option value="">Todos los vendedores</option>';
+  for (const v of vendedoresDelMes.sort()) {
+    const sel = v === vendedorFiltroPat ? ' selected' : '';
+    html += '    <option value="' + escapeHtml(v) + '"' + sel + '>' + escapeHtml(v) + '</option>';
+  }
+  html += '  </select>';
+  if (vendedorFiltroPat) {
+    html += '  <button class="calc-clear" onclick="setVendedorFiltroPat(\'\')" title="Limpiar">✕</button>';
+  }
+  html += '  <label class="toggle-resumida">'
+        + '    <input type="checkbox" ' + (vistaResumidaPat ? 'checked' : '') + ' onchange="toggleVistaResumidaPat()"> Vista resumida'
+        + '  </label>';
+  html += '</div>';
+
+  if (vendedorFiltroPat) {
+    html += '<div class="pat-filterinfo">'
+          + '  📊 Viendo solo carpetas de <b>' + escapeHtml(vendedorFiltroPat) + '</b> en ' + escapeHtml((meses.find(m => m.mesKey === mesSelPat)?.label) || mesSelPat)
+          + '</div>';
+  }
+
+  // ----- KPIs principales + objetivo editable -----
+  html += '<div class="cards">';
+  html += kpi('Carpetas del mes', total, '', total ? 'good' : '');
+  html += kpi('Patentadas', patentadas, total ? Math.round(patentadas / total * 100) + '% del total' : '', patentadas ? 'good' : '');
+  html += kpi('Pendientes', pendientes, '', pendientes ? 'warn' : '');
+  html += '<div class="card editable">'
+        + '  <div class="label">Objetivo del mes</div>'
+        + '  <div class="value"><input type="number" min="0" step="1" value="' + objetivo + '" onchange="setObjetivoPat(this.value)" class="kpi-input" /></div>'
+        + '  <div class="sub">Faltan <b>' + restanObj + '</b> para llegar</div>'
+        + '</div>';
+  html += '</div>';
+
+  // ----- Barras de progreso vs objetivo -----
+  if (objetivo > 0) {
+    const pctPatVsObj = Math.min(100, Math.round((patentadas / objetivo) * 100));
+    const pctTotVsObj = Math.min(100, Math.round((total      / objetivo) * 100));
+    html += '<div class="pat-progress">';
+    html += '  <div class="prow"><div class="lab">Patentadas vs objetivo</div>'
+          + '    <div class="bar"><div class="fill good" style="width:' + pctPatVsObj + '%"></div></div>'
+          + '    <div class="val">' + patentadas + ' / ' + objetivo + ' (' + pctPatVsObj + '%)</div>'
+          + '  </div>';
+    html += '  <div class="prow"><div class="lab">Carpetas cargadas vs objetivo</div>'
+          + '    <div class="bar"><div class="fill neutral" style="width:' + pctTotVsObj + '%"></div></div>'
+          + '    <div class="val">' + total + ' / ' + objetivo + ' (' + pctTotVsObj + '%)</div>'
+          + '  </div>';
+    html += '</div>';
+  }
+
+  // ----- Desgloses % -----
+  html += '<div class="desgloses">';
+  html += desgloseCard('Quién patenta',     porPatenta, total);
+  html += desgloseCard('Reventa / Particular', porRevPart, total);
+  html += desgloseCard('Por admin',         porAdmin,   total);
+  html += desgloseCard('Tipo de carpeta',   porTipo,    total);
+  html += desgloseCard('Por vendedor',      porVend,    total);
+  html += '</div>';
+
+  // ----- Tabla -----
+  html += '<div class="table-wrap">'
+        + '  <div class="table-head">'
+        + '    <h3>Carpetas — ' + escapeHtml((meses.find(m => m.mesKey === mesSelPat)?.label) || 'Sin mes') + '</h3>'
+        + '    <div class="count">' + delMes.length + ' visibles</div>'
+        + '  </div>'
+        + '  <div class="table-scroll">'
+        + '    <table class="patent-tbl responsive-cards ' + (vistaResumidaPat ? 'resumida' : '') + '">'
+        + '      <thead><tr>'
+        + '        <th class="ctr">#</th>'
+        + '        <th># PV</th>'
+        + '        <th class="col-extra">Serie</th>'
+        + '        <th class="ctr">Patenta</th>'
+        + '        <th class="col-extra">Admin</th>'
+        + '        <th class="col-extra">Tipo</th>'
+        + '        <th class="col-extra">Rev/Part</th>'
+        + '        <th>Vendedor</th>'
+        + '        <th class="col-extra">Cliente</th>'
+        + '        <th>Modelo</th>'
+        + '        <th class="ctr">Fecha pat.</th>'
+        + '        <th class="col-extra">Dominio</th>'
+        + '      </tr></thead><tbody>';
+
+  if (!delMes.length) {
+    html += '<tr><td colspan="12" class="empty">No hay carpetas para este filtro.</td></tr>';
+  } else {
+    for (const c of delMes) html += filaPatent(c);
+  }
+  html += '</tbody></table></div></div>';
+
+  wrap.innerHTML = html;
+}
+
+function filaPatent(c) {
+  const patBadge = c.patentada
+    ? '<span class="badge paga">' + escapeHtml(c.fechaPatStr || fmtFechaCorta(c.fechaPatIso)) + '</span>'
+    : '<span class="badge impaga">Pendiente</span>';
+  const patentaBadge = c.patentaA
+    ? '<span class="badge ' + _patentaCls(c.patentaA) + '">' + escapeHtml(c.patentaA) + '</span>'
+    : '<span class="muted">—</span>';
+
+  let h = '<tr>';
+  h += '<td class="ctr" data-label="#">' + (c.num || '—') + '</td>';
+  h += '<td data-label="# PV">' + escapeHtml(c.pv) + '</td>';
+  h += '<td class="col-extra" data-label="Serie"><span class="serie">' + escapeHtml(c.serie) + '</span></td>';
+  h += '<td class="ctr" data-label="Patenta">' + patentaBadge + '</td>';
+  h += '<td class="col-extra" data-label="Admin">' + escapeHtml(c.admin || '—') + '</td>';
+  h += '<td class="col-extra" data-label="Tipo">' + escapeHtml(c.tipoCarpeta || '—') + '</td>';
+  h += '<td class="col-extra" data-label="Rev/Part">' + escapeHtml(c.reventaOParticular || '—') + '</td>';
+  h += '<td data-label="Vendedor">' + escapeHtml(c.vendedor || c.vendedorRaw || '—') + '</td>';
+  h += '<td class="col-extra" data-label="Cliente">' + escapeHtml(c.cliente || '—') + '</td>';
+  h += '<td data-label="Modelo">' + escapeHtml(c.modelo || '—') + '</td>';
+  h += '<td class="ctr" data-label="Fecha pat.">' + patBadge + '</td>';
+  h += '<td class="col-extra" data-label="Dominio">' + escapeHtml(c.dominio || '—') + '</td>';
+  h += '</tr>';
+  return h;
+}
+
+function _patentaCls(p) {
+  if (p === 'TG')      return 'expo-er';
+  if (p === 'CLIENTE') return 'stock';
+  if (p === 'REVENTA') return 'expo-in';
+  return 'otro';
+}
+
+function _agruparCount(arr, keyFn) {
+  const o = {};
+  for (const x of arr) {
+    const k = keyFn(x);
+    if (!k && k !== 0) continue;
+    o[k] = (o[k] || 0) + 1;
+  }
+  return o;
+}
+
+// Card con bars horizontales: cada key con su cantidad y %
+function desgloseCard(titulo, mapCount, total) {
+  const items = Object.keys(mapCount).map(k => ({ k: k, n: mapCount[k] }));
+  if (!items.length) {
+    return '<div class="desg"><div class="hd">' + escapeHtml(titulo) + '</div><div class="empty-mini">—</div></div>';
+  }
+  items.sort((a, b) => b.n - a.n);
+  let h = '<div class="desg"><div class="hd">' + escapeHtml(titulo) + '</div>';
+  for (const it of items) {
+    const pct = total ? Math.round(it.n / total * 100) : 0;
+    h += '<div class="dr">'
+       + '  <div class="dr-k">' + escapeHtml(String(it.k)) + '</div>'
+       + '  <div class="dr-bar"><div class="dr-fill" style="width:' + pct + '%"></div></div>'
+       + '  <div class="dr-v">' + it.n + ' · ' + pct + '%</div>'
+       + '</div>';
+  }
+  h += '</div>';
+  return h;
 }
 
 // =======================================================================

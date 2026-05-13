@@ -33,6 +33,9 @@ const TOKEN = 'tga-gestion-R7nQ4xK8jL';
 // porque los números no estaban alineados todavía).
 const VENTAS_MES_MINIMO = '2026-03';
 
+// Mes mínimo de patentamientos (Fer pidió desde abril).
+const PATENTAMIENTOS_MES_MINIMO = '2026-04';
+
 // Vendedores oficiales — siempre aparecen en el ranking del mes aunque
 // tengan 0 ventas. El orden acá no importa (el ranking se ordena por
 // cantidad descendente en el frontend).
@@ -49,9 +52,10 @@ function doGet(e) {
 
   const tipo = String(params.tipo || 'stock').toLowerCase();
   try {
-    if (tipo === 'stock')       return jsonResponse(getStock());
-    if (tipo === 'ventas')      return jsonResponse(getVentas());
-    if (tipo === 'ventasdebug') return jsonResponse(getVentasDebug(params));
+    if (tipo === 'stock')           return jsonResponse(getStock());
+    if (tipo === 'ventas')          return jsonResponse(getVentas());
+    if (tipo === 'ventasdebug')     return jsonResponse(getVentasDebug(params));
+    if (tipo === 'patentamientos')  return jsonResponse(getPatentamientos());
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
@@ -337,6 +341,117 @@ function _norm(s) {
   return String(s || '').toLowerCase()
     .normalize('NFD').replace(/[̀-ͯ]/g, '')
     .trim();
+}
+
+// =======================================================================
+// PATENTAMIENTOS
+// =======================================================================
+// Hoja "patentamientos" = espejo (IMPORTRANGE) de "adm de ventas".
+// Mapeo de columnas (mantengo el primer listado que pasó Fer):
+//   A num                  M reventa/particular
+//   B # PV                 N vendedor
+//   C fecha PV             O usado SI/NO
+//   D serie                P cliente
+//   E chasis               Q modelo
+//   F mes patentamiento    R localidad
+//     (texto "ABRIL")      S fecha patentamiento (real)
+//   G patenta a (TG/CL/RE) T dominio
+//   H admin
+//   I AA (tipo carpeta: TRAD / PLAN AHORRO / FINANCIA FRANCES)
+//
+// Filtro: solo desde PATENTAMIENTOS_MES_MINIMO (2026-04).
+// El mes se determina por col F (texto en español), no por fecha real.
+const _MES_TXT_A_NUM = {
+  'enero':'01','febrero':'02','marzo':'03','abril':'04','mayo':'05',
+  'junio':'06','julio':'07','agosto':'08','septiembre':'09','sept':'09',
+  'octubre':'10','noviembre':'11','diciembre':'12'
+};
+
+function getPatentamientos() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName('patentamientos')
+    || ss.getSheets().find(s => /^pat/i.test(s.getName()) || /adm.*venta/i.test(s.getName()));
+  if (!sh) throw new Error('No encontré la hoja "patentamientos"');
+
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) {
+    return { carpetas: [], meses: [], updatedAt: new Date().toISOString() };
+  }
+
+  const range   = sh.getRange(1, 1, lastRow, 26);
+  const display = range.getDisplayValues();
+  const raw     = range.getValues();
+
+  // Header detection — fila con "num" / "#" en A y "pv" en B
+  let headerRow = -1;
+  for (let i = 0; i < Math.min(5, display.length); i++) {
+    const a = String(display[i][0] || '').toLowerCase().trim();
+    const b = String(display[i][1] || '').toLowerCase().trim();
+    if (/(num|nro|#)/.test(a) && /(pv|preventa)/.test(b)) { headerRow = i; break; }
+  }
+  if (headerRow < 0) headerRow = 0;
+
+  const carpetas = [];
+  const cuentaPorMes = {};
+  const anioActual = new Date().getFullYear();
+
+  for (let i = headerRow + 1; i < display.length; i++) {
+    const drow = display[i];
+    const rrow = raw[i];
+
+    const num   = toNumber(rrow[0]);
+    const pv    = String(drow[1] || '').trim();
+    const serie = String(drow[3] || '').trim();
+    if (!num && !pv && !serie) continue;
+
+    // F = mes (texto). Si está vacío o no es un mes conocido, salteo.
+    const mesTxt = _norm(drow[5]);
+    const mesNum = _MES_TXT_A_NUM[mesTxt];
+    if (!mesNum) continue;
+    const mesKey = anioActual + '-' + mesNum;
+    if (mesKey < PATENTAMIENTOS_MES_MINIMO) continue;
+
+    // S = fecha patentamiento real
+    const fechaPat = _parseFecha(rrow[18], drow[18]);
+
+    // N = vendedor → mapeo a oficial
+    const vendedorRaw = String(drow[13] || '').trim();
+    const vendedor    = _matchVendedor(vendedorRaw);
+
+    cuentaPorMes[mesKey] = (cuentaPorMes[mesKey] || 0) + 1;
+
+    carpetas.push({
+      num:                num,                                      // A
+      pv:                 pv,                                       // B
+      serie:              serie,                                    // D
+      mesPatente:         String(drow[5] || '').trim().toUpperCase(), // F (texto)
+      mesKey:             mesKey,                                   // 'yyyy-mm'
+      patentaA:           String(drow[6] || '').trim().toUpperCase(), // G (TG/CLIENTE/REVENTA)
+      admin:              String(drow[7] || '').trim(),             // H
+      tipoCarpeta:        String(drow[8] || '').trim().toUpperCase(), // I (AA)
+      reventaOParticular: String(drow[12] || '').trim().toUpperCase(), // M
+      vendedor:           vendedor,                                 // N → oficial
+      vendedorRaw:        vendedorRaw,                              // N → tal cual
+      cliente:            String(drow[15] || '').trim(),            // P
+      modelo:             String(drow[16] || '').trim(),            // Q
+      fechaPatIso:        fechaPat ? _isoDate(fechaPat) : '',       // S → ISO
+      fechaPatStr:        String(drow[18] || '').trim(),            // S → display
+      patentada:          !!fechaPat,                                // S → bool
+      dominio:            String(drow[19] || '').trim(),            // T
+    });
+  }
+
+  const meses = Object.keys(cuentaPorMes).sort().reverse().map(k => ({
+    mesKey: k, label: _mesLabel(k), cuenta: cuentaPorMes[k],
+  }));
+
+  return {
+    carpetas:            carpetas,
+    meses:               meses,
+    mesActual:           _yyyyMm(new Date()),
+    vendedoresOficiales: VENDEDORES_OFICIALES,
+    updatedAt:           new Date().toISOString(),
+  };
 }
 
 function _yyyyMm(d) {
