@@ -308,16 +308,19 @@ function _matchVendedor(raw) {
   const n = _norm(raw);
   if (!n) return null;
 
-  // TG (gerencia): la palabra "tg" (token aislado o con guion / espacio) o Maximiliano
-  if (/(^|[\s\-])tg($|[\s\-])/.test(n)) return 'TG';
-  if (n.indexOf('maximiliano') >= 0)     return 'TG';
+  // TG (gerencia): la palabra "tg" como token (separadores: espacio, guion,
+  // punto, coma), o "Maximiliano", o "Cata" (alias de gerencia).
+  if (/(^|[\s\-.,])tg($|[\s\-.,])/.test(n)) return 'TG';
+  if (n.indexOf('maximiliano') >= 0)         return 'TG';
+  if (n.indexOf('cata') >= 0)                return 'TG';
 
   if (n.indexOf('fazzini')  >= 0) return 'Jorge Fazzini';
   if (n.indexOf('loisi')    >= 0) return 'Antonio Loisi';
   if (n.indexOf('alonso')   >= 0) return 'Ines Alonso';
   if (n.indexOf('buena')    >= 0) return 'Gisela Buena';
   if (n.indexOf('bandiera') >= 0) return 'Tomas Bandiera';
-  if (n.indexOf('naddeo')   >= 0) return 'Julian Naddeo';
+  // Naddeo: tolero typo "Nadeo" (con una D) — es frecuente en la planilla
+  if (n.indexOf('naddeo') >= 0 || n.indexOf('nadeo') >= 0) return 'Julian Naddeo';
 
   // Castro: dos personas (Jose y Marta) — desambiguar por primer nombre
   if (n.indexOf('castro') >= 0 || n.indexOf('marta') >= 0 || /\bjose\b/.test(n)) {
