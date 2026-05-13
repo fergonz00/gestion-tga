@@ -255,6 +255,22 @@ tbody tr.vendida-en-expo:hover { background: rgba(239, 68, 68, 0.08); }
 }
 .calc-toggle:hover { background: var(--vw-blue-light); }
 
+/* Checkbox "Vista resumida" en la toolbar */
+.toggle-resumida {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--vw-grey-4); font-weight: 600;
+  padding: 6px 12px; background: white;
+  border: 1px solid var(--vw-grey-2); border-radius: 100px;
+  cursor: pointer; user-select: none;
+}
+.toggle-resumida:hover { border-color: var(--vw-grey-3); color: var(--vw-blue); }
+.toggle-resumida input { cursor: pointer; }
+
+/* Cuando la tabla está en modo "resumida" ocultamos las columnas marcadas
+   como col-extra. Funciona tanto en desktop (tabla) como en mobile (cards
+   apiladas), porque el selector aplica a th/td indistintamente. */
+table.stock-tbl.resumida .col-extra { display: none; }
+
 /* Sección de calculadora (arriba de la tabla, no inline) */
 .calc-section {
   background: white; border-radius: var(--radius);
@@ -552,6 +568,9 @@ let stockData = null;          // { unidades, updatedAt }
 let calcOpen = false;          // si la sección de la calculadora está visible
 let calcSerie = '';            // serie de la unidad elegida en el desplegable
 
+// Vista resumida del stock: solo serie, antig., unidad y color
+let vistaResumida = false;
+
 // Filtros activos
 let filtros = {
   search:    '',
@@ -711,6 +730,9 @@ function renderStock() {
     {v:'erios',     l:'Entre Ríos'},
     {v:'expuestas', l:'Cualquier salón'},
   ]);
+  html += '  <label class="toggle-resumida">'
+        + '    <input type="checkbox" ' + (vistaResumida ? 'checked' : '') + ' onchange="toggleVistaResumida()"> Vista resumida'
+        + '  </label>';
   html += '</div>';
 
   // Tabla
@@ -720,19 +742,19 @@ function renderStock() {
         + '    <div class="count">' + visibles.length + ' visibles · ' + enStock + ' en stock</div>'
         + '  </div>'
         + '  <div class="table-scroll">'
-        + '    <table class="stock-tbl">'
+        + '    <table class="stock-tbl ' + (vistaResumida ? 'resumida' : '') + '">'
         + '      <thead><tr>'
         + '        <th>Serie</th>'
         + '        <th class="ctr">Antig.</th>'
         + '        <th>Unidad</th>'
         + '        <th>Color</th>'
-        + '        <th class="num">$ FC</th>'
-        + '        <th class="ctr">Pago</th>'
-        + '        <th class="num">Oferta</th>'
-        + '        <th class="num">Rdo</th>'
-        + '        <th class="num">Lista</th>'
-        + '        <th class="num">Dto</th>'
-        + '        <th class="ctr">Expo</th>'
+        + '        <th class="num col-extra">$ FC</th>'
+        + '        <th class="ctr col-extra">Pago</th>'
+        + '        <th class="num col-extra">Oferta</th>'
+        + '        <th class="num col-extra">Rdo</th>'
+        + '        <th class="num col-extra">Lista</th>'
+        + '        <th class="num col-extra">Dto</th>'
+        + '        <th class="ctr col-extra">Expo</th>'
         + '      </tr></thead>'
         + '      <tbody>';
 
@@ -791,6 +813,11 @@ function grupoFiltro(label, key, opts) {
 }
 function setFiltro(key, val) {
   filtros[key] = val;
+  renderStock();
+}
+
+function toggleVistaResumida() {
+  vistaResumida = !vistaResumida;
   renderStock();
 }
 
@@ -854,13 +881,13 @@ function filaUnidad(u) {
   html += '<td class="ctr" data-label="Antig."><span title="Fact. ' + escapeHtml(u.fechaFcStr || '') + '">' + (u.antigDias !== null ? u.antigDias + ' d' : '—') + '</span></td>';
   html += '<td data-label="Unidad">' + escapeHtml(u.unidad) + '</td>';
   html += '<td data-label="Color">' + escapeHtml(u.color) + '</td>';
-  html += '<td class="num" data-label="$ FC">' + fmtPesos(u.montoFc) + '</td>';
-  html += '<td class="ctr" data-label="Pago">' + pagoBadge + '</td>';
-  html += '<td class="num" data-label="Oferta">' + fmtPesos(u.ofertaActual) + '</td>';
-  html += '<td class="num" data-label="Rdo">' + fmtPct(u.rdoActualPct) + '</td>';
-  html += '<td class="num" data-label="Lista">' + fmtPesos(u.lista) + '</td>';
-  html += '<td class="num" data-label="Dto">' + fmtPct(u.dtoActualPct) + '</td>';
-  html += '<td class="ctr" data-label="Expo">' + expoBadge + '</td>';
+  html += '<td class="num col-extra" data-label="$ FC">' + fmtPesos(u.montoFc) + '</td>';
+  html += '<td class="ctr col-extra" data-label="Pago">' + pagoBadge + '</td>';
+  html += '<td class="num col-extra" data-label="Oferta">' + fmtPesos(u.ofertaActual) + '</td>';
+  html += '<td class="num col-extra" data-label="Rdo">' + fmtPct(u.rdoActualPct) + '</td>';
+  html += '<td class="num col-extra" data-label="Lista">' + fmtPesos(u.lista) + '</td>';
+  html += '<td class="num col-extra" data-label="Dto">' + fmtPct(u.dtoActualPct) + '</td>';
+  html += '<td class="ctr col-extra" data-label="Expo">' + expoBadge + '</td>';
   html += '</tr>';
 
   return html;
