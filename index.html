@@ -218,25 +218,97 @@ tbody tr.expo:hover { background: linear-gradient(to right, rgba(139,92,246,0.12
 .badge.expo-er { background: var(--orange-soft); color: var(--orange-dark); }
 .badge.expo-in { background: var(--purple-soft); color: var(--purple-dark); }
 
-.calc-btn {
-  background: var(--vw-grey-1); color: var(--vw-blue);
-  padding: 5px 10px; border-radius: 6px;
-  font-size: 11px; font-weight: 600;
-  transition: all 0.15s;
+/* Aviso sobre la grilla cuando hay vendidas que siguen en exposición */
+.aviso-reemplazar {
+  background: var(--orange-soft); color: var(--orange-dark);
+  padding: 10px 16px; border-radius: 8px;
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 14px; font-size: 13px;
+  border-left: 4px solid var(--orange);
 }
-.calc-btn:hover { background: var(--vw-grey-2); }
-.calc-btn.open { background: var(--vw-blue); color: white; }
+.aviso-reemplazar .ico { font-size: 18px; }
+.aviso-reemplazar b { font-weight: 700; }
 
-/* Fila expandida con el calculador */
-tr.calc-row { background: var(--vw-grey-1) !important; }
-tr.calc-row td { padding: 0; }
+/* Badges adicionales */
+.badge.reemplazar {
+  background: var(--red-soft); color: var(--red-dark);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.65; }
+}
+tbody tr.vendida-en-expo { background: rgba(239, 68, 68, 0.04); }
+tbody tr.vendida-en-expo:hover { background: rgba(239, 68, 68, 0.08); }
+
+/* KPI cards extras para los salones */
+.card.expo-in .value { color: var(--purple-dark); }
+.card.expo-er .value { color: var(--orange-dark); }
+
+/* Botón de toggle de la calculadora */
+.calc-toggle {
+  background: var(--vw-blue); color: white;
+  padding: 8px 16px; border-radius: 100px;
+  font-size: 13px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+}
+.calc-toggle:hover { background: var(--vw-blue-light); }
+
+/* Sección de calculadora (arriba de la tabla, no inline) */
+.calc-section {
+  background: white; border-radius: var(--radius);
+  padding: 18px 20px 20px; margin-bottom: 18px;
+  box-shadow: var(--shadow);
+  border-top: 3px solid var(--vw-blue);
+}
+.calc-section-head h3 {
+  font-size: 16px; font-weight: 700; color: var(--vw-blue); margin-bottom: 4px;
+}
+.calc-section-head p {
+  font-size: 12px; color: var(--vw-grey-4); margin-bottom: 14px; line-height: 1.5;
+}
+.calc-select-row {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.calc-select-row label {
+  font-size: 12px; color: var(--vw-grey-4); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.calc-select-row select {
+  flex: 1; min-width: 240px;
+  padding: 9px 12px; border: 1px solid var(--vw-grey-2);
+  border-radius: 8px; font-size: 13px;
+  background: white; outline: none;
+}
+.calc-select-row select:focus { border-color: var(--vw-blue); }
+
+/* Contexto numérico de la unidad elegida */
+.calc-ctx-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px; margin-bottom: 14px;
+  background: var(--vw-grey-1); padding: 12px 14px; border-radius: 8px;
+}
+.calc-ctx-row > div {
+  display: flex; flex-direction: column; gap: 2px;
+}
+.calc-ctx-row .lab {
+  font-size: 10px; color: var(--vw-grey-3);
+  text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;
+}
+.calc-ctx-row .val {
+  font-size: 14px; font-weight: 700; color: var(--vw-black);
+  font-variant-numeric: tabular-nums;
+}
+
 .calc-box {
-  padding: 16px 18px; border-top: 1px dashed var(--vw-grey-3);
-  display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
 }
 @media (max-width: 800px) { .calc-box { grid-template-columns: 1fr; } }
 .calc-block {
-  background: white; padding: 14px 16px; border-radius: 8px;
+  background: var(--vw-grey-1); padding: 14px 16px; border-radius: 8px;
   border: 1px solid var(--vw-grey-2);
 }
 .calc-block .ttl {
@@ -244,11 +316,6 @@ tr.calc-row td { padding: 0; }
   text-transform: uppercase; letter-spacing: 0.5px;
   font-weight: 600; margin-bottom: 10px;
 }
-.calc-block .ctx {
-  font-size: 11px; color: var(--vw-grey-4);
-  margin-bottom: 10px; line-height: 1.5;
-}
-.calc-block .ctx b { color: var(--vw-black); }
 .calc-input-row {
   display: flex; gap: 8px; align-items: center; margin-bottom: 12px;
 }
@@ -260,12 +327,14 @@ tr.calc-row td { padding: 0; }
   border: 1px solid var(--vw-grey-2); border-radius: 6px;
   font-size: 13px; outline: none;
   font-variant-numeric: tabular-nums;
+  background: white;
 }
 .calc-input-row .ipt:focus { border-color: var(--vw-blue); }
 .calc-result {
-  background: var(--vw-grey-1); border-radius: 6px;
+  background: white; border-radius: 6px;
   padding: 10px 12px; font-size: 13px;
   display: flex; justify-content: space-between; align-items: center;
+  border: 1px solid var(--vw-grey-2);
 }
 .calc-result .lab { color: var(--vw-grey-4); font-size: 12px; }
 .calc-result .val { font-weight: 700; font-size: 18px; font-variant-numeric: tabular-nums; }
@@ -310,12 +379,76 @@ tr.calc-row td { padding: 0; }
 .placeholder .ico { font-size: 40px; margin-bottom: 12px; opacity: 0.5; }
 .placeholder .ttl { font-size: 16px; font-weight: 600; color: var(--vw-blue); margin-bottom: 6px; }
 
-@media (max-width: 700px) {
+/* ================== RESPONSIVE ==================
+ *
+ * Por debajo de 900px transformamos la tabla en cards verticales apiladas.
+ * Cada <tr> es una card; cada <td> es una fila "label: value" usando data-label.
+ * Así nunca hay scroll lateral, ni en celular ni en ventanas chicas.
+ */
+@media (max-width: 900px) {
   .wrap { padding: 16px 12px 40px; }
   .card .value { font-size: 20px; }
-  thead th, tbody td { padding: 7px 8px; font-size: 11.5px; }
   .filter-row { gap: 10px; }
+  .table-scroll { overflow-x: visible; }
+  .table-wrap .table-head { padding: 12px 14px; }
+
+  table.stock-tbl thead { display: none; }
+  table.stock-tbl, table.stock-tbl tbody { display: block; width: 100%; }
+  table.stock-tbl tr {
+    display: block;
+    border: 1px solid var(--vw-grey-2);
+    border-bottom: 1px solid var(--vw-grey-2);
+    border-radius: 10px;
+    margin: 10px 12px;
+    padding: 12px 14px;
+    background: white;
+    box-shadow: 0 1px 4px rgba(0,30,80,0.04);
+  }
+  table.stock-tbl tr.expo {
+    background: linear-gradient(to bottom, rgba(139,92,246,0.05), white 60px);
+    border-left: 3px solid var(--purple);
+  }
+  table.stock-tbl tr.vendida-en-expo {
+    background: rgba(239,68,68,0.05);
+    border-left: 3px solid var(--red);
+  }
+  table.stock-tbl tr:hover { background: white; }
+  table.stock-tbl tr.expo:hover {
+    background: linear-gradient(to bottom, rgba(139,92,246,0.08), white 60px);
+  }
+
+  table.stock-tbl td {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 0; border: none;
+    text-align: right !important;
+    gap: 12px;
+  }
+  table.stock-tbl td::before {
+    content: attr(data-label);
+    font-size: 10.5px; font-weight: 600;
+    color: var(--vw-grey-3);
+    text-transform: uppercase; letter-spacing: 0.4px;
+    flex: 0 0 auto;
+  }
+  /* La serie va destacada arriba sin label */
+  table.stock-tbl td[data-label="Serie"] {
+    padding-top: 0; padding-bottom: 8px;
+    margin-bottom: 6px; border-bottom: 1px dashed var(--vw-grey-2);
+    font-size: 14px;
+  }
+  table.stock-tbl td[data-label="Serie"]::before { display: none; }
+  table.stock-tbl td[data-label="Serie"] .serie { font-size: 14px; }
+  /* La unidad ocupa una fila completa, sin alinear a la derecha */
+  table.stock-tbl td[data-label="Unidad"] {
+    display: block; padding: 4px 0 8px;
+    text-align: left !important;
+    font-weight: 600; color: var(--vw-blue);
+  }
+  table.stock-tbl td[data-label="Unidad"]::before {
+    display: block; margin-bottom: 2px;
+  }
 }
+
 </style>
 </head>
 <body>
@@ -398,14 +531,16 @@ const APPS_SCRIPT_TOKEN = 'tga-gestion-R7nQ4xK8jL';
 // ESTADO
 // =======================================================================
 let stockData = null;          // { unidades, updatedAt }
-let stockOpenCalc = new Set(); // series con el calculador abierto
+
+// Calculadora (sección aparte, no inline en la tabla)
+let calcOpen = false;          // si la sección de la calculadora está visible
+let calcSerie = '';            // serie de la unidad elegida en el desplegable
 
 // Filtros activos
 let filtros = {
   search:    '',
-  estado:    'todas',  // 'todas' | 'stock' | 'vendidas'
   pago:      'todas',  // 'todas' | 'pagas' | 'impagas'
-  expo:      'todas',  // 'todas' | 'expo'
+  expo:      'todas',  // 'todas' | 'indep' | 'erios' | 'expuestas'
 };
 
 // =======================================================================
@@ -491,6 +626,17 @@ async function loadStock(forzar) {
 // =======================================================================
 // STOCK · render
 // =======================================================================
+//
+// Reglas de visibilidad de unidades:
+//   - Por defecto NO se muestran las vendidas.
+//   - Excepción: vendidas con salón asignado en exposición → se muestran con
+//     cartel "reemplazar en exposición" para recordar liberar el espacio.
+//
+// Orden:
+//   1) INDEPENDENCIA (por antigüedad desc — más viejas arriba)
+//   2) ENTRE RIOS    (idem)
+//   3) Resto sin exposición (por antigüedad desc)
+//
 function renderStock() {
   const wrap = document.getElementById('stockContent');
   if (!stockData || !Array.isArray(stockData.unidades)) {
@@ -498,59 +644,64 @@ function renderStock() {
     return;
   }
   const todas = stockData.unidades;
-  const filtradas = aplicarFiltros(todas);
+  const visibles = aplicarFiltros(todas);
 
-  // KPIs (sobre todas, no sobre filtradas)
-  const enStock     = todas.filter(u => !u.vendido).length;
-  const impagas     = todas.filter(u => !u.vendido && u.pagoEstado === 'impaga').length;
-  const enExpo      = todas.filter(u => !u.vendido && u.exposicion).length;
-  const antigProm   = (() => {
-    const arr = todas.filter(u => !u.vendido && typeof u.antigDias === 'number');
-    if (!arr.length) return null;
-    return Math.round(arr.reduce((a, u) => a + u.antigDias, 0) / arr.length);
-  })();
+  // ----- KPIs (sobre el universo, no sobre las visibles) -----
+  const enStock = todas.filter(u => !u.vendido).length;
+  const impagas = todas.filter(u => !u.vendido && u.pagoEstado === 'impaga').length;
+  const enIndep = todas.filter(u => !u.vendido && u.exposicion === 'INDEPENDENCIA').length;
+  const enErios = todas.filter(u => !u.vendido && u.exposicion === 'ENTRE RIOS').length;
+  const reemplazar = todas.filter(u => u.vendido && u.exposicion).length;
 
   let html = '';
-
-  // ----- KPI cards -----
   html += '<div class="cards">';
-  html += kpi('Total unidades', todas.length, '');
-  html += kpi('En stock', enStock, '', 'good');
+  html += kpi('Total en stock', enStock, '', 'good');
   html += kpi('Impagas', impagas, impagas ? 'a pagar' : '', impagas ? 'bad' : '');
-  html += kpi('En exposición', enExpo, enExpo ? 'ENTRE RIOS / INDEPENDENCIA' : '', enExpo ? 'warn' : '');
-  if (antigProm !== null) html += kpi('Antig. prom. (en stock)', antigProm + ' días', '');
+  html += kpi('Independencia', enIndep, 'en exposición', enIndep ? 'expo-in' : '');
+  html += kpi('Entre Ríos',   enErios, 'en exposición', enErios ? 'expo-er' : '');
   html += '</div>';
 
-  // ----- Filtros -----
+  // Aviso si hay unidades vendidas que siguen marcadas con salón de exposición.
+  if (reemplazar > 0) {
+    html += '<div class="aviso-reemplazar">'
+          + '  <span class="ico">🔄</span>'
+          + '  <span><b>' + reemplazar + '</b> ' + (reemplazar === 1 ? 'unidad vendida sigue marcada en exposición' : 'unidades vendidas siguen marcadas en exposición') + ' — reemplazalas en la planilla.</span>'
+          + '</div>';
+  }
+
+  // ----- Toolbar interna: calculadora + filtros -----
   html += '<div class="filter-row">';
+  html += '  <button class="calc-toggle" onclick="toggleCalcSection()">🧮 ' + (calcOpen ? 'Cerrar calculadora' : 'Calculadora de precios') + '</button>';
   html += '  <div class="search">'
         + '    <span style="color:var(--vw-grey-3);font-size:13px">🔍</span>'
         + '    <input type="text" id="stockSearch" placeholder="Serie, modelo, color..." value="' + escapeHtml(filtros.search) + '">'
         + '  </div>';
-  html += grupoFiltro('Estado', 'estado', [
-    {v:'todas',    l:'Todas'},
-    {v:'stock',    l:'En stock'},
-    {v:'vendidas', l:'Vendidas'},
-  ]);
   html += grupoFiltro('Pago', 'pago', [
     {v:'todas',   l:'Todos'},
     {v:'pagas',   l:'Pagas'},
     {v:'impagas', l:'Impagas'},
   ]);
   html += grupoFiltro('Exposición', 'expo', [
-    {v:'todas', l:'Todas'},
-    {v:'expo',  l:'Solo en exposición'},
+    {v:'todas',     l:'Todas'},
+    {v:'indep',     l:'Independencia'},
+    {v:'erios',     l:'Entre Ríos'},
+    {v:'expuestas', l:'Cualquier salón'},
   ]);
   html += '</div>';
+
+  // ----- Calculadora (sección colapsable arriba de la tabla) -----
+  if (calcOpen) {
+    html += renderCalcSection();
+  }
 
   // ----- Tabla -----
   html += '<div class="table-wrap">'
         + '  <div class="table-head">'
         + '    <h3>Unidades</h3>'
-        + '    <div class="count">' + filtradas.length + ' de ' + todas.length + '</div>'
+        + '    <div class="count">' + visibles.length + ' visibles · ' + enStock + ' en stock</div>'
         + '  </div>'
         + '  <div class="table-scroll">'
-        + '    <table>'
+        + '    <table class="stock-tbl">'
         + '      <thead><tr>'
         + '        <th>Serie</th>'
         + '        <th class="ctr">Antig.</th>'
@@ -558,28 +709,19 @@ function renderStock() {
         + '        <th>Color</th>'
         + '        <th class="num">$ FC</th>'
         + '        <th class="ctr">Pago</th>'
-        + '        <th class="ctr">Estado</th>'
         + '        <th class="num">Oferta</th>'
         + '        <th class="num">Rdo</th>'
         + '        <th class="num">Lista</th>'
         + '        <th class="num">Dto</th>'
         + '        <th class="ctr">Expo</th>'
-        + '        <th class="ctr"></th>'
         + '      </tr></thead>'
         + '      <tbody>';
 
-  if (!filtradas.length) {
-    html += '<tr><td colspan="13" class="empty">No hay unidades que coincidan con los filtros.</td></tr>';
+  if (!visibles.length) {
+    html += '<tr><td colspan="11" class="empty">No hay unidades que coincidan con los filtros.</td></tr>';
   } else {
-    // Orden: en exposición primero, después por antigüedad desc (más viejas arriba)
-    const sorted = filtradas.slice().sort((a, b) => {
-      if (a.exposicion && !b.exposicion) return -1;
-      if (!a.exposicion && b.exposicion) return 1;
-      return (b.antigDias || 0) - (a.antigDias || 0);
-    });
-    for (const u of sorted) {
-      html += filaUnidad(u);
-    }
+    const sorted = ordenarUnidades(visibles);
+    for (const u of sorted) html += filaUnidad(u);
   }
 
   html += '      </tbody>'
@@ -589,13 +731,12 @@ function renderStock() {
 
   wrap.innerHTML = html;
 
-  // Wire del search
+  // Wire del search (mantengo el foco al re-render)
   const sinp = document.getElementById('stockSearch');
   if (sinp) {
     sinp.addEventListener('input', (e) => {
       filtros.search = e.target.value;
       renderStock();
-      // mantener foco al final del input
       const ns = document.getElementById('stockSearch');
       if (ns) {
         ns.focus();
@@ -603,6 +744,20 @@ function renderStock() {
       }
     });
   }
+}
+
+// Ranking de salón para el orden: indep=0, erios=1, resto=2.
+function _expoRank(u) {
+  if (u.exposicion === 'INDEPENDENCIA') return 0;
+  if (u.exposicion === 'ENTRE RIOS')    return 1;
+  return 2;
+}
+function ordenarUnidades(arr) {
+  return arr.slice().sort((a, b) => {
+    const ra = _expoRank(a), rb = _expoRank(b);
+    if (ra !== rb) return ra - rb;
+    return (b.antigDias || 0) - (a.antigDias || 0); // más viejas arriba
+  });
 }
 
 function kpi(label, value, sub, cls) {
@@ -631,11 +786,17 @@ function setFiltro(key, val) {
 function aplicarFiltros(arr) {
   const q = filtros.search.trim().toLowerCase();
   return arr.filter(u => {
-    if (filtros.estado === 'stock'    && u.vendido) return false;
-    if (filtros.estado === 'vendidas' && !u.vendido) return false;
+    // Regla base: no mostrar vendidas, salvo que sigan marcadas en exposición
+    // (sirve de recordatorio para reemplazar la unidad en el salón).
+    if (u.vendido && !u.exposicion) return false;
+
     if (filtros.pago === 'pagas'   && u.pagoEstado !== 'pagada') return false;
     if (filtros.pago === 'impagas' && u.pagoEstado !== 'impaga') return false;
-    if (filtros.expo === 'expo' && !u.exposicion) return false;
+
+    if (filtros.expo === 'indep'     && u.exposicion !== 'INDEPENDENCIA') return false;
+    if (filtros.expo === 'erios'     && u.exposicion !== 'ENTRE RIOS')    return false;
+    if (filtros.expo === 'expuestas' && !u.exposicion)                    return false;
+
     if (q) {
       const blob = (u.serie + ' ' + u.unidad + ' ' + u.color).toLowerCase();
       if (blob.indexOf(q) < 0) return false;
@@ -645,10 +806,19 @@ function aplicarFiltros(arr) {
 }
 
 function filaUnidad(u) {
-  const calcOpen = stockOpenCalc.has(u.serie);
-  const expoBadge = u.exposicion
-    ? '<span class="badge ' + (u.exposicion === 'ENTRE RIOS' ? 'expo-er' : 'expo-in') + '">' + escapeHtml(u.exposicion) + '</span>'
-    : '<span class="muted">—</span>';
+  // Badge de exposición (con cartel especial si ya está vendida)
+  let expoBadge;
+  if (u.exposicion) {
+    const cls = u.exposicion === 'ENTRE RIOS' ? 'expo-er' : 'expo-in';
+    if (u.vendido) {
+      expoBadge = '<span class="badge reemplazar" title="Vendida — reemplazar en ' + escapeHtml(u.exposicion) + '">'
+                + '🔄 REEMPLAZAR · ' + escapeHtml(u.exposicion) + '</span>';
+    } else {
+      expoBadge = '<span class="badge ' + cls + '">' + escapeHtml(u.exposicion) + '</span>';
+    }
+  } else {
+    expoBadge = '<span class="muted">—</span>';
+  }
 
   let pagoBadge;
   if (u.pagoEstado === 'pagada') {
@@ -661,133 +831,158 @@ function filaUnidad(u) {
     pagoBadge = '<span class="badge otro">' + escapeHtml(u.pagoStr) + '</span>';
   }
 
-  const estadoBadge = u.vendido
-    ? '<span class="badge vendido" title="' + escapeHtml(u.vendidoModelo) + '">VENDIDA</span>'
-    : '<span class="badge stock">STOCK</span>';
+  // En mobile, cada td se transforma en card apilada — el data-label es lo que
+  // aparece como "etiqueta" a la izquierda. Si una columna está vacía, escondemos
+  // el row entero con .hidden-empty para que la card quede prolija.
+  const rowCls = u.vendido && u.exposicion
+    ? 'expo vendida-en-expo'
+    : (u.exposicion ? 'expo' : '');
 
-  let html = '<tr class="' + (u.exposicion ? 'expo' : '') + '">';
-  html += '<td><span class="serie">' + escapeHtml(u.serie) + '</span></td>';
-  html += '<td class="ctr"><span title="' + escapeHtml(u.fechaFcStr || '') + '">' + (u.antigDias !== null ? u.antigDias + ' d' : '—') + '</span></td>';
-  html += '<td>' + escapeHtml(u.unidad) + '</td>';
-  html += '<td>' + escapeHtml(u.color) + '</td>';
-  html += '<td class="num">' + fmtPesos(u.montoFc) + '</td>';
-  html += '<td class="ctr">' + pagoBadge + '</td>';
-  html += '<td class="ctr">' + estadoBadge + '</td>';
-  html += '<td class="num">' + fmtPesos(u.ofertaActual) + '</td>';
-  html += '<td class="num">' + fmtPct(u.rdoActualPct) + '</td>';
-  html += '<td class="num">' + fmtPesos(u.lista) + '</td>';
-  html += '<td class="num">' + fmtPct(u.dtoActualPct) + '</td>';
-  html += '<td class="ctr">' + expoBadge + '</td>';
-  // Calculador solo si la unidad NO está vendida (no tiene sentido recalcular dto de algo vendido)
-  if (!u.vendido && u.lista > 0) {
-    html += '<td class="ctr">'
-          + '<button class="calc-btn ' + (calcOpen ? 'open' : '') + '" onclick="toggleCalc(\'' + escapeAttr(u.serie) + '\')">'
-          + (calcOpen ? '▴ Cerrar' : '▾ Calc')
-          + '</button>'
-          + '</td>';
-  } else {
-    html += '<td class="ctr"></td>';
-  }
+  let html = '<tr class="' + rowCls + '">';
+  html += '<td data-label="Serie"><span class="serie">' + escapeHtml(u.serie) + '</span></td>';
+  html += '<td class="ctr" data-label="Antig."><span title="Fact. ' + escapeHtml(u.fechaFcStr || '') + '">' + (u.antigDias !== null ? u.antigDias + ' d' : '—') + '</span></td>';
+  html += '<td data-label="Unidad">' + escapeHtml(u.unidad) + '</td>';
+  html += '<td data-label="Color">' + escapeHtml(u.color) + '</td>';
+  html += '<td class="num" data-label="$ FC">' + fmtPesos(u.montoFc) + '</td>';
+  html += '<td class="ctr" data-label="Pago">' + pagoBadge + '</td>';
+  html += '<td class="num" data-label="Oferta">' + fmtPesos(u.ofertaActual) + '</td>';
+  html += '<td class="num" data-label="Rdo">' + fmtPct(u.rdoActualPct) + '</td>';
+  html += '<td class="num" data-label="Lista">' + fmtPesos(u.lista) + '</td>';
+  html += '<td class="num" data-label="Dto">' + fmtPct(u.dtoActualPct) + '</td>';
+  html += '<td class="ctr" data-label="Expo">' + expoBadge + '</td>';
   html += '</tr>';
-
-  if (calcOpen && !u.vendido && u.lista > 0) {
-    html += filaCalc(u);
-  }
 
   return html;
 }
 
-function filaCalc(u) {
-  // sid se usa SOLO como ID de DOM (sanitizado para que getElementById matchee).
-  const sid = cssId(u.serie);
-  return ''
-    + '<tr class="calc-row"><td colspan="13">'
-    + '  <div class="calc-box">'
-    +      bloqueDto(u, sid)
-    +      bloquePrecio(u, sid)
-    + '  </div>'
-    + '</td></tr>';
-}
+// =======================================================================
+// CALCULADORA (sección aparte arriba de la tabla)
+// =======================================================================
+// Solo cálculo en pantalla — no toca la planilla. Dos modos sobre la unidad
+// elegida en el desplegable:
+//   % dto pedido: nuevo_rdo = rdo_actual − (dto_pedido − dto_actual)
+//   precio pedido: nuevo_rdo = rdo_actual − ((oferta − precio_pedido) / lista) × 100
 
-function bloqueDto(u, sid) {
-  return ''
-    + '<div class="calc-block">'
-    + '  <div class="ttl">Por % de descuento pedido</div>'
-    + '  <div class="ctx">Dto actual: <b>' + fmtPct(u.dtoActualPct) + '</b> · Rdo actual: <b>' + fmtPct(u.rdoActualPct) + '</b></div>'
-    + '  <div class="calc-input-row">'
-    + '    <label>% dto pedido:</label>'
-    + '    <input class="ipt" type="number" step="0.1" id="calcDto_' + sid + '" oninput="recalcDto(\'' + sid + '\')" placeholder="' + fmtNumLite(u.dtoActualPct) + '" />'
-    + '  </div>'
-    + '  <div class="calc-result neutral" id="calcDtoResult_' + sid + '">'
-    + '    <span class="lab">Rdo con dto pedido</span>'
-    + '    <span><span class="val">—</span><span class="delta"></span></span>'
-    + '  </div>'
-    + '</div>';
-}
-
-function bloquePrecio(u, sid) {
-  return ''
-    + '<div class="calc-block">'
-    + '  <div class="ttl">Por precio pedido ($)</div>'
-    + '  <div class="ctx">Oferta actual: <b>' + fmtPesos(u.ofertaActual) + '</b> · Lista: <b>' + fmtPesos(u.lista) + '</b></div>'
-    + '  <div class="calc-input-row">'
-    + '    <label>$ precio pedido:</label>'
-    + '    <input class="ipt" type="number" step="1000" id="calcPrecio_' + sid + '" oninput="recalcPrecio(\'' + sid + '\')" placeholder="' + Math.round(u.ofertaActual) + '" />'
-    + '  </div>'
-    + '  <div class="calc-result neutral" id="calcPrecioResult_' + sid + '">'
-    + '    <span class="lab">Rdo con precio pedido</span>'
-    + '    <span><span class="val">—</span><span class="delta"></span></span>'
-    + '  </div>'
-    + '</div>';
-}
-
-function toggleCalc(serie) {
-  if (stockOpenCalc.has(serie)) stockOpenCalc.delete(serie);
-  else stockOpenCalc.add(serie);
+function toggleCalcSection() {
+  calcOpen = !calcOpen;
+  if (!calcOpen) calcSerie = '';
   renderStock();
 }
 
-// =======================================================================
-// CALCULADOR (solo en pantalla — no toca la planilla)
-// =======================================================================
-// % dto: nuevo_rdo = rdo_actual - (dto_pedido - dto_actual)
-function recalcDto(serie) {
-  const u = stockData.unidades.find(x => x.serie === serie);
+function setCalcUnidad(serie) {
+  calcSerie = serie || '';
+  renderStock();
+  // Foco a uno de los inputs si hay unidad elegida
+  if (calcSerie) {
+    setTimeout(() => {
+      const inp = document.getElementById('calcDtoInput');
+      if (inp) inp.focus();
+    }, 0);
+  }
+}
+
+function renderCalcSection() {
+  // Unidades elegibles: solo las en stock (no vendidas) y con lista > 0.
+  const elegibles = stockData.unidades
+    .filter(u => !u.vendido && u.lista > 0)
+    .sort((a, b) => (a.unidad || '').localeCompare(b.unidad || ''));
+
+  const u = calcSerie ? stockData.unidades.find(x => x.serie === calcSerie) : null;
+
+  let html = '<div class="calc-section">';
+  html += '  <div class="calc-section-head">'
+        + '    <h3>🧮 Calculadora de precio</h3>'
+        + '    <p>Elegí una unidad y probá un % de dto o un precio pedido. El resultado se calcula en vivo, no toca la planilla.</p>'
+        + '  </div>';
+
+  // Desplegable
+  html += '  <div class="calc-select-row">'
+        + '    <label for="calcUnidadSel">Unidad:</label>'
+        + '    <select id="calcUnidadSel" onchange="setCalcUnidad(this.value)">'
+        + '      <option value="">— Elegir unidad —</option>';
+  for (const e of elegibles) {
+    const sel = e.serie === calcSerie ? ' selected' : '';
+    const label = e.serie + ' · ' + e.unidad + (e.color ? ' · ' + e.color : '');
+    html += '      <option value="' + escapeHtml(e.serie) + '"' + sel + '>' + escapeHtml(label) + '</option>';
+  }
+  html += '    </select>'
+        + '  </div>';
+
+  // Bloques (solo si hay unidad elegida)
+  if (u) {
+    html += '  <div class="calc-ctx-row">'
+          + '    <div><span class="lab">Oferta actual</span><span class="val">' + fmtPesos(u.ofertaActual) + '</span></div>'
+          + '    <div><span class="lab">Rdo actual</span><span class="val">' + fmtPct(u.rdoActualPct) + '</span></div>'
+          + '    <div><span class="lab">Lista</span><span class="val">' + fmtPesos(u.lista) + '</span></div>'
+          + '    <div><span class="lab">Dto actual</span><span class="val">' + fmtPct(u.dtoActualPct) + '</span></div>'
+          + '  </div>';
+
+    html += '  <div class="calc-box">';
+    html += '    <div class="calc-block">'
+          + '      <div class="ttl">Por % de descuento pedido</div>'
+          + '      <div class="calc-input-row">'
+          + '        <label>% dto pedido:</label>'
+          + '        <input class="ipt" type="number" step="0.1" id="calcDtoInput" oninput="recalcDto()" placeholder="' + fmtNumLite(u.dtoActualPct) + '" />'
+          + '      </div>'
+          + '      <div class="calc-result neutral" id="calcDtoResult">'
+          + '        <span class="lab">Rdo con dto pedido</span>'
+          + '        <span><span class="val">—</span><span class="delta"></span></span>'
+          + '      </div>'
+          + '    </div>';
+    html += '    <div class="calc-block">'
+          + '      <div class="ttl">Por precio pedido ($)</div>'
+          + '      <div class="calc-input-row">'
+          + '        <label>$ precio pedido:</label>'
+          + '        <input class="ipt" type="number" step="1000" id="calcPrecioInput" oninput="recalcPrecio()" placeholder="' + Math.round(u.ofertaActual) + '" />'
+          + '      </div>'
+          + '      <div class="calc-result neutral" id="calcPrecioResult">'
+          + '        <span class="lab">Rdo con precio pedido</span>'
+          + '        <span><span class="val">—</span><span class="delta"></span></span>'
+          + '      </div>'
+          + '    </div>';
+    html += '  </div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
+function recalcDto() {
+  const u = stockData.unidades.find(x => x.serie === calcSerie);
   if (!u) return;
-  const inp = document.getElementById('calcDto_' + cssId(serie));
-  const out = document.getElementById('calcDtoResult_' + cssId(serie));
+  const inp = document.getElementById('calcDtoInput');
+  const out = document.getElementById('calcDtoResult');
   if (!inp || !out) return;
 
-  const dtoPedido = parseFloat(inp.value);
-  if (isNaN(dtoPedido) || inp.value === '') {
+  const v = parseFloat(inp.value);
+  if (isNaN(v) || inp.value === '') {
     out.className = 'calc-result neutral';
     out.querySelector('.val').textContent = '—';
     out.querySelector('.delta').textContent = '';
     return;
   }
-  const nuevoRdo = u.rdoActualPct - (dtoPedido - u.dtoActualPct);
+  const nuevoRdo = u.rdoActualPct - (v - u.dtoActualPct);
   const delta = nuevoRdo - u.rdoActualPct;
   out.className = 'calc-result ' + (nuevoRdo < 0 ? 'bad' : nuevoRdo < u.rdoActualPct ? 'neutral' : 'good');
   out.querySelector('.val').textContent = fmtPct(nuevoRdo);
   out.querySelector('.delta').textContent = (delta >= 0 ? '+' : '') + fmtPct(delta, 2);
 }
 
-// $ precio pedido: nuevo_rdo = rdo_actual - ((oferta_actual - precio_pedido) / lista) * 100
-function recalcPrecio(serie) {
-  const u = stockData.unidades.find(x => x.serie === serie);
+function recalcPrecio() {
+  const u = stockData.unidades.find(x => x.serie === calcSerie);
   if (!u) return;
-  const inp = document.getElementById('calcPrecio_' + cssId(serie));
-  const out = document.getElementById('calcPrecioResult_' + cssId(serie));
+  const inp = document.getElementById('calcPrecioInput');
+  const out = document.getElementById('calcPrecioResult');
   if (!inp || !out) return;
 
-  const precioPedido = parseFloat(inp.value);
-  if (isNaN(precioPedido) || inp.value === '' || u.lista <= 0) {
+  const v = parseFloat(inp.value);
+  if (isNaN(v) || inp.value === '' || u.lista <= 0) {
     out.className = 'calc-result neutral';
     out.querySelector('.val').textContent = '—';
     out.querySelector('.delta').textContent = '';
     return;
   }
-  const drop = ((u.ofertaActual - precioPedido) / u.lista) * 100;
+  const drop = ((u.ofertaActual - v) / u.lista) * 100;
   const nuevoRdo = u.rdoActualPct - drop;
   const delta = nuevoRdo - u.rdoActualPct;
   out.className = 'calc-result ' + (nuevoRdo < 0 ? 'bad' : nuevoRdo < u.rdoActualPct ? 'neutral' : 'good');
@@ -824,13 +1019,6 @@ function escapeHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-function escapeAttr(s) {
-  return escapeHtml(s).replace(/'/g, '\\\'');
-}
-// IDs de DOM no toleran ciertos chars (/, espacios). Sanitizo para querySelector.
-function cssId(s) {
-  return String(s).replace(/[^A-Za-z0-9_-]/g, '_');
 }
 
 // =======================================================================
