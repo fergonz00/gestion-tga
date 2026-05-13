@@ -746,18 +746,10 @@ function renderStock() {
   }
 }
 
-// Ranking de salón para el orden: indep=0, erios=1, resto=2.
-function _expoRank(u) {
-  if (u.exposicion === 'INDEPENDENCIA') return 0;
-  if (u.exposicion === 'ENTRE RIOS')    return 1;
-  return 2;
-}
+// Orden: siempre por antigüedad descendente (más viejas arriba), sin importar
+// el salón. Para ver lo de un salón puntual se usa el filtro de exposición.
 function ordenarUnidades(arr) {
-  return arr.slice().sort((a, b) => {
-    const ra = _expoRank(a), rb = _expoRank(b);
-    if (ra !== rb) return ra - rb;
-    return (b.antigDias || 0) - (a.antigDias || 0); // más viejas arriba
-  });
+  return arr.slice().sort((a, b) => (b.antigDias || 0) - (a.antigDias || 0));
 }
 
 function kpi(label, value, sub, cls) {
