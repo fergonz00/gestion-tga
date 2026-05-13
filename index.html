@@ -269,7 +269,8 @@ tbody tr.vendida-en-expo:hover { background: rgba(239, 68, 68, 0.08); }
 /* Cuando la tabla está en modo "resumida" ocultamos las columnas marcadas
    como col-extra. Funciona tanto en desktop (tabla) como en mobile (cards
    apiladas), porque el selector aplica a th/td indistintamente. */
-table.stock-tbl.resumida .col-extra { display: none; }
+table.stock-tbl.resumida  .col-extra,
+table.ventas-tbl.resumida .col-extra { display: none; }
 
 /* ========== VENTAS ========== */
 .mes-row {
@@ -597,6 +598,7 @@ let vistaResumida = false;
 // Ventas
 let ventasData = null;            // { ventas, meses, mesActual, updatedAt }
 let mesSeleccionado = '';         // 'yyyy-mm'
+let vistaResumidaVentas = false;  // oculta IVA / acc / costo / serie / color
 
 // Filtros activos
 let filtros = {
@@ -866,6 +868,11 @@ function setFiltro(key, val) {
 function toggleVistaResumida() {
   vistaResumida = !vistaResumida;
   renderStock();
+}
+
+function toggleVistaResumidaVentas() {
+  vistaResumidaVentas = !vistaResumidaVentas;
+  renderVentas();
 }
 
 function aplicarFiltros(arr) {
@@ -1200,7 +1207,7 @@ function renderVentas() {
 
   let html = '';
 
-  // ----- Selector de mes -----
+  // ----- Selector de mes + toggle vista resumida -----
   html += '<div class="mes-row">';
   html += '  <label for="mesSel">Mes:</label>';
   html += '  <select id="mesSel" onchange="setMesVentas(this.value)">';
@@ -1213,6 +1220,9 @@ function renderVentas() {
     }
   }
   html += '  </select>';
+  html += '  <label class="toggle-resumida">'
+        + '    <input type="checkbox" ' + (vistaResumidaVentas ? 'checked' : '') + ' onchange="toggleVistaResumidaVentas()"> Vista resumida'
+        + '  </label>';
   html += '</div>';
 
   // ----- KPIs -----
@@ -1229,18 +1239,18 @@ function renderVentas() {
         + '    <div class="count">' + cantidad + ' ' + (cantidad === 1 ? 'venta' : 'ventas') + '</div>'
         + '  </div>'
         + '  <div class="table-scroll">'
-        + '    <table class="ventas-tbl responsive-cards">'
+        + '    <table class="ventas-tbl responsive-cards ' + (vistaResumidaVentas ? 'resumida' : '') + '">'
         + '      <thead><tr>'
         + '        <th class="ctr">#</th>'
         + '        <th>Fecha PV</th>'
         + '        <th># PV</th>'
         + '        <th class="num">Monto FC</th>'
-        + '        <th class="num">IVA</th>'
-        + '        <th class="num">Acc</th>'
-        + '        <th class="num">Costo hist.</th>'
-        + '        <th>Serie</th>'
+        + '        <th class="num col-extra">IVA</th>'
+        + '        <th class="num col-extra">Acc</th>'
+        + '        <th class="num col-extra">Costo hist.</th>'
+        + '        <th class="col-extra">Serie</th>'
         + '        <th>Modelo</th>'
-        + '        <th>Color</th>'
+        + '        <th class="col-extra">Color</th>'
         + '        <th class="num">Gcia $</th>'
         + '        <th class="num">Gcia %</th>'
         + '      </tr></thead>'
@@ -1266,12 +1276,12 @@ function filaVenta(v) {
   html += '<td data-label="Fecha PV">' + escapeHtml(v.fechaPvStr || fmtFechaCorta(v.fechaPvIso)) + '</td>';
   html += '<td data-label="# PV">' + escapeHtml(v.preventaNum || '—') + '</td>';
   html += '<td class="num" data-label="Monto FC">' + fmtPesos(v.montoFc) + '</td>';
-  html += '<td class="num" data-label="IVA">' + (v.iva ? fmtPct(v.iva, 1) : '—') + '</td>';
-  html += '<td class="num" data-label="Acc">' + (v.acc ? fmtPesos(v.acc) : (v.accStr || '—')) + '</td>';
-  html += '<td class="num" data-label="Costo hist.">' + fmtPesos(v.costoHist) + '</td>';
-  html += '<td data-label="Serie"><span class="serie">' + escapeHtml(v.serie) + '</span></td>';
+  html += '<td class="num col-extra" data-label="IVA">' + (v.iva ? fmtPct(v.iva, 1) : '—') + '</td>';
+  html += '<td class="num col-extra" data-label="Acc">' + (v.acc ? fmtPesos(v.acc) : (v.accStr || '—')) + '</td>';
+  html += '<td class="num col-extra" data-label="Costo hist.">' + fmtPesos(v.costoHist) + '</td>';
+  html += '<td class="col-extra" data-label="Serie"><span class="serie">' + escapeHtml(v.serie) + '</span></td>';
   html += '<td data-label="Modelo">' + escapeHtml(v.modelo) + '</td>';
-  html += '<td data-label="Color">' + escapeHtml(v.color) + '</td>';
+  html += '<td class="col-extra" data-label="Color">' + escapeHtml(v.color) + '</td>';
   html += '<td class="num gcia-pos" data-label="Gcia $">' + fmtPesos(v.gciaVtaPesos) + '</td>';
   html += '<td class="num gcia-pos" data-label="Gcia %">' + fmtPct(v.gciaVtaPct) + '</td>';
   html += '</tr>';
