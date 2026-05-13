@@ -1190,11 +1190,11 @@ function renderVentas() {
 
   // KPIs del mes
   const cantidad   = delMes.length;
-  const gciaTotal  = delMes.reduce((a, v) => a + (v.gciaVtaPesos || 0), 0);
   const gciaPctAvg = delMes.length
     ? delMes.reduce((a, v) => a + (v.gciaVtaPct || 0), 0) / delMes.length
     : 0;
-  // Gcia neta acumulada: tomamos la última fila del mes (es el acumulado al cierre del mes hasta esa fecha)
+  // Gcia neta acumulada: tomamos la última fila del mes (la planilla ya
+  // calcula el acumulado del mes en col Z, fila a fila).
   const ultima = delMes[delMes.length - 1];
   const acumMes = ultima ? ultima.gciaNetaAcum : 0;
 
@@ -1218,9 +1218,8 @@ function renderVentas() {
   // ----- KPIs -----
   html += '<div class="cards">';
   html += kpi('Ventas en el mes', cantidad, '', cantidad ? 'good' : '');
-  html += kpi('Gcia. del mes', fmtPesos(gciaTotal), '', gciaTotal > 0 ? 'good' : '');
+  html += kpi('Gcia. neta acumulada', fmtPesos(acumMes), 'al cierre del mes', acumMes > 0 ? 'good' : (acumMes < 0 ? 'bad' : ''));
   html += kpi('Gcia. % promedio', fmtPct(gciaPctAvg), '', '');
-  html += kpi('Gcia. neta acumulada', fmtPesos(acumMes), 'al cierre del mes', '');
   html += '</div>';
 
   // ----- Tabla -----
@@ -1244,12 +1243,11 @@ function renderVentas() {
         + '        <th>Color</th>'
         + '        <th class="num">Gcia $</th>'
         + '        <th class="num">Gcia %</th>'
-        + '        <th class="num">Gcia neta acum.</th>'
         + '      </tr></thead>'
         + '      <tbody>';
 
   if (!delMes.length) {
-    html += '<tr><td colspan="13" class="empty">No hay ventas registradas en ' + escapeHtml(meses.find(m => m.mesKey === mesSeleccionado)?.label || 'este mes') + '.</td></tr>';
+    html += '<tr><td colspan="12" class="empty">No hay ventas registradas en ' + escapeHtml(meses.find(m => m.mesKey === mesSeleccionado)?.label || 'este mes') + '.</td></tr>';
   } else {
     for (const v of delMes) html += filaVenta(v);
   }
@@ -1276,7 +1274,6 @@ function filaVenta(v) {
   html += '<td data-label="Color">' + escapeHtml(v.color) + '</td>';
   html += '<td class="num gcia-pos" data-label="Gcia $">' + fmtPesos(v.gciaVtaPesos) + '</td>';
   html += '<td class="num gcia-pos" data-label="Gcia %">' + fmtPct(v.gciaVtaPct) + '</td>';
-  html += '<td class="num" data-label="Gcia neta acum.">' + fmtPesos(v.gciaNetaAcum) + '</td>';
   html += '</tr>';
   return html;
 }
