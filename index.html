@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gestión · TGA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --vw-blue: #001E50;
+  --vw-blue-light: #00437A;
+  --vw-white: #FFFFFF;
+  --vw-grey-1: #F5F5F5;
+  --vw-grey-2: #E5E5E5;
+  --vw-grey-3: #999999;
+  --vw-grey-4: #666666;
+  --vw-black: #1A1A1A;
+  --green: #10B981;
+  --green-soft: #D1FAE5;
+  --green-dark: #065F46;
+  --orange: #F59E0B;
+  --orange-soft: #FEF3C7;
+  --orange-dark: #92400E;
+  --red: #EF4444;
+  --red-soft: #FEE2E2;
+  --red-dark: #991B1B;
+  --purple: #8B5CF6;
+  --purple-soft: #EDE9FE;
+  --purple-dark: #5B21B6;
+  --radius: 12px;
+  --shadow: 0 2px 12px rgba(0,30,80,0.08);
+  --shadow-lg: 0 8px 32px rgba(0,30,80,0.12);
+  --font: 'DM Sans', sans-serif;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: var(--font); background: var(--vw-grey-1); color: var(--vw-black); min-height:100vh; -webkit-font-smoothing: antialiased; }
+button { font-family: var(--font); cursor: pointer; border: none; }
+input, select { font-family: var(--font); }
+a { color: inherit; text-decoration: none; }
+.hidden { display: none !important; }
+
+/* ========== HEADER ========== */
+.app-header {
+  background: var(--vw-blue); color: white;
+  padding: 14px 20px;
+  display: flex; align-items: center; justify-content: space-between;
+  position: sticky; top: 0; z-index: 100;
+}
+.app-header .brand { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
+.app-header .user-info { display: flex; align-items: center; gap: 12px; font-size: 13px; }
+.app-header .user-name { opacity: 0.9; }
+.app-header button {
+  background: rgba(255,255,255,0.15); color: white;
+  padding: 8px 14px; border-radius: 6px;
+  font-size: 13px; font-weight: 500;
+  transition: background 0.2s;
+}
+.app-header button:hover { background: rgba(255,255,255,0.25); }
+
+.wrap { max-width: 1400px; margin: 0 auto; padding: 24px 20px 60px; }
+h2 { font-size: 22px; font-weight: 700; color: var(--vw-blue); margin-bottom: 4px; }
+.lead { font-size: 14px; color: var(--vw-grey-4); margin-bottom: 20px; }
+
+/* ========== GATE ========== */
+.gate {
+  min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, var(--vw-blue) 0%, var(--vw-blue-light) 100%);
+  padding: 20px;
+}
+.gate-box {
+  background: white; padding: 40px 32px; border-radius: var(--radius);
+  width: 100%; max-width: 380px;
+  box-shadow: var(--shadow-lg); text-align: center;
+}
+.gate-box .logo { font-size: 20px; font-weight: 700; color: var(--vw-blue); margin-bottom: 8px; }
+.gate-box .msg  { font-size: 14px; color: var(--vw-grey-4); margin-bottom: 20px; }
+.gate-box .btn  {
+  display: inline-block; background: var(--vw-blue); color: white;
+  padding: 10px 18px; border-radius: 6px; font-size: 13px; font-weight: 600;
+}
+
+/* ========== TABS ========== */
+.tabs {
+  display: flex; gap: 4px; border-bottom: 2px solid var(--vw-grey-2);
+  margin-bottom: 20px; overflow-x: auto;
+}
+.tab {
+  padding: 12px 18px; background: transparent;
+  font-size: 14px; font-weight: 600; color: var(--vw-grey-4);
+  border-bottom: 2px solid transparent; margin-bottom: -2px;
+  white-space: nowrap; transition: all 0.15s;
+}
+.tab:hover { color: var(--vw-blue); }
+.tab.active { color: var(--vw-blue); border-bottom-color: var(--vw-blue); }
+.panel { display: none; }
+.panel.active { display: block; }
+
+/* ========== TOOLBAR ========== */
+.toolbar {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+}
+.toolbar .updated { font-size: 12px; color: var(--vw-grey-3); }
+.toolbar .actions { display: flex; gap: 8px; align-items: center; }
+.toolbar button.refresh {
+  background: var(--vw-blue); color: white;
+  padding: 8px 14px; border-radius: 6px;
+  font-size: 13px; font-weight: 600;
+}
+.toolbar button.refresh:hover { background: var(--vw-blue-light); }
+.toolbar button.refresh:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* ========== KPI CARDS ========== */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px; margin-bottom: 22px;
+}
+.card {
+  background: white; border-radius: var(--radius);
+  padding: 16px 16px 14px; box-shadow: var(--shadow);
+}
+.card .label {
+  font-size: 11px; color: var(--vw-grey-3);
+  text-transform: uppercase; letter-spacing: 0.6px;
+  font-weight: 600; margin-bottom: 6px;
+}
+.card .value {
+  font-size: 24px; font-weight: 700; color: var(--vw-blue);
+  letter-spacing: -0.5px; line-height: 1.1;
+}
+.card .sub { font-size: 12px; color: var(--vw-grey-4); margin-top: 4px; }
+.card.warn .value { color: var(--orange); }
+.card.bad  .value { color: var(--red); }
+.card.good .value { color: var(--green); }
+
+/* ========== FILTROS ========== */
+.filter-row {
+  display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px;
+  align-items: center;
+}
+.filter-group {
+  display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+}
+.filter-group .lbl {
+  font-size: 11px; color: var(--vw-grey-3);
+  text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;
+  margin-right: 4px;
+}
+.chip {
+  padding: 6px 12px; background: white; color: var(--vw-grey-4);
+  border: 1px solid var(--vw-grey-2); border-radius: 100px;
+  font-size: 12px; font-weight: 500;
+}
+.chip:hover { border-color: var(--vw-grey-3); }
+.chip.active { background: var(--vw-blue); color: white; border-color: var(--vw-blue); }
+
+.search {
+  display: flex; align-items: center; gap: 6px;
+  background: white; border: 1px solid var(--vw-grey-2);
+  border-radius: 100px; padding: 4px 12px;
+  min-width: 220px; flex: 1 1 220px; max-width: 320px;
+}
+.search input {
+  flex: 1; border: none; outline: none;
+  font-size: 13px; padding: 6px 4px;
+  background: transparent;
+}
+
+/* ========== TABLA STOCK ========== */
+.table-wrap {
+  background: white; border-radius: var(--radius);
+  box-shadow: var(--shadow); overflow: hidden;
+}
+.table-wrap .table-head {
+  padding: 12px 16px; border-bottom: 1px solid var(--vw-grey-2);
+  display: flex; justify-content: space-between; align-items: center;
+  flex-wrap: wrap; gap: 8px;
+}
+.table-wrap .table-head h3 { font-size: 14px; font-weight: 600; color: var(--vw-blue); }
+.table-wrap .table-head .count { font-size: 12px; color: var(--vw-grey-4); }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+thead th {
+  background: var(--vw-grey-1); color: var(--vw-grey-4);
+  font-size: 10.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.4px;
+  padding: 9px 10px; text-align: left;
+  border-bottom: 1px solid var(--vw-grey-2);
+  white-space: nowrap;
+}
+thead th.num, tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
+thead th.ctr, tbody td.ctr { text-align: center; }
+tbody tr { border-bottom: 1px solid var(--vw-grey-2); }
+tbody tr:hover { background: var(--vw-grey-1); }
+tbody td { padding: 10px 10px; vertical-align: middle; }
+tbody tr.expo { background: linear-gradient(to right, rgba(139,92,246,0.06), transparent 280px); }
+tbody tr.expo:hover { background: linear-gradient(to right, rgba(139,92,246,0.12), var(--vw-grey-1) 280px); }
+
+.serie { font-weight: 600; color: var(--vw-blue); font-family: monospace; font-size: 12px; }
+.muted { color: var(--vw-grey-3); font-size: 11px; }
+
+/* Badges */
+.badge {
+  display: inline-block; font-size: 10px; font-weight: 700;
+  padding: 3px 8px; border-radius: 100px;
+  text-transform: uppercase; letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+.badge.paga    { background: var(--green-soft);  color: var(--green-dark); }
+.badge.impaga  { background: var(--red-soft);    color: var(--red-dark); }
+.badge.otro    { background: var(--vw-grey-2);   color: var(--vw-grey-4); }
+.badge.vendido { background: var(--vw-grey-2);   color: var(--vw-grey-4); }
+.badge.stock   { background: var(--green-soft);  color: var(--green-dark); }
+.badge.expo-er { background: var(--orange-soft); color: var(--orange-dark); }
+.badge.expo-in { background: var(--purple-soft); color: var(--purple-dark); }
+
+.calc-btn {
+  background: var(--vw-grey-1); color: var(--vw-blue);
+  padding: 5px 10px; border-radius: 6px;
+  font-size: 11px; font-weight: 600;
+  transition: all 0.15s;
+}
+.calc-btn:hover { background: var(--vw-grey-2); }
+.calc-btn.open { background: var(--vw-blue); color: white; }
+
+/* Fila expandida con el calculador */
+tr.calc-row { background: var(--vw-grey-1) !important; }
+tr.calc-row td { padding: 0; }
+.calc-box {
+  padding: 16px 18px; border-top: 1px dashed var(--vw-grey-3);
+  display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+}
+@media (max-width: 800px) { .calc-box { grid-template-columns: 1fr; } }
+.calc-block {
+  background: white; padding: 14px 16px; border-radius: 8px;
+  border: 1px solid var(--vw-grey-2);
+}
+.calc-block .ttl {
+  font-size: 11px; color: var(--vw-grey-3);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  font-weight: 600; margin-bottom: 10px;
+}
+.calc-block .ctx {
+  font-size: 11px; color: var(--vw-grey-4);
+  margin-bottom: 10px; line-height: 1.5;
+}
+.calc-block .ctx b { color: var(--vw-black); }
+.calc-input-row {
+  display: flex; gap: 8px; align-items: center; margin-bottom: 12px;
+}
+.calc-input-row label {
+  font-size: 12px; color: var(--vw-grey-4); flex: 0 0 auto;
+}
+.calc-input-row .ipt {
+  flex: 1; padding: 7px 10px;
+  border: 1px solid var(--vw-grey-2); border-radius: 6px;
+  font-size: 13px; outline: none;
+  font-variant-numeric: tabular-nums;
+}
+.calc-input-row .ipt:focus { border-color: var(--vw-blue); }
+.calc-result {
+  background: var(--vw-grey-1); border-radius: 6px;
+  padding: 10px 12px; font-size: 13px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.calc-result .lab { color: var(--vw-grey-4); font-size: 12px; }
+.calc-result .val { font-weight: 700; font-size: 18px; font-variant-numeric: tabular-nums; }
+.calc-result.good .val { color: var(--green); }
+.calc-result.bad  .val { color: var(--red); }
+.calc-result.neutral .val { color: var(--vw-blue); }
+.calc-result .delta { font-size: 11px; color: var(--vw-grey-4); margin-left: 8px; }
+
+/* Loading / error */
+.loading {
+  text-align: center; padding: 60px 20px;
+  color: var(--vw-grey-4); font-size: 14px;
+}
+.spinner {
+  display: inline-block; width: 28px; height: 28px;
+  border: 3px solid var(--vw-grey-2); border-top-color: var(--vw-blue);
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+  margin-bottom: 12px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.errbox {
+  background: var(--red-soft); color: var(--red-dark);
+  padding: 18px 22px; border-radius: var(--radius);
+  font-size: 13px; line-height: 1.5;
+}
+.errbox .ttl { font-weight: 700; margin-bottom: 4px; font-size: 14px; }
+.errbox code {
+  background: rgba(0,0,0,0.08); padding: 1px 6px;
+  border-radius: 4px; font-size: 12px;
+}
+
+.empty {
+  text-align: center; padding: 40px 20px;
+  color: var(--vw-grey-3); font-size: 13px;
+}
+
+.placeholder {
+  background: white; border-radius: var(--radius);
+  padding: 60px 20px; text-align: center;
+  box-shadow: var(--shadow); color: var(--vw-grey-4);
+}
+.placeholder .ico { font-size: 40px; margin-bottom: 12px; opacity: 0.5; }
+.placeholder .ttl { font-size: 16px; font-weight: 600; color: var(--vw-blue); margin-bottom: 6px; }
+
+@media (max-width: 700px) {
+  .wrap { padding: 16px 12px 40px; }
+  .card .value { font-size: 20px; }
+  thead th, tbody td { padding: 7px 8px; font-size: 11.5px; }
+  .filter-row { gap: 10px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ==================== GATE ==================== -->
+<div id="gateScreen" class="gate hidden">
+  <div class="gate-box">
+    <div class="logo">Gestión TGA</div>
+    <div class="msg" id="gateMsg">Esta vista es privada.</div>
+    <a class="btn" href="https://titogonzalez.online">← Volver al portal</a>
+  </div>
+</div>
+
+<!-- ==================== APP ==================== -->
+<div id="appScreen" class="hidden">
+  <header class="app-header">
+    <div class="brand">📊 Gestión TGA</div>
+    <div class="user-info">
+      <span class="user-name" id="userName"></span>
+      <button onclick="window.location.href='https://titogonzalez.online'">← Portal</button>
+      <button onclick="logout()">Salir</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <h2>Stock, ventas y patentamientos</h2>
+    <p class="lead">Espejo en vivo de la planilla madre. Cambios en el Excel se reflejan al apretar "Actualizar".</p>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="stock" onclick="setTab('stock')">Stock</button>
+      <button class="tab" data-tab="ventas" onclick="setTab('ventas')">Ventas del mes</button>
+      <button class="tab" data-tab="patentamientos" onclick="setTab('patentamientos')">Patentamientos del mes</button>
+    </div>
+
+    <!-- =================== STOCK =================== -->
+    <section class="panel active" id="panelStock">
+      <div class="toolbar">
+        <div class="updated" id="updatedAtStock">—</div>
+        <div class="actions">
+          <button class="refresh" id="btnRefreshStock" onclick="loadStock(true)">Actualizar</button>
+        </div>
+      </div>
+      <div id="stockContent"></div>
+    </section>
+
+    <!-- =================== VENTAS =================== -->
+    <section class="panel" id="panelVentas">
+      <div class="placeholder">
+        <div class="ico">📈</div>
+        <div class="ttl">Ventas del mes</div>
+        <div>Próximamente. Hablamos qué columnas y desglose querés ver acá.</div>
+      </div>
+    </section>
+
+    <!-- =================== PATENTAMIENTOS =================== -->
+    <section class="panel" id="panelPatentamientos">
+      <div class="placeholder">
+        <div class="ico">🪪</div>
+        <div class="ttl">Patentamientos del mes</div>
+        <div>Próximamente. Hablamos qué columnas y desglose querés ver acá.</div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+// =======================================================================
+// CONFIG
+// =======================================================================
+const SHARED_COOKIE = 'tga_session';
+const SHARED_DOMAIN = '.titogonzalez.online';
+const USUARIOS_PERMITIDOS = ['fngonzalez', 'fgonzalez'];
+
+// URL del Web App publicado desde el Apps Script de la planilla espejo.
+// Pendiente: pegar acá la URL que devuelve "Deploy → Web app" en el editor de Apps Script.
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwL1T3T3_u4NXRFOXa-sdc0hAnXdCI-qjWRhi0t5yTjFNzCAvbpPHUSNKLk7sicECIv6g/exec';
+const APPS_SCRIPT_TOKEN = 'tga-gestion-R7nQ4xK8jL';
+
+// =======================================================================
+// ESTADO
+// =======================================================================
+let stockData = null;          // { unidades, updatedAt }
+let stockOpenCalc = new Set(); // series con el calculador abierto
+
+// Filtros activos
+let filtros = {
+  search:    '',
+  estado:    'todas',  // 'todas' | 'stock' | 'vendidas'
+  pago:      'todas',  // 'todas' | 'pagas' | 'impagas'
+  expo:      'todas',  // 'todas' | 'expo'
+};
+
+// =======================================================================
+// SESIÓN (cookie SSO compartida)
+// =======================================================================
+function getSharedCookie() {
+  const m = document.cookie.match(new RegExp('(?:^|;\\s*)' + SHARED_COOKIE + '=([^;]+)'));
+  if (!m) return null;
+  try { return JSON.parse(decodeURIComponent(m[1])); } catch { return null; }
+}
+function clearSharedCookie() {
+  document.cookie = SHARED_COOKIE + '=; path=/; domain=' + SHARED_DOMAIN + '; max-age=0; Secure; SameSite=Lax';
+}
+function showGate(msg) {
+  document.getElementById('gateMsg').textContent = msg || 'Esta vista es privada.';
+  document.getElementById('appScreen').classList.add('hidden');
+  document.getElementById('gateScreen').classList.remove('hidden');
+}
+function enterApp(session) {
+  document.getElementById('gateScreen').classList.add('hidden');
+  document.getElementById('appScreen').classList.remove('hidden');
+  document.getElementById('userName').textContent = session.nombre || session.usuario;
+  loadStock(false);
+}
+function logout() {
+  clearSharedCookie();
+  try { localStorage.removeItem('portal_tga_session'); } catch {}
+  window.location.href = 'https://titogonzalez.online';
+}
+
+// =======================================================================
+// TABS
+// =======================================================================
+function setTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  const map = {
+    stock:          'panelStock',
+    ventas:         'panelVentas',
+    patentamientos: 'panelPatentamientos',
+  };
+  const el = document.getElementById(map[tab]);
+  if (el) el.classList.add('active');
+}
+
+// =======================================================================
+// STOCK · fetch
+// =======================================================================
+async function loadStock(forzar) {
+  if (stockData && !forzar) { renderStock(); return; }
+
+  const btn = document.getElementById('btnRefreshStock');
+  const wrap = document.getElementById('stockContent');
+  btn.disabled = true; btn.textContent = 'Cargando...';
+  wrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>Cargando stock...</div></div>';
+
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) {
+    wrap.innerHTML = '<div class="errbox"><div class="ttl">⚙️ Falta conectar la planilla</div>'
+      + '<div>Hay que publicar el Apps Script de la planilla espejo y pegar la URL en <code>index.html</code> (constante <code>APPS_SCRIPT_URL</code>). Ver <code>README.md</code>.</div></div>';
+    btn.disabled = false; btn.textContent = 'Actualizar';
+    return;
+  }
+
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=stock';
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    stockData = data;
+    renderStock();
+    const upd = document.getElementById('updatedAtStock');
+    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+  } catch (e) {
+    console.error(e);
+    wrap.innerHTML = '<div class="errbox"><div class="ttl">⚠️ No se pudo cargar el stock</div>'
+      + '<div>' + escapeHtml(e.message || String(e)) + '</div></div>';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Actualizar';
+  }
+}
+
+// =======================================================================
+// STOCK · render
+// =======================================================================
+function renderStock() {
+  const wrap = document.getElementById('stockContent');
+  if (!stockData || !Array.isArray(stockData.unidades)) {
+    wrap.innerHTML = '<div class="empty">Sin datos.</div>';
+    return;
+  }
+  const todas = stockData.unidades;
+  const filtradas = aplicarFiltros(todas);
+
+  // KPIs (sobre todas, no sobre filtradas)
+  const enStock     = todas.filter(u => !u.vendido).length;
+  const impagas     = todas.filter(u => !u.vendido && u.pagoEstado === 'impaga').length;
+  const enExpo      = todas.filter(u => !u.vendido && u.exposicion).length;
+  const antigProm   = (() => {
+    const arr = todas.filter(u => !u.vendido && typeof u.antigDias === 'number');
+    if (!arr.length) return null;
+    return Math.round(arr.reduce((a, u) => a + u.antigDias, 0) / arr.length);
+  })();
+
+  let html = '';
+
+  // ----- KPI cards -----
+  html += '<div class="cards">';
+  html += kpi('Total unidades', todas.length, '');
+  html += kpi('En stock', enStock, '', 'good');
+  html += kpi('Impagas', impagas, impagas ? 'a pagar' : '', impagas ? 'bad' : '');
+  html += kpi('En exposición', enExpo, enExpo ? 'ENTRE RIOS / INDEPENDENCIA' : '', enExpo ? 'warn' : '');
+  if (antigProm !== null) html += kpi('Antig. prom. (en stock)', antigProm + ' días', '');
+  html += '</div>';
+
+  // ----- Filtros -----
+  html += '<div class="filter-row">';
+  html += '  <div class="search">'
+        + '    <span style="color:var(--vw-grey-3);font-size:13px">🔍</span>'
+        + '    <input type="text" id="stockSearch" placeholder="Serie, modelo, color..." value="' + escapeHtml(filtros.search) + '">'
+        + '  </div>';
+  html += grupoFiltro('Estado', 'estado', [
+    {v:'todas',    l:'Todas'},
+    {v:'stock',    l:'En stock'},
+    {v:'vendidas', l:'Vendidas'},
+  ]);
+  html += grupoFiltro('Pago', 'pago', [
+    {v:'todas',   l:'Todos'},
+    {v:'pagas',   l:'Pagas'},
+    {v:'impagas', l:'Impagas'},
+  ]);
+  html += grupoFiltro('Exposición', 'expo', [
+    {v:'todas', l:'Todas'},
+    {v:'expo',  l:'Solo en exposición'},
+  ]);
+  html += '</div>';
+
+  // ----- Tabla -----
+  html += '<div class="table-wrap">'
+        + '  <div class="table-head">'
+        + '    <h3>Unidades</h3>'
+        + '    <div class="count">' + filtradas.length + ' de ' + todas.length + '</div>'
+        + '  </div>'
+        + '  <div class="table-scroll">'
+        + '    <table>'
+        + '      <thead><tr>'
+        + '        <th>Serie</th>'
+        + '        <th class="ctr">Antig.</th>'
+        + '        <th>Unidad</th>'
+        + '        <th>Color</th>'
+        + '        <th class="num">$ FC</th>'
+        + '        <th class="ctr">Pago</th>'
+        + '        <th class="ctr">Estado</th>'
+        + '        <th class="num">Oferta</th>'
+        + '        <th class="num">Rdo</th>'
+        + '        <th class="num">Lista</th>'
+        + '        <th class="num">Dto</th>'
+        + '        <th class="ctr">Expo</th>'
+        + '        <th class="ctr"></th>'
+        + '      </tr></thead>'
+        + '      <tbody>';
+
+  if (!filtradas.length) {
+    html += '<tr><td colspan="13" class="empty">No hay unidades que coincidan con los filtros.</td></tr>';
+  } else {
+    // Orden: en exposición primero, después por antigüedad desc (más viejas arriba)
+    const sorted = filtradas.slice().sort((a, b) => {
+      if (a.exposicion && !b.exposicion) return -1;
+      if (!a.exposicion && b.exposicion) return 1;
+      return (b.antigDias || 0) - (a.antigDias || 0);
+    });
+    for (const u of sorted) {
+      html += filaUnidad(u);
+    }
+  }
+
+  html += '      </tbody>'
+        + '    </table>'
+        + '  </div>'
+        + '</div>';
+
+  wrap.innerHTML = html;
+
+  // Wire del search
+  const sinp = document.getElementById('stockSearch');
+  if (sinp) {
+    sinp.addEventListener('input', (e) => {
+      filtros.search = e.target.value;
+      renderStock();
+      // mantener foco al final del input
+      const ns = document.getElementById('stockSearch');
+      if (ns) {
+        ns.focus();
+        ns.setSelectionRange(filtros.search.length, filtros.search.length);
+      }
+    });
+  }
+}
+
+function kpi(label, value, sub, cls) {
+  return '<div class="card ' + (cls || '') + '">'
+       + '  <div class="label">' + escapeHtml(label) + '</div>'
+       + '  <div class="value">' + escapeHtml(String(value)) + '</div>'
+       + (sub ? '  <div class="sub">' + escapeHtml(sub) + '</div>' : '')
+       + '</div>';
+}
+
+function grupoFiltro(label, key, opts) {
+  let h = '<div class="filter-group">';
+  h += '<span class="lbl">' + escapeHtml(label) + ':</span>';
+  for (const o of opts) {
+    const active = filtros[key] === o.v;
+    h += '<button class="chip ' + (active ? 'active' : '') + '" onclick="setFiltro(\'' + key + '\', \'' + o.v + '\')">' + escapeHtml(o.l) + '</button>';
+  }
+  h += '</div>';
+  return h;
+}
+function setFiltro(key, val) {
+  filtros[key] = val;
+  renderStock();
+}
+
+function aplicarFiltros(arr) {
+  const q = filtros.search.trim().toLowerCase();
+  return arr.filter(u => {
+    if (filtros.estado === 'stock'    && u.vendido) return false;
+    if (filtros.estado === 'vendidas' && !u.vendido) return false;
+    if (filtros.pago === 'pagas'   && u.pagoEstado !== 'pagada') return false;
+    if (filtros.pago === 'impagas' && u.pagoEstado !== 'impaga') return false;
+    if (filtros.expo === 'expo' && !u.exposicion) return false;
+    if (q) {
+      const blob = (u.serie + ' ' + u.unidad + ' ' + u.color).toLowerCase();
+      if (blob.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+}
+
+function filaUnidad(u) {
+  const calcOpen = stockOpenCalc.has(u.serie);
+  const expoBadge = u.exposicion
+    ? '<span class="badge ' + (u.exposicion === 'ENTRE RIOS' ? 'expo-er' : 'expo-in') + '">' + escapeHtml(u.exposicion) + '</span>'
+    : '<span class="muted">—</span>';
+
+  let pagoBadge;
+  if (u.pagoEstado === 'pagada') {
+    pagoBadge = '<span class="badge paga" title="' + escapeHtml(u.pagoStr || 'PAGA') + '">'
+              + (u.pagoFechaIso ? 'Pago ' + fmtFechaCorta(u.pagoFechaIso) : 'PAGA')
+              + '</span>';
+  } else if (u.pagoEstado === 'impaga') {
+    pagoBadge = '<span class="badge impaga">IMPAGA</span>';
+  } else {
+    pagoBadge = '<span class="badge otro">' + escapeHtml(u.pagoStr) + '</span>';
+  }
+
+  const estadoBadge = u.vendido
+    ? '<span class="badge vendido" title="' + escapeHtml(u.vendidoModelo) + '">VENDIDA</span>'
+    : '<span class="badge stock">STOCK</span>';
+
+  let html = '<tr class="' + (u.exposicion ? 'expo' : '') + '">';
+  html += '<td><span class="serie">' + escapeHtml(u.serie) + '</span></td>';
+  html += '<td class="ctr"><span title="' + escapeHtml(u.fechaFcStr || '') + '">' + (u.antigDias !== null ? u.antigDias + ' d' : '—') + '</span></td>';
+  html += '<td>' + escapeHtml(u.unidad) + '</td>';
+  html += '<td>' + escapeHtml(u.color) + '</td>';
+  html += '<td class="num">' + fmtPesos(u.montoFc) + '</td>';
+  html += '<td class="ctr">' + pagoBadge + '</td>';
+  html += '<td class="ctr">' + estadoBadge + '</td>';
+  html += '<td class="num">' + fmtPesos(u.ofertaActual) + '</td>';
+  html += '<td class="num">' + fmtPct(u.rdoActualPct) + '</td>';
+  html += '<td class="num">' + fmtPesos(u.lista) + '</td>';
+  html += '<td class="num">' + fmtPct(u.dtoActualPct) + '</td>';
+  html += '<td class="ctr">' + expoBadge + '</td>';
+  // Calculador solo si la unidad NO está vendida (no tiene sentido recalcular dto de algo vendido)
+  if (!u.vendido && u.lista > 0) {
+    html += '<td class="ctr">'
+          + '<button class="calc-btn ' + (calcOpen ? 'open' : '') + '" onclick="toggleCalc(\'' + escapeAttr(u.serie) + '\')">'
+          + (calcOpen ? '▴ Cerrar' : '▾ Calc')
+          + '</button>'
+          + '</td>';
+  } else {
+    html += '<td class="ctr"></td>';
+  }
+  html += '</tr>';
+
+  if (calcOpen && !u.vendido && u.lista > 0) {
+    html += filaCalc(u);
+  }
+
+  return html;
+}
+
+function filaCalc(u) {
+  // sid se usa SOLO como ID de DOM (sanitizado para que getElementById matchee).
+  const sid = cssId(u.serie);
+  return ''
+    + '<tr class="calc-row"><td colspan="13">'
+    + '  <div class="calc-box">'
+    +      bloqueDto(u, sid)
+    +      bloquePrecio(u, sid)
+    + '  </div>'
+    + '</td></tr>';
+}
+
+function bloqueDto(u, sid) {
+  return ''
+    + '<div class="calc-block">'
+    + '  <div class="ttl">Por % de descuento pedido</div>'
+    + '  <div class="ctx">Dto actual: <b>' + fmtPct(u.dtoActualPct) + '</b> · Rdo actual: <b>' + fmtPct(u.rdoActualPct) + '</b></div>'
+    + '  <div class="calc-input-row">'
+    + '    <label>% dto pedido:</label>'
+    + '    <input class="ipt" type="number" step="0.1" id="calcDto_' + sid + '" oninput="recalcDto(\'' + sid + '\')" placeholder="' + fmtNumLite(u.dtoActualPct) + '" />'
+    + '  </div>'
+    + '  <div class="calc-result neutral" id="calcDtoResult_' + sid + '">'
+    + '    <span class="lab">Rdo con dto pedido</span>'
+    + '    <span><span class="val">—</span><span class="delta"></span></span>'
+    + '  </div>'
+    + '</div>';
+}
+
+function bloquePrecio(u, sid) {
+  return ''
+    + '<div class="calc-block">'
+    + '  <div class="ttl">Por precio pedido ($)</div>'
+    + '  <div class="ctx">Oferta actual: <b>' + fmtPesos(u.ofertaActual) + '</b> · Lista: <b>' + fmtPesos(u.lista) + '</b></div>'
+    + '  <div class="calc-input-row">'
+    + '    <label>$ precio pedido:</label>'
+    + '    <input class="ipt" type="number" step="1000" id="calcPrecio_' + sid + '" oninput="recalcPrecio(\'' + sid + '\')" placeholder="' + Math.round(u.ofertaActual) + '" />'
+    + '  </div>'
+    + '  <div class="calc-result neutral" id="calcPrecioResult_' + sid + '">'
+    + '    <span class="lab">Rdo con precio pedido</span>'
+    + '    <span><span class="val">—</span><span class="delta"></span></span>'
+    + '  </div>'
+    + '</div>';
+}
+
+function toggleCalc(serie) {
+  if (stockOpenCalc.has(serie)) stockOpenCalc.delete(serie);
+  else stockOpenCalc.add(serie);
+  renderStock();
+}
+
+// =======================================================================
+// CALCULADOR (solo en pantalla — no toca la planilla)
+// =======================================================================
+// % dto: nuevo_rdo = rdo_actual - (dto_pedido - dto_actual)
+function recalcDto(serie) {
+  const u = stockData.unidades.find(x => x.serie === serie);
+  if (!u) return;
+  const inp = document.getElementById('calcDto_' + cssId(serie));
+  const out = document.getElementById('calcDtoResult_' + cssId(serie));
+  if (!inp || !out) return;
+
+  const dtoPedido = parseFloat(inp.value);
+  if (isNaN(dtoPedido) || inp.value === '') {
+    out.className = 'calc-result neutral';
+    out.querySelector('.val').textContent = '—';
+    out.querySelector('.delta').textContent = '';
+    return;
+  }
+  const nuevoRdo = u.rdoActualPct - (dtoPedido - u.dtoActualPct);
+  const delta = nuevoRdo - u.rdoActualPct;
+  out.className = 'calc-result ' + (nuevoRdo < 0 ? 'bad' : nuevoRdo < u.rdoActualPct ? 'neutral' : 'good');
+  out.querySelector('.val').textContent = fmtPct(nuevoRdo);
+  out.querySelector('.delta').textContent = (delta >= 0 ? '+' : '') + fmtPct(delta, 2);
+}
+
+// $ precio pedido: nuevo_rdo = rdo_actual - ((oferta_actual - precio_pedido) / lista) * 100
+function recalcPrecio(serie) {
+  const u = stockData.unidades.find(x => x.serie === serie);
+  if (!u) return;
+  const inp = document.getElementById('calcPrecio_' + cssId(serie));
+  const out = document.getElementById('calcPrecioResult_' + cssId(serie));
+  if (!inp || !out) return;
+
+  const precioPedido = parseFloat(inp.value);
+  if (isNaN(precioPedido) || inp.value === '' || u.lista <= 0) {
+    out.className = 'calc-result neutral';
+    out.querySelector('.val').textContent = '—';
+    out.querySelector('.delta').textContent = '';
+    return;
+  }
+  const drop = ((u.ofertaActual - precioPedido) / u.lista) * 100;
+  const nuevoRdo = u.rdoActualPct - drop;
+  const delta = nuevoRdo - u.rdoActualPct;
+  out.className = 'calc-result ' + (nuevoRdo < 0 ? 'bad' : nuevoRdo < u.rdoActualPct ? 'neutral' : 'good');
+  out.querySelector('.val').textContent = fmtPct(nuevoRdo);
+  out.querySelector('.delta').textContent = (delta >= 0 ? '+' : '') + fmtPct(delta, 2);
+}
+
+// =======================================================================
+// FORMAT / UTILS
+// =======================================================================
+function fmtPesos(n) {
+  if (n == null || n === '' || isNaN(n)) return '—';
+  if (!n) return '—';
+  return '$ ' + Math.round(n).toLocaleString('es-AR');
+}
+function fmtPct(n, dec) {
+  if (n == null || isNaN(n)) return '—';
+  return (Math.round(n * 100) / 100).toLocaleString('es-AR', {
+    minimumFractionDigits: dec || 1,
+    maximumFractionDigits: dec || 2,
+  }) + ' %';
+}
+function fmtNumLite(n) {
+  if (n == null || isNaN(n)) return '';
+  return (Math.round(n * 10) / 10).toString();
+}
+function fmtFechaCorta(iso) {
+  if (!iso) return '';
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return iso;
+  return m[3] + '/' + m[2];
+}
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function escapeAttr(s) {
+  return escapeHtml(s).replace(/'/g, '\\\'');
+}
+// IDs de DOM no toleran ciertos chars (/, espacios). Sanitizo para querySelector.
+function cssId(s) {
+  return String(s).replace(/[^A-Za-z0-9_-]/g, '_');
+}
+
+// =======================================================================
+// INIT
+// =======================================================================
+(function init() {
+  const session = getSharedCookie();
+  if (!session || !session.usuario) {
+    showGate('Necesitás iniciar sesión en el portal.');
+    return;
+  }
+  if (session._impersonatedBy) {
+    showGate('Esta vista no permite sesiones impersonadas.');
+    return;
+  }
+  if (!USUARIOS_PERMITIDOS.includes(session.usuario)) {
+    showGate('Tu usuario no tiene acceso a esta vista.');
+    return;
+  }
+  enterApp(session);
+})();
+</script>
+</body>
+</html>
