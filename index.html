@@ -689,16 +689,18 @@ table.patent-tbl.resumida .col-extra { display: none; }
 /* Incentivos — upload de PDFs */
 .upload-zone {
   background: white; border: 2px dashed var(--vw-grey-2); border-radius: var(--radius);
-  padding: 30px; text-align: center; transition: all 0.2s; margin-bottom: 18px;
+  padding: 26px 20px; text-align: center; transition: all 0.2s; margin-bottom: 18px;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
 }
 .upload-zone.over { border-color: var(--vw-blue); background: #f0f6ff; }
 .upload-zone input[type=file] { display: none; }
 .upload-zone .upload-btn {
-  background: var(--vw-blue); color: white; padding: 10px 20px; border-radius: 6px;
-  font-size: 13px; font-weight: 600; border: none; cursor: pointer; margin-top: 8px;
+  display: inline-block;
+  background: var(--vw-blue); color: white; padding: 9px 18px; border-radius: 6px;
+  font-size: 13px; font-weight: 600; border: none; cursor: pointer;
 }
 .upload-zone .upload-btn:hover { background: var(--vw-blue-light); }
-.upload-progress { font-size: 12px; color: var(--vw-grey-3); margin-top: 8px; }
+.upload-zone .upload-progress { font-size: 12px; color: var(--vw-grey-3); max-width: 520px; }
 .parsed-summary {
   background: #f0f6ff; border-left: 3px solid var(--vw-blue); padding: 10px 14px;
   border-radius: 6px; margin: 12px 0; font-size: 13px;
