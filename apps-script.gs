@@ -447,8 +447,11 @@ function _normTipoCarpeta(raw) {
     .replace(/[ÓÖÒÔ]/g,'O').replace(/[ÚÜÙÛ]/g,'U');
   if (/\bTRAD/.test(s) || /\bCONTAD/.test(s))                                                    return TIPO_CARPETA_CANON.TRAD;
   if (/PLAN.*AHORR|AHORR.*PLAN/.test(s))                                                         return TIPO_CARPETA_CANON.PLAN;
-  // Bancos externos: variantes y typos comunes
-  if (/GALI?CI|GALICA|NACION|FRANC[EÉ]S|HSBC|SUPERVIELLE|MACRO|SANTANDER|BBVA|ICBC|PATAGONIA/.test(s)) return TIPO_CARPETA_CANON.EXTERNO;
+  // "Financia Francés" lo opera el banco Francés pero la financiación es VW
+  // (cobramos como Financiado VW, no como banco externo).
+  if (/FRANC[EÉ]S/.test(s))                                                                       return TIPO_CARPETA_CANON.VW;
+  // Bancos externos reales: variantes y typos comunes
+  if (/GALI?CI|GALICA|NACION|HSBC|SUPERVIELLE|MACRO|SANTANDER|BBVA|ICBC|PATAGONIA/.test(s))      return TIPO_CARPETA_CANON.EXTERNO;
   if (/\bVW\b|VOLKSWAGEN/.test(s))                                                               return TIPO_CARPETA_CANON.VW;
   // "FINANCIADO" / "FINANCIA" / "FIANCIA" / "FIANANCIA" sin marca → asumo VW (lo más común)
   if (/FI(N|A)A?NA?CI?[AO]/.test(s))                                                             return TIPO_CARPETA_CANON.VW;
