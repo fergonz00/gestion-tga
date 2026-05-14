@@ -50,16 +50,43 @@ function doGet(e) {
     return jsonResponse({ error: 'forbidden' });
   }
 
-  const tipo = String(params.tipo || 'stock').toLowerCase();
+  const tipo  = String(params.tipo  || 'stock').toLowerCase();
+  const fresh = String(params.fresh || '') === '1';
   try {
-    if (tipo === 'stock')           return jsonResponse(getStock());
-    if (tipo === 'ventas')          return jsonResponse(getVentas());
-    if (tipo === 'ventasdebug')     return jsonResponse(getVentasDebug(params));
-    if (tipo === 'patentamientos')  return jsonResponse(getPatentamientos());
+    if (tipo === 'stock')           return jsonResponse(_cached('stock',          CACHE_TTL_SEC, fresh, getStock));
+    if (tipo === 'ventas')          return jsonResponse(_cached('ventas',         CACHE_TTL_SEC, fresh, getVentas));
+    if (tipo === 'patentamientos')  return jsonResponse(_cached('patentamientos', CACHE_TTL_SEC, fresh, getPatentamientos));
+    if (tipo === 'ventasdebug')     return jsonResponse(getVentasDebug(params));  // sin cache
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
   }
+}
+
+// TTL del cache server-side. La primera request del minuto paga ~3-5s leyendo
+// IMPORTRANGE; las siguientes vuelven en ~200ms. Con auto-refresh cada 10 min
+// y el botón "Actualizar" que pasa &fresh=1, 90s es invisible para el usuario.
+const CACHE_TTL_SEC = 90;
+
+// Cache del response completo por tipo. Si el valor supera 100KB (límite de
+// CacheService) el put tira excepción, lo ignoramos y devolvemos fresco igual.
+function _cached(key, ttlSec, fresh, fn) {
+  const cache = CacheService.getScriptCache();
+  if (!fresh) {
+    const hit = cache.get(key);
+    if (hit) {
+      try {
+        const parsed = JSON.parse(hit);
+        parsed._cached = true;  // útil para debug en frontend
+        return parsed;
+      } catch (e) { /* cache corrupto, refetch */ }
+    }
+  }
+  const data = fn();
+  try {
+    cache.put(key, JSON.stringify(data), ttlSec);
+  } catch (e) { /* >100KB o cuota, no cacheable */ }
+  return data;
 }
 
 // Devuelve TODAS las filas de la hoja ventas sin filtrar (excepto vacías

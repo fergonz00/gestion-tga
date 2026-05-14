@@ -775,6 +775,29 @@ let filtros = {
 };
 
 // =======================================================================
+// CACHE EN LOCALSTORAGE
+// =======================================================================
+// Para que el primer pintado después de un reload sea instantáneo: guardo el
+// último response de cada endpoint y lo restauro al abrir. El fetch fresco
+// corre en background y vuelve a renderizar cuando llega (rápido, gracias al
+// CacheService del Apps Script). El botón "Actualizar" siempre va con fresh=1.
+const LS_CACHE_KEYS = {
+  stock:          'gestion_cache_stock',
+  ventas:         'gestion_cache_ventas',
+  patentamientos: 'gestion_cache_patent',
+};
+function lsCacheGet(tipo) {
+  try {
+    const raw = localStorage.getItem(LS_CACHE_KEYS[tipo]);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function lsCacheSet(tipo, data) {
+  try { localStorage.setItem(LS_CACHE_KEYS[tipo], JSON.stringify(data)); }
+  catch { /* quota lleno, lo dejamos pasar */ }
+}
+
+// =======================================================================
 // SESIÓN (cookie SSO compartida)
 // =======================================================================
 function getSharedCookie() {
@@ -798,9 +821,8 @@ function enterApp(session) {
   startAutoRefresh();
 }
 
-// Auto-refresh cada 10 minutos. Refresca solo la tab activa para no
-// gastar cuota del Apps Script en data que nadie está viendo. Si el usuario
-// está editando algo de la calculadora, lo dejo en paz (calc abierta = no toco).
+// Auto-refresh cada 10 minutos. Refresca solo la tab activa, en background
+// (sin spinner ni pantalla en blanco). Si la calc está abierta no toco stock.
 const AUTO_REFRESH_MS = 10 * 60 * 1000;
 let _autoRefreshTimer = null;
 function startAutoRefresh() {
@@ -808,11 +830,11 @@ function startAutoRefresh() {
   _autoRefreshTimer = setInterval(() => {
     const activo = document.querySelector('.tab.active')?.dataset.tab;
     if (activo === 'stock' && !calcOpen) {
-      loadStock(true);
+      _fetchStockSilent();
     } else if (activo === 'ventas') {
-      loadVentas(true);
+      _fetchVentasSilent();
     } else if (activo === 'patentamientos') {
-      loadPatentamientos(true);
+      _fetchPatentSilent();
     }
   }, AUTO_REFRESH_MS);
 }
@@ -846,6 +868,20 @@ function setTab(tab) {
 async function loadStock(forzar) {
   if (stockData && !forzar) { renderStock(); return; }
 
+  // Primer pintado: si hay cache en localStorage, lo mostramos ya y
+  // disparamos el fetch fresco en background (sin spinner).
+  if (!stockData && !forzar) {
+    const cached = lsCacheGet('stock');
+    if (cached) {
+      stockData = cached;
+      renderStock();
+      const upd = document.getElementById('updatedAtStock');
+      if (upd && cached.updatedAt) upd.textContent = 'Actualizado: ' + new Date(cached.updatedAt).toLocaleString('es-AR');
+      _fetchStockSilent();
+      return;
+    }
+  }
+
   const btn = document.getElementById('btnRefreshStock');
   const wrap = document.getElementById('stockContent');
   btn.disabled = true; btn.textContent = 'Cargando...';
@@ -859,12 +895,13 @@ async function loadStock(forzar) {
   }
 
   try {
-    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=stock';
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=stock' + (forzar ? '&fresh=1' : '');
     const res = await fetch(url);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     if (data && data.error) throw new Error(data.error);
     stockData = data;
+    lsCacheSet('stock', data);
     renderStock();
     const upd = document.getElementById('updatedAtStock');
     if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
@@ -875,6 +912,24 @@ async function loadStock(forzar) {
   } finally {
     btn.disabled = false; btn.textContent = 'Actualizar';
   }
+}
+
+// Refresh en background sin spinner. Si la calc está abierta, no toco la UI
+// (igual que el auto-refresh original). Pide fresh=1 para evitar caches.
+async function _fetchStockSilent() {
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return;
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=stock&fresh=1';
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.error) return;
+    stockData = data;
+    lsCacheSet('stock', data);
+    if (!calcOpen) renderStock();
+    const upd = document.getElementById('updatedAtStock');
+    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+  } catch { /* silencioso */ }
 }
 
 // =======================================================================
@@ -1315,6 +1370,23 @@ function recalcPrecio() {
 async function loadVentas(forzar) {
   if (ventasData && !forzar) { renderVentas(); return; }
 
+  // Primer pintado: restaurar de localStorage y refrescar en bg.
+  if (!ventasData && !forzar) {
+    const cached = lsCacheGet('ventas');
+    if (cached) {
+      ventasData = cached;
+      if (!mesSeleccionado || !cached.meses.find(m => m.mesKey === mesSeleccionado)) {
+        const conMesActual = cached.meses.find(m => m.mesKey === cached.mesActual);
+        mesSeleccionado = conMesActual ? cached.mesActual : (cached.meses[0] ? cached.meses[0].mesKey : '');
+      }
+      renderVentas();
+      const upd = document.getElementById('updatedAtVentas');
+      if (upd && cached.updatedAt) upd.textContent = 'Actualizado: ' + new Date(cached.updatedAt).toLocaleString('es-AR');
+      _fetchVentasSilent();
+      return;
+    }
+  }
+
   const btn  = document.getElementById('btnRefreshVentas');
   const wrap = document.getElementById('ventasContent');
   if (btn) { btn.disabled = true; btn.textContent = 'Cargando...'; }
@@ -1328,12 +1400,13 @@ async function loadVentas(forzar) {
   }
 
   try {
-    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=ventas';
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=ventas' + (forzar ? '&fresh=1' : '');
     const res = await fetch(url);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     if (data && data.error) throw new Error(data.error);
     ventasData = data;
+    lsCacheSet('ventas', data);
     // Default: mes vigente si tiene datos, sino el más reciente disponible
     if (!mesSeleccionado || !data.meses.find(m => m.mesKey === mesSeleccionado)) {
       const conMesActual = data.meses.find(m => m.mesKey === data.mesActual);
@@ -1349,6 +1422,26 @@ async function loadVentas(forzar) {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Actualizar'; }
   }
+}
+
+async function _fetchVentasSilent() {
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return;
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=ventas&fresh=1';
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.error) return;
+    ventasData = data;
+    lsCacheSet('ventas', data);
+    if (!mesSeleccionado || !data.meses.find(m => m.mesKey === mesSeleccionado)) {
+      const conMesActual = data.meses.find(m => m.mesKey === data.mesActual);
+      mesSeleccionado = conMesActual ? data.mesActual : (data.meses[0] ? data.meses[0].mesKey : '');
+    }
+    renderVentas();
+    const upd = document.getElementById('updatedAtVentas');
+    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+  } catch { /* silencioso */ }
 }
 
 function setMesVentas(mesKey) {
@@ -1562,6 +1655,23 @@ function filaVenta(v) {
 async function loadPatentamientos(forzar) {
   if (patentData && !forzar) { renderPatentamientos(); return; }
 
+  // Primer pintado: restaurar de localStorage y refrescar en bg.
+  if (!patentData && !forzar) {
+    const cached = lsCacheGet('patentamientos');
+    if (cached) {
+      patentData = cached;
+      if (!mesSelPat || !cached.meses.find(m => m.mesKey === mesSelPat)) {
+        const conMesActual = cached.meses.find(m => m.mesKey === cached.mesActual);
+        mesSelPat = conMesActual ? cached.mesActual : (cached.meses[0] ? cached.meses[0].mesKey : '');
+      }
+      renderPatentamientos();
+      const upd = document.getElementById('updatedAtPatent');
+      if (upd && cached.updatedAt) upd.textContent = 'Actualizado: ' + new Date(cached.updatedAt).toLocaleString('es-AR');
+      _fetchPatentSilent();
+      return;
+    }
+  }
+
   const btn  = document.getElementById('btnRefreshPatent');
   const wrap = document.getElementById('patentContent');
   if (btn) { btn.disabled = true; btn.textContent = 'Cargando...'; }
@@ -1574,12 +1684,13 @@ async function loadPatentamientos(forzar) {
   }
 
   try {
-    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=patentamientos';
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=patentamientos' + (forzar ? '&fresh=1' : '');
     const res = await fetch(url);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     if (data && data.error) throw new Error(data.error);
     patentData = data;
+    lsCacheSet('patentamientos', data);
     if (!mesSelPat || !data.meses.find(m => m.mesKey === mesSelPat)) {
       const conMesActual = data.meses.find(m => m.mesKey === data.mesActual);
       mesSelPat = conMesActual ? data.mesActual : (data.meses[0] ? data.meses[0].mesKey : '');
@@ -1594,6 +1705,26 @@ async function loadPatentamientos(forzar) {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Actualizar'; }
   }
+}
+
+async function _fetchPatentSilent() {
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return;
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=patentamientos&fresh=1';
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.error) return;
+    patentData = data;
+    lsCacheSet('patentamientos', data);
+    if (!mesSelPat || !data.meses.find(m => m.mesKey === mesSelPat)) {
+      const conMesActual = data.meses.find(m => m.mesKey === data.mesActual);
+      mesSelPat = conMesActual ? data.mesActual : (data.meses[0] ? data.meses[0].mesKey : '');
+    }
+    renderPatentamientos();
+    const upd = document.getElementById('updatedAtPatent');
+    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+  } catch { /* silencioso */ }
 }
 
 function setMesPat(mesKey)       { mesSelPat = mesKey || ''; renderPatentamientos(); }
