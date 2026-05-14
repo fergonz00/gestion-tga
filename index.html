@@ -737,6 +737,10 @@ table.patent-tbl.resumida .col-extra { display: none; }
 .tipo-badge.whosale    { background: #e9d6ff; color: #4a008a; }
 .tipo-badge.desconocido { background: #f0f0f0; color: #666; }
 .match-warn { color: #cc6600; font-size: 10px; margin-left: 4px; }
+.tipo-select {
+  font-size: 11px; padding: 3px 4px; border: 1px solid var(--vw-grey-2);
+  border-radius: 4px; background: white; max-width: 260px; cursor: pointer;
+}
 
 /* Conciliación de cobros — color de fondo por celda */
 .estado-cobrado    { background: #d4f4e2 !important; }   /* verde */
@@ -2208,16 +2212,15 @@ function renderIncentivos() {
           + '    <table class="patent-tbl responsive-cards">'
           + '      <thead><tr><th>NC</th><th>Mes</th><th>Serie</th><th>Modelo</th><th>Texto</th><th>Tipo</th><th class="num">Monto neto</th></tr></thead>'
           + '      <tbody>';
-    for (const p of pagosParseados) {
-      const badgeCls = (p.tipoDetectado || 'desconocido').replace(/[^a-z0-9]/gi,'');
+    for (let idx = 0; idx < pagosParseados.length; idx++) {
+      const p = pagosParseados[idx];
       html += '<tr>';
       html += '<td data-label="NC"><span class="serie">' + escapeHtml(p.ncNum || '—') + '</span></td>';
       html += '<td data-label="Mes">' + escapeHtml(p.mesIncentivo || '—') + (p.mesDeducido ? ' <small style="color:#cc6600">(deducido)</small>' : '') + '</td>';
       html += '<td data-label="Serie"><span class="serie">' + escapeHtml(p.serie || '—') + '</span></td>';
       html += '<td data-label="Modelo">' + escapeHtml(p.modelo || '— no encontrado') + '</td>';
       html += '<td data-label="Texto">' + escapeHtml(p.textoTipo || '—') + '</td>';
-      html += '<td data-label="Tipo"><span class="tipo-badge ' + badgeCls + '">' + escapeHtml(p.tipoDetectado || 'desconocido') + '</span>'
-            + (p.matchWarn ? '<span class="match-warn">⚠ ' + escapeHtml(p.matchWarn) + '</span>' : '') + '</td>';
+      html += '<td data-label="Tipo">' + _selectTipoPago(idx, p) + '</td>';
       html += '<td class="num" data-label="Monto neto">' + fmtPesos(p.montoNeto) + '</td>';
       html += '</tr>';
     }
@@ -2564,10 +2567,11 @@ function _findModeloPorSerie(serie) {
   return null;
 }
 
-// Dado un pago parseado, busca el modelo y la CC más probable comparando
-// montoNeto contra las CCs esperadas del modelo en la BT del mes_incentivo.
+// Dado un pago parseado, busca el modelo y arma las 5 opciones de CC
+// (cc90/táctico/adic1/adic2/whosale) con su esperado y diff vs lo pagado.
+// Pre-selecciona la mejor opción, pero el usuario puede cambiarla manualmente.
 function _matchearPago(p) {
-  const out = { tipoDetectado: 'desconocido', modelo: null, matchWarn: null };
+  const out = { tipoDetectado: 'desconocido', modelo: null, matchWarn: null, opciones: [] };
   out.modelo = _findModeloPorSerie(p.serie);
   if (!out.modelo) { out.matchWarn = 'serie no está en stock/patent'; return out; }
 
@@ -2576,37 +2580,89 @@ function _matchearPago(p) {
   const cc = data.modelosBT[_normModeloKey(out.modelo)];
   if (!cc) { out.matchWarn = 'modelo no está en la BT del mes'; return out; }
 
-  // Targets a comparar con el montoNeto del PDF
-  const targets = {
-    cc90:        cc.cc90,
-    cc90_100:    cc.cc90 / 0.9,  // versión al 100%
-    tactico:     cc.tactico,
-    whosale:     cc.whosale,
-    adicional1:  cc.adicional1,
-    adicional2:  cc.adicional2,
-  };
-  let best = null, bestPctDiff = 1;
-  for (const k in targets) {
-    const t = targets[k];
-    if (!t || t === 0) continue;
-    const pctDiff = Math.abs(t - p.montoNeto) / t;
-    if (pctDiff < 0.01 && pctDiff < bestPctDiff) {
-      best = k; bestPctDiff = pctDiff;
-    }
+  // Armar las 5 opciones con su esperado y diff
+  const tipos = [
+    { tipo: 'whosale',    label: 'Whosale',     esperado: cc.whosale    },
+    { tipo: 'cc90',       label: 'CC 90%',      esperado: cc.cc90       },
+    { tipo: 'cc90',       label: 'CC 100% (90/0.9)', esperado: cc.cc90 ? cc.cc90 / 0.9 : 0, esVariante: true },
+    { tipo: 'tactico',    label: 'Táctico',     esperado: cc.tactico    },
+    { tipo: 'adicional1', label: 'Adicional 1', esperado: cc.adicional1 },
+    { tipo: 'adicional2', label: 'Adicional 2', esperado: cc.adicional2 },
+  ].filter(o => o.esperado && o.esperado > 0);
+
+  for (const o of tipos) {
+    o.diff    = p.montoNeto - o.esperado;
+    o.diffPct = Math.abs(o.diff) / o.esperado;
   }
-  if (best) {
-    out.tipoDetectado = best.startsWith('cc90') ? 'cc90' : best;
-    if (best === 'cc90_100') out.matchWarn = 'matcheó al 100% (vs 90% base)';
-  } else {
-    // Si no matchea por monto, usar texto libre como pista
-    const t = (p.textoTipo || '').toLowerCase();
-    if (/wholesale|whosale/.test(t))    { out.tipoDetectado = 'whosale';    out.matchWarn = 'monto no matchea BT, asignado por texto'; }
-    else if (/tactic/.test(t))          { out.tipoDetectado = 'tactico';    out.matchWarn = 'monto no matchea BT, asignado por texto'; }
-    else if (/cc.?90|c90/i.test(t))     { out.tipoDetectado = 'cc90';       out.matchWarn = 'monto no matchea BT, asignado por texto'; }
-    else if (/adicional/.test(t))       { out.tipoDetectado = 'adicional1'; out.matchWarn = 'monto no matchea BT, asignado por texto (genérico)'; }
-    else                                { out.matchWarn = 'monto no matchea ninguna CC de la BT'; }
+  // Ordenar por diff% ascendente — la más cercana primero
+  tipos.sort((a, b) => a.diffPct - b.diffPct);
+  out.opciones = tipos;
+
+  // Pre-selección: primero intentamos por texto libre (más confiable), luego
+  // por mejor diff. La idea es que casi siempre el texto dice "wholesale" o
+  // "tacticos" y eso desambigua, aunque el monto no matchee exacto.
+  const t = (p.textoTipo || '').toLowerCase();
+  let porTexto = null;
+  if      (/wholesale|whosale/.test(t)) porTexto = 'whosale';
+  else if (/tactic/.test(t))            porTexto = 'tactico';
+  else if (/cc.?90|c90/.test(t))        porTexto = 'cc90';
+  else if (/adicional\s*1|adic\s*1/.test(t)) porTexto = 'adicional1';
+  else if (/adicional\s*2|adic\s*2/.test(t)) porTexto = 'adicional2';
+  else if (/adicional/.test(t))         porTexto = 'adicional1';
+
+  if (porTexto && tipos.find(o => o.tipo === porTexto)) {
+    out.tipoDetectado = porTexto;
+    out.matchWarn = 'sugerido por texto del PDF';
+  } else if (tipos[0]) {
+    out.tipoDetectado = tipos[0].tipo;
+    out.matchWarn = tipos[0].diffPct < 0.02 ? null : 'mejor candidato por monto · diff > 2%';
   }
   return out;
+}
+
+// Actualiza el tipo detectado de un pago en preview (por click en el dropdown)
+function setTipoPagoManual(idx, valor) {
+  if (pagosParseados[idx]) {
+    pagosParseados[idx].tipoDetectado = valor;
+    pagosParseados[idx].matchWarn = '(elegido manualmente)';
+    renderIncentivos();
+  }
+}
+
+// HTML del dropdown para elegir el tipo de CC de un pago en preview.
+// Muestra todas las opciones con su esperado y la diff vs el monto pagado.
+function _selectTipoPago(idx, p) {
+  const badgeCls = (p.tipoDetectado || 'desconocido').replace(/[^a-z0-9]/gi, '');
+  if (!p.opciones || !p.opciones.length) {
+    return '<span class="tipo-badge ' + badgeCls + '">' + escapeHtml(p.tipoDetectado || 'desconocido') + '</span>'
+         + (p.matchWarn ? '<small class="match-warn">⚠ ' + escapeHtml(p.matchWarn) + '</small>' : '');
+  }
+  let h = '<select class="tipo-select" onchange="setTipoPagoManual(' + idx + ', this.value)">';
+  // Una opción por cada CC disponible para ese modelo
+  const yaPuestos = new Set();
+  for (const o of p.opciones) {
+    // Para CC 90 mostramos las 2 variantes pero ambas mapean al tipo "cc90"
+    const valor = o.tipo;
+    const key = valor + '|' + Math.round(o.esperado);
+    if (yaPuestos.has(key)) continue;
+    yaPuestos.add(key);
+    const sign  = o.diff >= 0 ? '+' : '−';
+    const diffStr = sign + fmtPesos(Math.abs(o.diff));
+    // Es "selected" si p.tipoDetectado === o.tipo. Si hay 2 cc90, marcamos
+    // la versión cuya diff sea menor.
+    const isBest = (p.tipoDetectado === o.tipo) && (o === p.opciones.find(x => x.tipo === o.tipo));
+    h += '<option value="' + valor + '"' + (isBest ? ' selected' : '') + '>'
+       + escapeHtml(o.label) + ' · esp ' + fmtPesos(o.esperado) + ' · diff ' + diffStr
+       + '</option>';
+  }
+  h += '<option value="desconocido"' + (p.tipoDetectado === 'desconocido' ? ' selected' : '') + '>— Desconocido / no clasificar —</option>';
+  h += '</select>';
+  if (p.matchWarn) h += '<small class="match-warn">⚠ ' + escapeHtml(p.matchWarn) + '</small>';
+  // Badge chiquito del tipo seleccionado al lado, color
+  h = '<div style="display:flex;flex-direction:column;gap:3px">'
+    + '<span class="tipo-badge ' + badgeCls + '">' + escapeHtml(p.tipoDetectado || 'desconocido') + '</span>'
+    + h + '</div>';
+  return h;
 }
 
 function _resumirPagosParseados(pagos) {
