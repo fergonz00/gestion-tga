@@ -347,17 +347,19 @@ function _norm(s) {
 // PATENTAMIENTOS
 // =======================================================================
 // Hoja "patentamientos" = espejo (IMPORTRANGE) de "adm de ventas".
-// Mapeo de columnas (mantengo el primer listado que pasó Fer):
-//   A num                  M reventa/particular
-//   B # PV                 N vendedor
-//   C fecha PV             O usado SI/NO
-//   D serie                P cliente
-//   E chasis               Q modelo
-//   F mes patentamiento    R localidad
-//     (texto "ABRIL")      S fecha patentamiento (real)
-//   G patenta a (TG/CL/RE) T dominio
-//   H admin
+// Mapeo real (confirmado por Fer 2026-05-14, headers de la madre):
+//   A num                  L reventa o particular
+//   B # PV                 M vendedor
+//   C fecha PV             N usado SI/NO
+//   D serie                O cliente
+//   E chasis               P modelo
+//   F mes patentamiento    Q localidad
+//     (texto "ABRIL")      R fecha patentamiento (real)
+//   G patenta TG/CL/RE     S dominio
+//   H admin                T fecha pago VW (no usado)
 //   I AA (tipo carpeta: TRAD / PLAN AHORRO / FINANCIA FRANCES)
+//   J monto financiado (no usado)
+//   K fecha liquidación crédito (no usado)
 //
 // Filtro: solo desde PATENTAMIENTOS_MES_MINIMO (2026-04).
 // El mes se determina por col F (texto en español), no por fecha real.
@@ -411,11 +413,11 @@ function getPatentamientos() {
     const mesKey = anioActual + '-' + mesNum;
     if (mesKey < PATENTAMIENTOS_MES_MINIMO) continue;
 
-    // S = fecha patentamiento real
-    const fechaPat = _parseFecha(rrow[18], drow[18]);
+    // R = fecha patentamiento real
+    const fechaPat = _parseFecha(rrow[17], drow[17]);
 
-    // N = vendedor → mapeo a oficial
-    const vendedorRaw = String(drow[13] || '').trim();
+    // M = vendedor → mapeo a oficial
+    const vendedorRaw = String(drow[12] || '').trim();
     const vendedor    = _matchVendedor(vendedorRaw);
 
     cuentaPorMes[mesKey] = (cuentaPorMes[mesKey] || 0) + 1;
@@ -429,15 +431,15 @@ function getPatentamientos() {
       patentaA:           String(drow[6] || '').trim().toUpperCase(), // G (TG/CLIENTE/REVENTA)
       admin:              String(drow[7] || '').trim(),             // H
       tipoCarpeta:        String(drow[8] || '').trim().toUpperCase(), // I (AA)
-      reventaOParticular: String(drow[12] || '').trim().toUpperCase(), // M
-      vendedor:           vendedor,                                 // N → oficial
-      vendedorRaw:        vendedorRaw,                              // N → tal cual
-      cliente:            String(drow[15] || '').trim(),            // P
-      modelo:             String(drow[16] || '').trim(),            // Q
-      fechaPatIso:        fechaPat ? _isoDate(fechaPat) : '',       // S → ISO
-      fechaPatStr:        String(drow[18] || '').trim(),            // S → display
-      patentada:          !!fechaPat,                                // S → bool
-      dominio:            String(drow[19] || '').trim(),            // T
+      reventaOParticular: String(drow[11] || '').trim().toUpperCase(), // L
+      vendedor:           vendedor,                                 // M → oficial
+      vendedorRaw:        vendedorRaw,                              // M → tal cual
+      cliente:            String(drow[14] || '').trim(),            // O
+      modelo:             String(drow[15] || '').trim(),            // P
+      fechaPatIso:        fechaPat ? _isoDate(fechaPat) : '',       // R → ISO
+      fechaPatStr:        String(drow[17] || '').trim(),            // R → display
+      patentada:          !!fechaPat,                                // R → bool
+      dominio:            String(drow[18] || '').trim(),            // S
     });
   }
 
