@@ -713,18 +713,29 @@ function getIncentivos(params) {
     };
   }
 
-  // 1) Unidades patentadas del mes (no plan ahorro)
+  // 1) Unidades patentadas del mes (no plan ahorro). Para el modelo usamos
+  //    ventas (canónico por PV) y caemos a patentamientos si no matchea —
+  //    el modelo en patentamientos a veces tiene typos por escritura manual.
   const pat = getPatentamientos();
+  const vent = getVentas();
+  const modeloPorPv = {};
+  for (const v of (vent.ventas || [])) {
+    if (v.preventaNum) modeloPorPv[String(v.preventaNum).trim()] = String(v.modelo || '').trim();
+  }
+
   const patDelMes = (pat.carpetas || []).filter(c =>
     c.mesKey === mesKey && c.tipoCarpetaCanon !== 'Plan ahorro'
   );
   const porUnidadPat = patDelMes.map(c => {
-    const cc = bt.porModelo[_normModeloKey(c.modelo)] || null;
+    const modeloVentas = c.pv ? (modeloPorPv[String(c.pv).trim()] || '') : '';
+    const modelo = modeloVentas || c.modelo || '';
+    const cc = bt.porModelo[_normModeloKey(modelo)] || null;
     return {
       num:       c.num,
       pv:        c.pv,
       serie:     c.serie,
-      modelo:    c.modelo,
+      modelo:    modelo,                  // ← canónico desde ventas si existe
+      modeloPat: c.modelo,                // patentamientos original (debug)
       dominio:   c.dominio,
       admin:     c.admin,
       vendedor:  c.vendedor,
