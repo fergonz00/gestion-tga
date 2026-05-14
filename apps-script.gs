@@ -1035,7 +1035,7 @@ function _pagosPorSerieDelMes(ss, mesKey) {
   // Index col por header
   const idxSerie = PAGOS_VW_HEADERS.indexOf('serie');
   const idxTipo  = PAGOS_VW_HEADERS.indexOf('tipo_detectado');
-  const idxNeto  = PAGOS_VW_HEADERS.indexOf('monto_neto');
+  const idxTotal = PAGOS_VW_HEADERS.indexOf('monto_total');   // con IVA, lo que matchea BT
   const idxMes   = PAGOS_VW_HEADERS.indexOf('mes_incentivo');
   for (const r of data) {
     // mes_incentivo puede venir como string '2026-04' o como Date si Sheets lo
@@ -1051,7 +1051,7 @@ function _pagosPorSerieDelMes(ss, mesKey) {
     const tipo  = String(r[idxTipo] || '').trim();
     if (!serie || !tipo) continue;
     if (!out[serie]) out[serie] = {};
-    out[serie][tipo] = (out[serie][tipo] || 0) + (Number(r[idxNeto]) || 0);
+    out[serie][tipo] = (out[serie][tipo] || 0) + (Number(r[idxTotal]) || 0);
   }
   return out;
 }

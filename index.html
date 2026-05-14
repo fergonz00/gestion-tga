@@ -2232,7 +2232,7 @@ function renderIncentivos() {
           + '  </div>'
           + '  <div class="table-scroll">'
           + '    <table class="patent-tbl responsive-cards">'
-          + '      <thead><tr><th>NC</th><th>Mes</th><th>Serie</th><th>Modelo</th><th>Texto</th><th>Tipo</th><th class="num">Monto neto</th></tr></thead>'
+          + '      <thead><tr><th>NC</th><th>Mes</th><th>Serie</th><th>Modelo</th><th>Texto</th><th>Tipo</th><th class="num">Total c/IVA</th></tr></thead>'
           + '      <tbody>';
     for (let idx = 0; idx < pagosParseados.length; idx++) {
       const p = pagosParseados[idx];
@@ -2247,7 +2247,7 @@ function renderIncentivos() {
                 : '')
             + '</td>';
       html += '<td data-label="Tipo">' + _selectTipoPago(idx, p) + '</td>';
-      html += '<td class="num" data-label="Monto neto">' + fmtPesos(p.montoNeto) + '</td>';
+      html += '<td class="num" data-label="Total c/IVA">' + fmtPesos(p.montoTotal || p.montoNeto) + '</td>';
       html += '</tr>';
     }
     html += '</tbody></table></div></div>';
@@ -2638,8 +2638,11 @@ function _matchearPago(p) {
     { tipo: 'adicional2', label: 'Adicional 2', esperado: cc.adicional2 },
   ].filter(o => o.esperado && o.esperado > 0);
 
+  // Comparamos contra el total con IVA (el valor final de la factura),
+  // que es el monto efectivo que VW liquida y debería matchear la BT.
+  const montoVW = Number(p.montoTotal) || Number(p.montoNeto) || 0;
   for (const o of tipos) {
-    o.diff    = p.montoNeto - o.esperado;
+    o.diff    = montoVW - o.esperado;
     o.diffPct = Math.abs(o.diff) / o.esperado;
   }
   // Ordenar por diff% ascendente — la más cercana primero
@@ -2743,13 +2746,13 @@ function _selectTipoPago(idx, p) {
 
 function _resumirPagosParseados(pagos) {
   const porTipo = {};
-  let totalNeto = 0;
+  let totalConIva = 0;
   for (const p of pagos) {
     const t = p.tipoDetectado || 'desconocido';
     porTipo[t] = (porTipo[t] || 0) + 1;
-    totalNeto += p.montoNeto || 0;
+    totalConIva += (p.montoTotal || p.montoNeto || 0);
   }
-  return { porTipo, totalNeto };
+  return { porTipo, totalNeto: totalConIva };
 }
 
 async function guardarPagosVW() {
