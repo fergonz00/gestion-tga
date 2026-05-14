@@ -1159,10 +1159,11 @@ function renderResumen() {
     h += '<div class="cards-resumen">';
     h += kpi('Carpetas del mes', total, '', total ? 'good' : '');
     h += kpi('Patentadas', patentadas, total ? Math.round(patentadas / total * 100) + '% del total' : '', patentadas ? 'good' : '');
-    h += kpi('Pendientes', pendientes, '', pendientes ? 'warn' : '');
     if (objetivo > 0) {
-      h += '<div class="card"><div class="label">Objetivo del mes</div><div class="value">' + objetivo + '</div><div class="sub">Faltan <b>' + restanObj + '</b></div></div>';
+      h += kpi('Faltan al objetivo', restanObj, pendientes + ' cargadas sin patentar', restanObj > 0 ? 'warn' : 'good');
+      h += '<div class="card"><div class="label">Objetivo del mes</div><div class="value">' + objetivo + '</div><div class="sub">patentadas ' + patentadas + ' / ' + objetivo + '</div></div>';
     } else {
+      h += kpi('Sin patentar', pendientes, 'cargadas sin fecha aún', pendientes ? 'warn' : '');
       h += '<div class="card placeholder"></div>';
     }
     h += '</div>';
@@ -2914,14 +2915,21 @@ function renderPatentamientos() {
   }
 
   // ----- KPIs principales + objetivo editable -----
+  // "Pendientes" cambia significado según haya objetivo o no:
+  //   - Con objetivo: cuántas faltan patentar para llegar al objetivo (objetivo - patentadas)
+  //   - Sin objetivo: cuántas cargadas todavía sin patentar (total - patentadas)
   html += '<div class="cards">';
   html += kpi('Carpetas del mes', total, '', total ? 'good' : '');
   html += kpi('Patentadas', patentadas, total ? Math.round(patentadas / total * 100) + '% del total' : '', patentadas ? 'good' : '');
-  html += kpi('Pendientes', pendientes, '', pendientes ? 'warn' : '');
+  if (objetivo > 0) {
+    html += kpi('Faltan al objetivo', restanObj, pendientes + ' cargadas sin patentar', restanObj > 0 ? 'warn' : 'good');
+  } else {
+    html += kpi('Sin patentar', pendientes, 'cargadas sin fecha aún', pendientes ? 'warn' : '');
+  }
   html += '<div class="card editable">'
         + '  <div class="label">Objetivo del mes</div>'
         + '  <div class="value"><input type="number" min="0" step="1" value="' + objetivo + '" onchange="setObjetivoPat(this.value)" class="kpi-input" /></div>'
-        + '  <div class="sub">Faltan <b>' + restanObj + '</b> para llegar</div>'
+        + '  <div class="sub">' + (objetivo > 0 ? 'patentadas: ' + patentadas + ' / ' + objetivo : 'editar para fijar') + '</div>'
         + '</div>';
   html += '</div>';
 
