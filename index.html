@@ -2212,7 +2212,7 @@ function renderIncentivos() {
       const badgeCls = (p.tipoDetectado || 'desconocido').replace(/[^a-z0-9]/gi,'');
       html += '<tr>';
       html += '<td data-label="NC"><span class="serie">' + escapeHtml(p.ncNum || '—') + '</span></td>';
-      html += '<td data-label="Mes">' + escapeHtml(p.mesIncentivo || '—') + '</td>';
+      html += '<td data-label="Mes">' + escapeHtml(p.mesIncentivo || '—') + (p.mesDeducido ? ' <small style="color:#cc6600">(deducido)</small>' : '') + '</td>';
       html += '<td data-label="Serie"><span class="serie">' + escapeHtml(p.serie || '—') + '</span></td>';
       html += '<td data-label="Modelo">' + escapeHtml(p.modelo || '— no encontrado') + '</td>';
       html += '<td data-label="Texto">' + escapeHtml(p.textoTipo || '—') + '</td>';
@@ -2431,7 +2431,9 @@ async function _leerPDFTexto(file) {
 function _parsearNC(texto) {
   const o = {};
 
-  const mNc = texto.match(/N[°O]\s*([\d-]+)/);
+  // NC: formato 0119-00608123 (4 dígitos + guion + 8 dígitos). Específico
+  // para no matchear "4317-9000" (teléfono) que aparece antes en el PDF.
+  const mNc = texto.match(/N[°O]\s*(\d{4}-\d{8})/);
   if (mNc) o.ncNum = mNc[1].trim();
 
   const mFecha = texto.match(/FECHA:\s*(\d{2}\/\d{2}\/\d{4})/);
@@ -2440,7 +2442,6 @@ function _parsearNC(texto) {
   const mNeto = texto.match(/Neto\s*Gravado\s*([\d.,]+)/i);
   if (mNeto) o.montoNeto = _parseNum(mNeto[1]);
 
-  // El TOTAL final aparece varias veces (header + final), tomamos el último.
   const totalRx = /TOTAL\s+([\d.,]+\.\d{2})/g;
   let lastTotal = null, mm;
   while ((mm = totalRx.exec(texto)) !== null) lastTotal = mm[1];
@@ -2449,18 +2450,36 @@ function _parsearNC(texto) {
   const mVin = texto.match(/UNIDAD:\s*([A-Z0-9]{17})/);
   if (mVin) {
     o.vin = mVin[1];
-    o.serie = mVin[1].slice(-8);  // últimos 8 chars
+    o.serie = mVin[1].slice(-8);
   }
 
-  // Texto libre con tipo + mes: aparece entre "FACTURA: ..." y "Documentos asociados"
-  // o entre "FACTURA: ..." y "CAE N°"
-  const mTexto = texto.match(/FACTURA:\s*A\s+\d+\s+\d+\s+\d{2}\/\d{2}\/\d{2}\s*\n+\s*([^\n]+)/);
-  if (mTexto) o.textoTipo = mTexto[1].trim();
+  // Descripción + mes del incentivo: busco la primera línea que tenga el
+  // patrón "<Mes en español> <YYYY>". No me ato a estar después de FACTURA
+  // porque el orden de líneas varía entre PDFs.
+  const meses = { enero:'01',febrero:'02',marzo:'03',abril:'04',mayo:'05',junio:'06',julio:'07',agosto:'08',septiembre:'09',octubre:'10',noviembre:'11',diciembre:'12' };
+  const rxTipoMes = /(Enero|Febrero|Marzo|Abril|Mayo|Junio|Julio|Agosto|Septiembre|Octubre|Noviembre|Diciembre)\s+(\d{4})/i;
+  const lineas = texto.split('\n').map(l => l.trim()).filter(Boolean);
+  const lineaDesc = lineas.find(l => rxTipoMes.test(l) && !/FECHA/i.test(l));
+  if (lineaDesc) {
+    o.textoTipo = lineaDesc;
+    const mMes = lineaDesc.match(rxTipoMes);
+    if (mMes) o.mesIncentivo = mMes[2] + '-' + meses[mMes[1].toLowerCase()];
+  }
 
-  // Mes incentivo: "Marzo 2026" → "2026-03"
-  const meses = {enero:'01',febrero:'02',marzo:'03',abril:'04',mayo:'05',junio:'06',julio:'07',agosto:'08',septiembre:'09',octubre:'10',noviembre:'11',diciembre:'12'};
-  const mMes = (o.textoTipo || texto).match(/(Enero|Febrero|Marzo|Abril|Mayo|Junio|Julio|Agosto|Septiembre|Octubre|Noviembre|Diciembre)\s+(\d{4})/i);
-  if (mMes) o.mesIncentivo = mMes[2] + '-' + meses[mMes[1].toLowerCase()];
+  // Fallback: si el PDF no tiene la frase "Marzo 2026", deducimos el mes del
+  // incentivo a partir de la fecha de la NC (VW paga ~15 días del mes
+  // siguiente; en general la NC con dia 1-20 cobra el mes anterior).
+  if (!o.mesIncentivo && o.fechaNc) {
+    const p = o.fechaNc.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (p) {
+      const dia = parseInt(p[1], 10);
+      let mes  = parseInt(p[2], 10);
+      let anio = parseInt(p[3], 10);
+      if (dia <= 20) { mes -= 1; if (mes < 1) { mes = 12; anio -= 1; } }
+      o.mesIncentivo = anio + '-' + String(mes).padStart(2, '0');
+      o.mesDeducido = true;  // flag para mostrar warning en preview
+    }
+  }
 
   if (!o.ncNum || !o.montoNeto || !o.serie) return null;
   return o;
