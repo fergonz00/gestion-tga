@@ -424,6 +424,21 @@ h4.desg-title {
 .resumen-block {
   margin-bottom: 28px;
 }
+/* Grid fijo de 4 cols en Resumen: las cards de stock/ventas/patent se alinean
+   en columna vertical entre las 3 secciones. Cuando una sección tiene menos
+   de 4 KPIs, se rellena con .card.placeholder para preservar el alineado. */
+.cards-resumen {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px; margin-bottom: 22px;
+}
+@media (max-width: 900px) {
+  .cards-resumen { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 480px) {
+  .cards-resumen { grid-template-columns: 1fr; }
+}
+.card.placeholder { visibility: hidden; }
 .resumen-head {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 12px; gap: 12px; flex-wrap: wrap;
@@ -1027,7 +1042,7 @@ function renderResumen() {
     const impagas = u.filter(x => !x.vendido && x.pagoEstado === 'impaga').length;
     const enIndep = u.filter(x => !x.vendido && x.exposicion === 'INDEPENDENCIA').length;
     const enErios = u.filter(x => !x.vendido && x.exposicion === 'ENTRE RIOS').length;
-    h += '<div class="cards">';
+    h += '<div class="cards-resumen">';
     h += kpi('Total en stock', enStock, '', 'good');
     h += kpi('Impagas', impagas, impagas ? 'a pagar' : '', impagas ? 'bad' : '');
     h += kpi('Independencia', enIndep, 'en exposición', enIndep ? 'expo-in' : '');
@@ -1053,10 +1068,11 @@ function renderResumen() {
       : 0;
     const ultima = delMes[delMes.length - 1];
     const acumMes = ultima ? ultima.gciaNetaAcum : 0;
-    h += '<div class="cards">';
+    h += '<div class="cards-resumen">';
     h += kpi('Ventas en el mes', cantidad, '', cantidad ? 'good' : '');
     h += kpi('Gcia. neta acumulada', fmtPesos(acumMes), 'al cierre del mes', acumMes > 0 ? 'good' : (acumMes < 0 ? 'bad' : ''));
     h += kpi('Gcia. % promedio', fmtPct(gciaPctAvg), '', '');
+    h += '<div class="card placeholder"></div>';
     h += '</div>';
   } else {
     h += '<div class="resumen-loading">Cargando ventas...</div>';
@@ -1077,12 +1093,14 @@ function renderResumen() {
     const pendientes = total - patentadas;
     const objetivo = objetivosPat[mesP] || 0;
     const restanObj = Math.max(0, objetivo - patentadas);
-    h += '<div class="cards">';
+    h += '<div class="cards-resumen">';
     h += kpi('Carpetas del mes', total, '', total ? 'good' : '');
     h += kpi('Patentadas', patentadas, total ? Math.round(patentadas / total * 100) + '% del total' : '', patentadas ? 'good' : '');
     h += kpi('Pendientes', pendientes, '', pendientes ? 'warn' : '');
     if (objetivo > 0) {
       h += '<div class="card"><div class="label">Objetivo del mes</div><div class="value">' + objetivo + '</div><div class="sub">Faltan <b>' + restanObj + '</b></div></div>';
+    } else {
+      h += '<div class="card placeholder"></div>';
     }
     h += '</div>';
   } else {
