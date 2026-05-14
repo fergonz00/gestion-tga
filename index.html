@@ -2219,7 +2219,11 @@ function renderIncentivos() {
       html += '<td data-label="Mes">' + escapeHtml(p.mesIncentivo || '—') + (p.mesDeducido ? ' <small style="color:#cc6600">(deducido)</small>' : '') + '</td>';
       html += '<td data-label="Serie"><span class="serie">' + escapeHtml(p.serie || '—') + '</span></td>';
       html += '<td data-label="Modelo">' + escapeHtml(p.modelo || '— no encontrado') + '</td>';
-      html += '<td data-label="Texto">' + escapeHtml(p.textoTipo || '—') + '</td>';
+      html += '<td data-label="Texto">' + escapeHtml(p.textoTipo || '—')
+            + (typeof p.diasDesdeFc === 'number'
+                ? '<small style="display:block;color:var(--vw-grey-3);font-size:10px">' + p.diasDesdeFc + ' días desde la compra (FC ' + escapeHtml(p.facturaFecha || '') + ')</small>'
+                : '')
+            + '</td>';
       html += '<td data-label="Tipo">' + _selectTipoPago(idx, p) + '</td>';
       html += '<td class="num" data-label="Monto neto">' + fmtPesos(p.montoNeto) + '</td>';
       html += '</tr>';
@@ -2456,6 +2460,18 @@ function _parsearNC(texto) {
     o.serie = mVin[1].slice(-8);
   }
 
+  // Fecha de la factura de compra original (línea "FACTURA: A 0119 NNNN DD/MM/YY")
+  const mFcDate = texto.match(/FACTURA:\s*A\s+\d{4}\s+\d+\s+(\d{2}\/\d{2}\/\d{2,4})/);
+  if (mFcDate) o.facturaFecha = mFcDate[1];
+
+  // Días entre la compra de la unidad y la NC del incentivo. Crítico para
+  // distinguir whosale (~1-2 sem post-compra) de patentamiento-based (~1.5+ mes).
+  if (o.fechaNc && o.facturaFecha) {
+    const dNc = _parseFechaCorta(o.fechaNc);
+    const dFc = _parseFechaCorta(o.facturaFecha);
+    if (dNc && dFc) o.diasDesdeFc = Math.floor((dNc - dFc) / 86400000);
+  }
+
   // Descripción + mes del incentivo: busco la primera línea que tenga el
   // patrón "<Mes en español> <YYYY>". No me ato a estar después de FACTURA
   // porque el orden de líneas varía entre PDFs.
@@ -2486,6 +2502,16 @@ function _parsearNC(texto) {
 
   if (!o.ncNum || !o.montoNeto || !o.serie) return null;
   return o;
+}
+
+// Parsea "DD/MM/YYYY" o "DD/MM/YY" a Date. Si año < 100, asume 20XX.
+function _parseFechaCorta(s) {
+  if (!s) return null;
+  const m = String(s).match(/^(\d{2})\/(\d{2})\/(\d{2,4})$/);
+  if (!m) return null;
+  let anio = parseInt(m[3], 10);
+  if (anio < 100) anio += 2000;
+  return new Date(anio, parseInt(m[2], 10) - 1, parseInt(m[1], 10));
 }
 
 // Parser robusto que detecta US (1,121,839.00) vs AR (1.121.839,00) por la
@@ -2598,9 +2624,13 @@ function _matchearPago(p) {
   tipos.sort((a, b) => a.diffPct - b.diffPct);
   out.opciones = tipos;
 
-  // Pre-selección: primero intentamos por texto libre (más confiable), luego
-  // por mejor diff. La idea es que casi siempre el texto dice "wholesale" o
-  // "tacticos" y eso desambigua, aunque el monto no matchee exacto.
+  // Pre-selección combinando 3 señales en orden de confianza:
+  //   1. Texto libre del PDF ("wholesale", "tacticos") — el más confiable
+  //   2. Días entre fecha factura y fecha NC:
+  //        ≤ 25 días → whosale (VW paga whosale ~1-2 sem después de la compra)
+  //        ≥ 28 días → patentamiento-based (cc90/tactico/adic*; ~1.5+ mes)
+  //   3. Mejor diff por monto (cuando no hay ninguna pista)
+
   const t = (p.textoTipo || '').toLowerCase();
   let porTexto = null;
   if      (/wholesale|whosale/.test(t)) porTexto = 'whosale';
@@ -2613,9 +2643,33 @@ function _matchearPago(p) {
   if (porTexto && tipos.find(o => o.tipo === porTexto)) {
     out.tipoDetectado = porTexto;
     out.matchWarn = 'sugerido por texto del PDF';
-  } else if (tipos[0]) {
+    return out;
+  }
+
+  // 2) Señal por timing entre factura → NC
+  if (typeof p.diasDesdeFc === 'number') {
+    if (p.diasDesdeFc <= 25) {
+      const hit = tipos.find(o => o.tipo === 'whosale');
+      if (hit) {
+        out.tipoDetectado = 'whosale';
+        out.matchWarn = p.diasDesdeFc + ' días desde la compra → whosale';
+        return out;
+      }
+    } else if (p.diasDesdeFc >= 28) {
+      // Patentamiento-based: el monto desambigua entre cc90/tactico/adic1/adic2.
+      const candidatos = tipos.filter(o => o.tipo !== 'whosale');
+      if (candidatos[0]) {
+        out.tipoDetectado = candidatos[0].tipo;
+        out.matchWarn = p.diasDesdeFc + ' días desde la compra → patentamiento, mejor diff';
+        return out;
+      }
+    }
+  }
+
+  // 3) Fallback: mejor diff abs
+  if (tipos[0]) {
     out.tipoDetectado = tipos[0].tipo;
-    out.matchWarn = tipos[0].diffPct < 0.02 ? null : 'mejor candidato por monto · diff > 2%';
+    out.matchWarn = tipos[0].diffPct < 0.02 ? null : 'mejor candidato por monto';
   }
   return out;
 }
