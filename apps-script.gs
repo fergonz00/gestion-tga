@@ -674,12 +674,14 @@ function toNumber(v) {
 // en el frontend (server siempre devuelve la base 90).
 //
 // Hojas en la espejo (las crea Fer manualmente con IMPORTRANGE):
-//   actual_bt        → IMPORTRANGE de "Actual BT"   (mes vigente)
-//   bt_2026_04       → IMPORTRANGE de "Abril 26 BT" (cerrado)
-//   bt_2026_05       → cuando cierre mayo se crea esta
+//   actual_bt      → IMPORTRANGE de "Actual BT"     (mes vigente)
+//   bt_anteriores  → IMPORTRANGE de "BT anteriores" (todos los meses cerrados,
+//                    apilados, con col A = mes (fecha tipo 1/4/2026 = abril 26)
 //
-// Layout madre (BT):
-//   B  modelo · U  CC 90 · Y  táctico · Z  whosale · AA adic 1 · AB adic 2
+// Layout (madre y espejo idem):
+//   bt_anteriores: A=mes(fecha) · B=modelo · U=CC 90 · Y=táctico · Z=whosale · AA=adic 1 · AB=adic 2
+//   actual_bt:                    B=modelo · U=CC 90 · Y=táctico · Z=whosale · AA=adic 1 · AB=adic 2
+//                                 (no tiene col A "mes" porque toda la hoja es del mes vigente)
 
 function getIncentivos(params) {
   const mesKey = String(params.mes || _yyyyMm(new Date()));
@@ -750,22 +752,24 @@ function getIncentivos(params) {
 }
 
 function _readBT(ss, mesKey) {
-  const [y, m] = mesKey.split('-');
-  const nombreEspecifico = 'bt_' + y + '_' + m;
-  let sh = ss.getSheetByName(nombreEspecifico);
-  let nombreUsado = nombreEspecifico;
-  if (!sh) {
-    sh = ss.getSheetByName('actual_bt');
-    nombreUsado = 'actual_bt';
+  // 1) Primero probamos bt_anteriores filtrado por col A = mes.
+  const sa = ss.getSheetByName('bt_anteriores');
+  if (sa) {
+    const r = _readBTAnteriores(sa, mesKey);
+    if (Object.keys(r.porModelo).length > 0) {
+      return { encontrado: true, nombreUsado: 'bt_anteriores (' + mesKey + ')', porModelo: r.porModelo };
+    }
   }
-  if (!sh) return { encontrado: false, nombreBuscado: nombreEspecifico };
+
+  // 2) Fallback: actual_bt (mes vigente).
+  const sh = ss.getSheetByName('actual_bt');
+  if (!sh) return { encontrado: false, nombreBuscado: 'actual_bt o bt_anteriores con fila para ' + mesKey };
 
   const lastRow = sh.getLastRow();
-  if (lastRow < 2) return { encontrado: true, nombreUsado, porModelo: {} };
+  if (lastRow < 2) return { encontrado: true, nombreUsado: 'actual_bt', porModelo: {} };
 
   // IMPORTRANGE A2:AB60 → fila 1 espejo = header "modelos"; data desde fila 2.
-  const numRows = lastRow - 1;
-  const data = sh.getRange(2, 1, numRows, 28).getValues();
+  const data = sh.getRange(2, 1, lastRow - 1, 28).getValues();
   const porModelo = {};
   for (const r of data) {
     const modelo = String(r[1] || '').trim();  // B
@@ -779,7 +783,33 @@ function _readBT(ss, mesKey) {
       adicional2:  toNumber(r[27]),  // AB
     };
   }
-  return { encontrado: true, nombreUsado, porModelo };
+  return { encontrado: true, nombreUsado: 'actual_bt', porModelo };
+}
+
+// Lee la hoja consolidada bt_anteriores filtrando por col A = fecha cuyo mes
+// matchea mesKey ('2026-04'). El usuario carga col A como "abril2026" y Sheets
+// lo guarda como Date 1/4/2026.
+function _readBTAnteriores(sh, mesKey) {
+  const lastRow = sh.getLastRow();
+  if (lastRow < 1) return { porModelo: {} };
+  const data = sh.getRange(1, 1, lastRow, 28).getValues();
+  const porModelo = {};
+  for (const r of data) {
+    const mesCelda = _parseFecha(r[0], '');
+    if (!mesCelda) continue;
+    if (_yyyyMm(mesCelda) !== mesKey) continue;
+    const modelo = String(r[1] || '').trim();  // B
+    if (!modelo) continue;
+    porModelo[_normModeloKey(modelo)] = {
+      modelo:      modelo,
+      cc90:        toNumber(r[20]),  // U
+      tactico:     toNumber(r[24]),  // Y
+      whosale:     toNumber(r[25]),  // Z
+      adicional1:  toNumber(r[26]),  // AA
+      adicional2:  toNumber(r[27]),  // AB
+    };
+  }
+  return { porModelo };
 }
 
 function _readComprasDelMes(ss, mesKey) {
