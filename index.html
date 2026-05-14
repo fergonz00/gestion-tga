@@ -742,6 +742,21 @@ table.patent-tbl.resumida .col-extra { display: none; }
   border-radius: 4px; background: white; max-width: 260px; cursor: pointer;
 }
 
+/* Call-to-action prominente para guardar los pagos parseados */
+.save-cta {
+  background: #fff4e6; border: 2px solid #cc6600;
+  border-radius: var(--radius); padding: 14px 18px; margin: 14px 0;
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+}
+.save-cta-msg { flex: 1; font-size: 13px; color: #553300; min-width: 240px; }
+.save-cta-btn {
+  background: #cc6600; color: white; border: none; padding: 12px 22px;
+  border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer;
+  white-space: nowrap; box-shadow: 0 2px 6px rgba(204,102,0,0.3);
+}
+.save-cta-btn:hover { background: #aa5500; }
+.save-cta-btn:disabled { opacity: 0.6; cursor: wait; }
+
 /* Conciliación de cobros — color de fondo por celda */
 .estado-cobrado    { background: #d4f4e2 !important; }   /* verde */
 .estado-pendiente  { background: #fff4e6 !important; }   /* amarillo */
@@ -2196,6 +2211,12 @@ function renderIncentivos() {
   // ----- Preview de pagos parseados (si hay) -----
   if (pagosParseados.length) {
     const resumen = _resumirPagosParseados(pagosParseados);
+    html += '<div class="save-cta">'
+          + '  <div class="save-cta-msg">⚠️ Estos <b>' + pagosParseados.length + '</b> pagos están en preview, NO guardados. '
+          + '    Si refrescás la página se pierden. Apretá <b>Guardar</b> para persistir en la base.'
+          + '  </div>'
+          + '  <button class="save-cta-btn" onclick="guardarPagosVW()">💾 Guardar ' + pagosParseados.length + ' NCs ahora</button>'
+          + '</div>';
     html += '<div class="parsed-summary">'
           + '  <b>' + pagosParseados.length + ' NCs parseadas:</b> '
           + Object.entries(resumen.porTipo).map(([k,v]) => v + ' ' + k).join(' · ')
