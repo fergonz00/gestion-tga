@@ -51,6 +51,11 @@ a { color: inherit; text-decoration: none; }
 .app-header .brand { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
 .app-header .user-info { display: flex; align-items: center; gap: 12px; font-size: 13px; }
 .app-header .user-name { opacity: 0.9; }
+.app-header .last-sync {
+  font-size: 11.5px; opacity: 0.85; background: rgba(255,255,255,0.12);
+  padding: 4px 10px; border-radius: 100px; font-variant-numeric: tabular-nums;
+}
+.app-header .last-sync.stale { background: rgba(255,210,80,0.25); }
 .app-header button {
   background: rgba(255,255,255,0.15); color: white;
   padding: 8px 14px; border-radius: 6px;
@@ -765,6 +770,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
   <header class="app-header">
     <div class="brand">📊 Gestión TGA</div>
     <div class="user-info">
+      <span class="last-sync" id="lastSync" title="Última vez que se trajo data fresca del Apps Script">⏱ —</span>
       <span class="user-name" id="userName"></span>
       <button onclick="window.location.href='https://titogonzalez.online'">← Portal</button>
       <button onclick="logout()">Salir</button>
@@ -906,6 +912,35 @@ let filtros = {
 };
 
 // =======================================================================
+// LAST SYNC — indicador global de cuándo se trajo data fresca por última vez
+// =======================================================================
+// Se actualiza cada vez que un fetch (no-silencioso o silencioso) trae data
+// nueva del Apps Script. Se reinicia el timer cada minuto para mostrar el
+// "hace X" actualizado.
+let _ultimaSyncTs = null;
+function markSync() {
+  _ultimaSyncTs = new Date();
+  _renderLastSync();
+}
+function _renderLastSync() {
+  const el = document.getElementById('lastSync');
+  if (!el) return;
+  if (!_ultimaSyncTs) { el.textContent = '⏱ —'; el.classList.remove('stale'); return; }
+  const hh = String(_ultimaSyncTs.getHours()).padStart(2, '0');
+  const mm = String(_ultimaSyncTs.getMinutes()).padStart(2, '0');
+  const ss = String(_ultimaSyncTs.getSeconds()).padStart(2, '0');
+  const ageSec = Math.floor((Date.now() - _ultimaSyncTs.getTime()) / 1000);
+  let edad = '';
+  if (ageSec < 60)        edad = 'hace ' + ageSec + 's';
+  else if (ageSec < 3600) edad = 'hace ' + Math.floor(ageSec / 60) + ' min';
+  else                    edad = 'hace ' + Math.floor(ageSec / 3600) + ' h';
+  el.textContent = '⏱ ' + hh + ':' + mm + ':' + ss + ' · ' + edad;
+  // Si pasaron >12 min, marcamos como "stale" (el auto-refresh es cada 10 min)
+  el.classList.toggle('stale', ageSec > 720);
+}
+setInterval(_renderLastSync, 30 * 1000);  // refrescar el "hace X" cada 30s
+
+// =======================================================================
 // CACHE EN LOCALSTORAGE
 // =======================================================================
 // Para que el primer pintado después de un reload sea instantáneo: guardo el
@@ -927,6 +962,7 @@ function lsCacheGet(tipo) {
 function lsCacheSet(tipo, data) {
   try { localStorage.setItem(LS_CACHE_KEYS[tipo], JSON.stringify(data)); }
   catch { /* quota lleno, lo dejamos pasar */ }
+  markSync();  // se llama acá porque lsCacheSet solo se invoca tras un fetch fresco
 }
 
 // =======================================================================
