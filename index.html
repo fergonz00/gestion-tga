@@ -1156,14 +1156,14 @@ function renderResumen() {
     const pendientes = total - patentadas;
     const objetivo = objetivosPat[mesP] || 0;
     const restanObj = Math.max(0, objetivo - patentadas);
+    const faltanCargarR = objetivo > 0 ? Math.max(0, objetivo - total) : 0;
     h += '<div class="cards-resumen">';
     h += kpi('Carpetas del mes', total, '', total ? 'good' : '');
     h += kpi('Patentadas', patentadas, total ? Math.round(patentadas / total * 100) + '% del total' : '', patentadas ? 'good' : '');
+    h += kpi('Pendientes de patentar', pendientes, 'cargadas sin fecha aún', pendientes ? 'warn' : '');
     if (objetivo > 0) {
-      h += kpi('Faltan al objetivo', restanObj, pendientes + ' cargadas sin patentar', restanObj > 0 ? 'warn' : 'good');
-      h += '<div class="card"><div class="label">Objetivo del mes</div><div class="value">' + objetivo + '</div><div class="sub">patentadas ' + patentadas + ' / ' + objetivo + '</div></div>';
+      h += kpi('Faltan al objetivo', faltanCargarR, 'carpetas a cargar (obj ' + objetivo + ')', faltanCargarR > 0 ? 'warn' : 'good');
     } else {
-      h += kpi('Sin patentar', pendientes, 'cargadas sin fecha aún', pendientes ? 'warn' : '');
       h += '<div class="card placeholder"></div>';
     }
     h += '</div>';
@@ -2915,16 +2915,16 @@ function renderPatentamientos() {
   }
 
   // ----- KPIs principales + objetivo editable -----
-  // "Pendientes" cambia significado según haya objetivo o no:
-  //   - Con objetivo: cuántas faltan patentar para llegar al objetivo (objetivo - patentadas)
-  //   - Sin objetivo: cuántas cargadas todavía sin patentar (total - patentadas)
+  // Dos métricas distintas que conviene no mezclar:
+  //   - Pendientes de patentar = cargadas - patentadas (cargadas con fecha pendiente)
+  //   - Faltan al objetivo    = objetivo - cargadas (carpetas que falta CARGAR)
+  const faltanCargar = objetivo > 0 ? Math.max(0, objetivo - total) : 0;
   html += '<div class="cards">';
   html += kpi('Carpetas del mes', total, '', total ? 'good' : '');
   html += kpi('Patentadas', patentadas, total ? Math.round(patentadas / total * 100) + '% del total' : '', patentadas ? 'good' : '');
+  html += kpi('Pendientes de patentar', pendientes, 'cargadas sin fecha aún', pendientes ? 'warn' : '');
   if (objetivo > 0) {
-    html += kpi('Faltan al objetivo', restanObj, pendientes + ' cargadas sin patentar', restanObj > 0 ? 'warn' : 'good');
-  } else {
-    html += kpi('Sin patentar', pendientes, 'cargadas sin fecha aún', pendientes ? 'warn' : '');
+    html += kpi('Faltan al objetivo', faltanCargar, 'carpetas a cargar', faltanCargar > 0 ? 'warn' : 'good');
   }
   html += '<div class="card editable">'
         + '  <div class="label">Objetivo del mes</div>'
