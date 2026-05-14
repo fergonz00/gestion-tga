@@ -757,15 +757,15 @@ table.patent-tbl.resumida .col-extra { display: none; }
 .save-cta-btn:hover { background: #aa5500; }
 .save-cta-btn:disabled { opacity: 0.6; cursor: wait; }
 
-/* Barra de totales bajo el título de cada tabla de conciliación */
-.tabla-totales {
-  display: flex; gap: 16px; padding: 8px 14px; margin: -8px 0 12px;
-  background: #f6f8fb; border-radius: 6px; font-size: 12.5px;
-  flex-wrap: wrap; border-left: 3px solid var(--vw-blue);
+/* Totales en línea con el h3 del título de cada tabla */
+.h3-totales {
+  display: inline-flex; gap: 14px; margin-left: 14px;
+  font-size: 13px; font-weight: 500;
+  text-transform: none; letter-spacing: 0;
 }
-.tabla-totales .tot-item b { color: var(--vw-blue); font-variant-numeric: tabular-nums; }
-.tabla-totales .tot-cobrado b { color: #0a6b3a; }
-.tabla-totales .tot-pendiente b { color: #cc6600; }
+.h3-totales b { font-variant-numeric: tabular-nums; color: var(--vw-blue); white-space: nowrap; }
+.h3-totales .ok b   { color: #0a6b3a; }
+.h3-totales .pend b { color: #cc6600; }
 
 /* Conciliación de cobros — color de fondo por celda */
 .estado-cobrado    { background: #d4f4e2 !important; }   /* verde */
@@ -2298,13 +2298,14 @@ function renderIncentivos() {
   const pendientePat = Math.max(0, totalEsperadoPat - totalCobradoPat);
 
   html += '<div class="table-wrap">'
-        + '  <div class="table-head"><h3>Por unidad patentada (sin plan ahorro)</h3>'
+        + '  <div class="table-head"><h3>Por unidad patentada (sin plan ahorro)'
+        + '    <span class="h3-totales">'
+        + '      <span>A cobrar: <b>' + fmtPesos(totalEsperadoPat) + '</b></span>'
+        + '      <span class="ok">Cobrado: <b>' + fmtPesos(totalCobradoPat) + '</b></span>'
+        + '      <span class="pend">Pendiente: <b>' + fmtPesos(pendientePat) + '</b></span>'
+        + '    </span>'
+        + '  </h3>'
         + '    <div class="count">' + patUnits.length + ' unidades</div>'
-        + '  </div>'
-        + '  <div class="tabla-totales">'
-        + '    <span class="tot-item">A cobrar: <b>' + fmtPesos(totalEsperadoPat) + '</b></span>'
-        + '    <span class="tot-item tot-cobrado">Cobrado: <b>' + fmtPesos(totalCobradoPat) + '</b></span>'
-        + '    <span class="tot-item tot-pendiente">Pendiente: <b>' + fmtPesos(pendientePat) + '</b></span>'
         + '  </div>'
         + '  <div class="table-scroll">'
         + '    <table class="patent-tbl responsive-cards ' + (vistaResumidaInc ? 'resumida' : '') + '">'
@@ -2352,13 +2353,14 @@ function renderIncentivos() {
   const pendienteWho = Math.max(0, totalEsperadoWho - totalCobradoWho);
 
   html += '<div class="table-wrap">'
-        + '  <div class="table-head"><h3>Whosale — unidades compradas en el mes</h3>'
+        + '  <div class="table-head"><h3>Whosale — unidades compradas en el mes'
+        + '    <span class="h3-totales">'
+        + '      <span>A cobrar: <b>' + fmtPesos(totalEsperadoWho) + '</b></span>'
+        + '      <span class="ok">Cobrado: <b>' + fmtPesos(totalCobradoWho) + '</b></span>'
+        + '      <span class="pend">Pendiente: <b>' + fmtPesos(pendienteWho) + '</b></span>'
+        + '    </span>'
+        + '  </h3>'
         + '    <div class="count">' + compUnits.length + ' unidades</div>'
-        + '  </div>'
-        + '  <div class="tabla-totales">'
-        + '    <span class="tot-item">A cobrar: <b>' + fmtPesos(totalEsperadoWho) + '</b></span>'
-        + '    <span class="tot-item tot-cobrado">Cobrado: <b>' + fmtPesos(totalCobradoWho) + '</b></span>'
-        + '    <span class="tot-item tot-pendiente">Pendiente: <b>' + fmtPesos(pendienteWho) + '</b></span>'
         + '  </div>'
         + '  <div class="table-scroll">'
         + '    <table class="patent-tbl responsive-cards">'
@@ -2710,14 +2712,16 @@ function _matchearPago(p) {
 
   // 2) Señal por timing entre factura → NC
   if (typeof p.diasDesdeFc === 'number') {
-    if (p.diasDesdeFc <= 25) {
+    // Whosale: ~1 semana después de la compra → ≤14 días con holgura.
+    // Patentamiento: ≥25 días (VW paga ~2-5 semanas después del cierre).
+    if (p.diasDesdeFc <= 14) {
       const hit = tipos.find(o => o.tipo === 'whosale');
       if (hit) {
         out.tipoDetectado = 'whosale';
         out.matchWarn = p.diasDesdeFc + ' días desde la compra → whosale';
         return out;
       }
-    } else if (p.diasDesdeFc >= 28) {
+    } else if (p.diasDesdeFc >= 25) {
       // Patentamiento-based: el monto desambigua entre cc90/tactico/adic1/adic2.
       const candidatos = tipos.filter(o => o.tipo !== 'whosale');
       if (candidatos[0]) {
@@ -3131,7 +3135,8 @@ function desgloseCard(titulo, mapCount, total) {
 function fmtPesos(n) {
   if (n == null || n === '' || isNaN(n)) return '—';
   if (!n) return '—';
-  return '$ ' + Math.round(n).toLocaleString('es-AR');
+  //   (nbsp) entre $ y el número así nunca se parte en dos líneas.
+  return '$ ' + Math.round(n).toLocaleString('es-AR');
 }
 function fmtPct(n, dec) {
   if (n == null || isNaN(n)) return '—';
