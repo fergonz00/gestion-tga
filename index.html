@@ -2101,8 +2101,65 @@ function renderIncentivos() {
   html += '  <label class="toggle-resumida">'
         + '    <input type="checkbox" ' + (vistaResumidaInc ? 'checked' : '') + ' onchange="toggleVistaResumidaInc()"> Vista resumida'
         + '  </label>';
-  html += '  <span style="margin-left:auto;font-size:11px;color:var(--vw-grey-3)">Hoja BT: <b>' + escapeHtml(incentivosData.btHojaUsada || '—') + '</b></span>';
   html += '</div>';
+  html += '<div style="font-size:11px;color:var(--vw-grey-3);margin:-6px 0 14px">Hoja BT usada: <b>' + escapeHtml(incentivosData.btHojaUsada || '—') + '</b></div>';
+
+  // ----- Zona de upload de PDFs (solo meses cerrados) -----
+  const mesCerrado = _esMesCerrado(incentivosData.mesKey);
+  html += '<h4 class="desg-title">Cargar pagos de VW (PDFs de NC)</h4>';
+  if (!mesCerrado) {
+    html += '<div class="upload-zone" style="opacity:.7;border-style:solid;border-color:var(--vw-grey-2)">'
+          + '  <div>⏳ <b>Los pagos de este mes todavía no se pueden cargar</b></div>'
+          + '  <div style="font-size:12px;color:var(--vw-grey-3);margin-top:6px;max-width:520px;margin-left:auto;margin-right:auto">'
+          + '    VW paga los incentivos por patentamiento <b>~15 días</b> del mes siguiente, '
+          + '    y el whosale <b>~1 semana</b> después de la compra. '
+          + '    Cuando el mes termine y tengas los PDFs, elegí el mes anterior y soltalos acá.'
+          + '  </div>'
+          + '</div>';
+  } else {
+    html += '<div class="upload-zone" id="uploadZoneInc" ondragover="event.preventDefault();this.classList.add(\'over\')" ondragleave="this.classList.remove(\'over\')" ondrop="onDropPagosVW(event)">'
+          + '  <div>Arrastrá los PDFs acá o</div>'
+          + '  <label class="upload-btn">'
+          + '    <input type="file" multiple accept="application/pdf" onchange="onPickPagosVW(event)"> Elegir archivos'
+          + '  </label>'
+          + '  <div class="upload-progress">' + escapeHtml(parseStatus || 'Soporta múltiples PDFs a la vez. El sistema parsea, identifica el tipo por monto y deduplica por NC.') + '</div>'
+          + '</div>';
+  }
+
+  // ----- Preview de pagos parseados (si hay) -----
+  if (pagosParseados.length) {
+    const resumen = _resumirPagosParseados(pagosParseados);
+    html += '<div class="parsed-summary">'
+          + '  <b>' + pagosParseados.length + ' NCs parseadas:</b> '
+          + Object.entries(resumen.porTipo).map(([k,v]) => v + ' ' + k).join(' · ')
+          + ' · Total: <b>' + fmtPesos(resumen.totalNeto) + '</b> neto'
+          + '</div>';
+    html += '<div class="table-wrap">'
+          + '  <div class="table-head"><h3>Preview de pagos a guardar</h3>'
+          + '    <div class="actions">'
+          + '      <button class="refresh" onclick="guardarPagosVW()">Guardar ' + pagosParseados.length + ' NCs</button>'
+          + '      <button class="resumen-link" onclick="descartarPagosParseados()" style="margin-left:6px">Descartar</button>'
+          + '    </div>'
+          + '  </div>'
+          + '  <div class="table-scroll">'
+          + '    <table class="patent-tbl responsive-cards">'
+          + '      <thead><tr><th>NC</th><th>Mes</th><th>Serie</th><th>Modelo</th><th>Texto</th><th>Tipo</th><th class="num">Monto neto</th></tr></thead>'
+          + '      <tbody>';
+    for (const p of pagosParseados) {
+      const badgeCls = (p.tipoDetectado || 'desconocido').replace(/[^a-z0-9]/gi,'');
+      html += '<tr>';
+      html += '<td data-label="NC"><span class="serie">' + escapeHtml(p.ncNum || '—') + '</span></td>';
+      html += '<td data-label="Mes">' + escapeHtml(p.mesIncentivo || '—') + '</td>';
+      html += '<td data-label="Serie"><span class="serie">' + escapeHtml(p.serie || '—') + '</span></td>';
+      html += '<td data-label="Modelo">' + escapeHtml(p.modelo || '— no encontrado') + '</td>';
+      html += '<td data-label="Texto">' + escapeHtml(p.textoTipo || '—') + '</td>';
+      html += '<td data-label="Tipo"><span class="tipo-badge ' + badgeCls + '">' + escapeHtml(p.tipoDetectado || 'desconocido') + '</span>'
+            + (p.matchWarn ? '<span class="match-warn">⚠ ' + escapeHtml(p.matchWarn) + '</span>' : '') + '</td>';
+      html += '<td class="num" data-label="Monto neto">' + fmtPesos(p.montoNeto) + '</td>';
+      html += '</tr>';
+    }
+    html += '</tbody></table></div></div>';
+  }
 
   // ----- KPIs totales -----
   html += '<div class="cards">';
@@ -2188,51 +2245,15 @@ function renderIncentivos() {
   }
   html += '</tbody></table></div></div>';
 
-  // ----- Zona de upload de PDFs de pagos VW -----
-  html += '<h4 class="desg-title">Cargar pagos de VW (PDFs de NC)</h4>';
-  html += '<div class="upload-zone" id="uploadZoneInc" ondragover="event.preventDefault();this.classList.add(\'over\')" ondragleave="this.classList.remove(\'over\')" ondrop="onDropPagosVW(event)">'
-        + '  <div>Arrastrá los PDFs acá o</div>'
-        + '  <label class="upload-btn">'
-        + '    <input type="file" multiple accept="application/pdf" onchange="onPickPagosVW(event)"> Elegir archivos'
-        + '  </label>'
-        + '  <div class="upload-progress">' + escapeHtml(parseStatus || 'Soporta múltiples PDFs a la vez. El sistema parsea, identifica el tipo por monto y deduplica por NC.') + '</div>'
-        + '</div>';
-
-  if (pagosParseados.length) {
-    const resumen = _resumirPagosParseados(pagosParseados);
-    html += '<div class="parsed-summary">'
-          + '  <b>' + pagosParseados.length + ' NCs parseadas:</b> '
-          + Object.entries(resumen.porTipo).map(([k,v]) => v + ' ' + k).join(' · ')
-          + ' · Total: <b>' + fmtPesos(resumen.totalNeto) + '</b> neto'
-          + '</div>';
-    html += '<div class="table-wrap">'
-          + '  <div class="table-head"><h3>Preview de pagos a guardar</h3>'
-          + '    <div class="actions">'
-          + '      <button class="refresh" onclick="guardarPagosVW()">Guardar ' + pagosParseados.length + ' NCs</button>'
-          + '      <button class="resumen-link" onclick="descartarPagosParseados()" style="margin-left:6px">Descartar</button>'
-          + '    </div>'
-          + '  </div>'
-          + '  <div class="table-scroll">'
-          + '    <table class="patent-tbl responsive-cards">'
-          + '      <thead><tr><th>NC</th><th>Mes</th><th>Serie</th><th>Modelo</th><th>Texto</th><th>Tipo</th><th class="num">Monto neto</th></tr></thead>'
-          + '      <tbody>';
-    for (const p of pagosParseados) {
-      const badgeCls = (p.tipoDetectado || 'desconocido').replace(/[^a-z0-9]/gi,'');
-      html += '<tr>';
-      html += '<td data-label="NC"><span class="serie">' + escapeHtml(p.ncNum || '—') + '</span></td>';
-      html += '<td data-label="Mes">' + escapeHtml(p.mesIncentivo || '—') + '</td>';
-      html += '<td data-label="Serie"><span class="serie">' + escapeHtml(p.serie || '—') + '</span></td>';
-      html += '<td data-label="Modelo">' + escapeHtml(p.modelo || '— no encontrado') + '</td>';
-      html += '<td data-label="Texto">' + escapeHtml(p.textoTipo || '—') + '</td>';
-      html += '<td data-label="Tipo"><span class="tipo-badge ' + badgeCls + '">' + escapeHtml(p.tipoDetectado || 'desconocido') + '</span>'
-            + (p.matchWarn ? '<span class="match-warn">⚠ ' + escapeHtml(p.matchWarn) + '</span>' : '') + '</td>';
-      html += '<td class="num" data-label="Monto neto">' + fmtPesos(p.montoNeto) + '</td>';
-      html += '</tr>';
-    }
-    html += '</tbody></table></div></div>';
-  }
-
   wrap.innerHTML = html;
+}
+
+// Devuelve true si el mes ya cerró (estrictamente menor al mes actual).
+function _esMesCerrado(mesKey) {
+  if (!mesKey) return false;
+  const ahora = new Date();
+  const ahoraKey = ahora.getFullYear() + '-' + String(ahora.getMonth() + 1).padStart(2, '0');
+  return mesKey < ahoraKey;
 }
 
 // =======================================================================
