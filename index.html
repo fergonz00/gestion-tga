@@ -685,7 +685,45 @@ table.patent-tbl.resumida .col-extra { display: none; }
   }
 }
 
+
+/* Incentivos — upload de PDFs */
+.upload-zone {
+  background: white; border: 2px dashed var(--vw-grey-2); border-radius: var(--radius);
+  padding: 30px; text-align: center; transition: all 0.2s; margin-bottom: 18px;
+}
+.upload-zone.over { border-color: var(--vw-blue); background: #f0f6ff; }
+.upload-zone input[type=file] { display: none; }
+.upload-zone .upload-btn {
+  background: var(--vw-blue); color: white; padding: 10px 20px; border-radius: 6px;
+  font-size: 13px; font-weight: 600; border: none; cursor: pointer; margin-top: 8px;
+}
+.upload-zone .upload-btn:hover { background: var(--vw-blue-light); }
+.upload-progress { font-size: 12px; color: var(--vw-grey-3); margin-top: 8px; }
+.parsed-summary {
+  background: #f0f6ff; border-left: 3px solid var(--vw-blue); padding: 10px 14px;
+  border-radius: 6px; margin: 12px 0; font-size: 13px;
+}
+.parsed-summary b { color: var(--vw-blue); }
+.tipo-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 100px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+}
+.tipo-badge.cc90       { background: #d6eaff; color: #003a75; }
+.tipo-badge.tactico    { background: #d4f4e2; color: #0a6b3a; }
+.tipo-badge.adicional1 { background: #ffe9d6; color: #8a4500; }
+.tipo-badge.adicional2 { background: #ffd9d9; color: #8a0000; }
+.tipo-badge.whosale    { background: #e9d6ff; color: #4a008a; }
+.tipo-badge.desconocido { background: #f0f0f0; color: #666; }
+.match-warn { color: #cc6600; font-size: 10px; margin-left: 4px; }
 </style>
+
+<!-- pdf.js para parsing client-side de los NCs -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+  if (typeof pdfjsLib !== 'undefined') {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+</script>
 </head>
 <body>
 
@@ -814,11 +852,14 @@ let mesSelPat = '';
 let vendedorFiltroPat = '';       // filtro por vendedor (drill-down)
 let vistaResumidaPat = false;     // toggle vista resumida en patentamientos
 
-// Incentivos (Fase 1: cálculo, sin importar pagos VW todavía)
-let incentivosData = null;        // { porUnidadPatentada, porUnidadComprada, ... }
-let mesSelInc = '';               // mes seleccionado
+// Incentivos
+let incentivosData = null;        // { porUnidadPatentada, porUnidadComprada, modelosBT, ... }
+let mesSelInc = '';               // mes seleccionado en la tab
 let al100Inc = false;             // toggle 100% objetivo (afecta CC 90 → /0.9)
 let vistaResumidaInc = false;     // ocultar cols extra
+let incentivosDataByMes = {};     // cache de BT data por mes para matching multi-mes
+let pagosParseados = [];          // pagos parseados pero NO guardados aún (preview)
+let parseStatus = '';             // texto de progreso del upload
 // Objetivos del mes (cantidad de carpetas a patentar). Defaults pasados por
 // Fer; persistidos en localStorage para que pueda editarlos vivo.
 const OBJETIVOS_PAT_DEFAULT = { '2026-04': 63, '2026-05': 54 };
@@ -2141,7 +2182,306 @@ function renderIncentivos() {
   }
   html += '</tbody></table></div></div>';
 
+  // ----- Zona de upload de PDFs de pagos VW -----
+  html += '<h4 class="desg-title">Cargar pagos de VW (PDFs de NC)</h4>';
+  html += '<div class="upload-zone" id="uploadZoneInc" ondragover="event.preventDefault();this.classList.add(\'over\')" ondragleave="this.classList.remove(\'over\')" ondrop="onDropPagosVW(event)">'
+        + '  <div>Arrastrá los PDFs acá o</div>'
+        + '  <label class="upload-btn">'
+        + '    <input type="file" multiple accept="application/pdf" onchange="onPickPagosVW(event)"> Elegir archivos'
+        + '  </label>'
+        + '  <div class="upload-progress">' + escapeHtml(parseStatus || 'Soporta múltiples PDFs a la vez. El sistema parsea, identifica el tipo por monto y deduplica por NC.') + '</div>'
+        + '</div>';
+
+  if (pagosParseados.length) {
+    const resumen = _resumirPagosParseados(pagosParseados);
+    html += '<div class="parsed-summary">'
+          + '  <b>' + pagosParseados.length + ' NCs parseadas:</b> '
+          + Object.entries(resumen.porTipo).map(([k,v]) => v + ' ' + k).join(' · ')
+          + ' · Total: <b>' + fmtPesos(resumen.totalNeto) + '</b> neto'
+          + '</div>';
+    html += '<div class="table-wrap">'
+          + '  <div class="table-head"><h3>Preview de pagos a guardar</h3>'
+          + '    <div class="actions">'
+          + '      <button class="refresh" onclick="guardarPagosVW()">Guardar ' + pagosParseados.length + ' NCs</button>'
+          + '      <button class="resumen-link" onclick="descartarPagosParseados()" style="margin-left:6px">Descartar</button>'
+          + '    </div>'
+          + '  </div>'
+          + '  <div class="table-scroll">'
+          + '    <table class="patent-tbl responsive-cards">'
+          + '      <thead><tr><th>NC</th><th>Mes</th><th>Serie</th><th>Modelo</th><th>Texto</th><th>Tipo</th><th class="num">Monto neto</th></tr></thead>'
+          + '      <tbody>';
+    for (const p of pagosParseados) {
+      const badgeCls = (p.tipoDetectado || 'desconocido').replace(/[^a-z0-9]/gi,'');
+      html += '<tr>';
+      html += '<td data-label="NC"><span class="serie">' + escapeHtml(p.ncNum || '—') + '</span></td>';
+      html += '<td data-label="Mes">' + escapeHtml(p.mesIncentivo || '—') + '</td>';
+      html += '<td data-label="Serie"><span class="serie">' + escapeHtml(p.serie || '—') + '</span></td>';
+      html += '<td data-label="Modelo">' + escapeHtml(p.modelo || '— no encontrado') + '</td>';
+      html += '<td data-label="Texto">' + escapeHtml(p.textoTipo || '—') + '</td>';
+      html += '<td data-label="Tipo"><span class="tipo-badge ' + badgeCls + '">' + escapeHtml(p.tipoDetectado || 'desconocido') + '</span>'
+            + (p.matchWarn ? '<span class="match-warn">⚠ ' + escapeHtml(p.matchWarn) + '</span>' : '') + '</td>';
+      html += '<td class="num" data-label="Monto neto">' + fmtPesos(p.montoNeto) + '</td>';
+      html += '</tr>';
+    }
+    html += '</tbody></table></div></div>';
+  }
+
   wrap.innerHTML = html;
+}
+
+// =======================================================================
+// INCENTIVOS · upload de PDFs de NC, parsing y matching
+// =======================================================================
+
+function onPickPagosVW(e) {
+  const files = Array.from(e.target.files || []);
+  if (files.length) procesarPDFsPagos(files);
+  e.target.value = '';  // permitir re-elegir los mismos
+}
+
+function onDropPagosVW(e) {
+  e.preventDefault();
+  document.getElementById('uploadZoneInc')?.classList.remove('over');
+  const files = Array.from(e.dataTransfer.files || []).filter(f => /\.pdf$/i.test(f.name));
+  if (files.length) procesarPDFsPagos(files);
+}
+
+async function procesarPDFsPagos(files) {
+  if (typeof pdfjsLib === 'undefined') {
+    alert('pdf.js no cargó todavía, refrescá la página y reintentá.');
+    return;
+  }
+  parseStatus = 'Parseando ' + files.length + ' PDFs...';
+  renderIncentivos();
+
+  const nuevos = [];
+  for (let i = 0; i < files.length; i++) {
+    parseStatus = 'Parseando ' + (i + 1) + ' de ' + files.length + '...';
+    renderIncentivos();
+    try {
+      const texto = await _leerPDFTexto(files[i]);
+      const parsed = _parsearNC(texto);
+      if (parsed) nuevos.push(parsed);
+    } catch (err) {
+      console.warn('Error parseando', files[i].name, err);
+    }
+  }
+
+  // Pre-cargar BT data para los meses únicos detectados (cache)
+  const meses = Array.from(new Set(nuevos.map(p => p.mesIncentivo).filter(Boolean)));
+  await Promise.all(meses.map(m => _ensureIncentivosData(m)));
+
+  // Matching: serie → modelo → CCs → tipoDetectado
+  for (const p of nuevos) {
+    const m = _matchearPago(p);
+    Object.assign(p, m);
+  }
+
+  // Filtrar duplicados contra lo ya parseado en sesión
+  const existentes = new Set(pagosParseados.map(p => p.ncNum));
+  const sinDup = nuevos.filter(p => !existentes.has(p.ncNum));
+
+  pagosParseados = pagosParseados.concat(sinDup);
+  parseStatus = sinDup.length + ' NCs nuevas parseadas (' + (nuevos.length - sinDup.length) + ' duplicadas en sesión).';
+  renderIncentivos();
+}
+
+async function _leerPDFTexto(file) {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  let texto = '';
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    texto += content.items.map(it => it.str).join('\n') + '\n';
+  }
+  return texto;
+}
+
+// Parsea el texto de un NC y devuelve los campos. Si no encuentra los mínimos
+// (NC + monto + serie), devuelve null para que se ignore.
+function _parsearNC(texto) {
+  const o = {};
+
+  const mNc = texto.match(/N[°O]\s*([\d-]+)/);
+  if (mNc) o.ncNum = mNc[1].trim();
+
+  const mFecha = texto.match(/FECHA:\s*(\d{2}\/\d{2}\/\d{4})/);
+  if (mFecha) o.fechaNc = mFecha[1];
+
+  const mNeto = texto.match(/Neto\s*Gravado\s*([\d.,]+)/i);
+  if (mNeto) o.montoNeto = _parseNum(mNeto[1]);
+
+  // El TOTAL final aparece varias veces (header + final), tomamos el último.
+  const totalRx = /TOTAL\s+([\d.,]+\.\d{2})/g;
+  let lastTotal = null, mm;
+  while ((mm = totalRx.exec(texto)) !== null) lastTotal = mm[1];
+  if (lastTotal) o.montoTotal = _parseNum(lastTotal);
+
+  const mVin = texto.match(/UNIDAD:\s*([A-Z0-9]{17})/);
+  if (mVin) {
+    o.vin = mVin[1];
+    o.serie = mVin[1].slice(-8);  // últimos 8 chars
+  }
+
+  // Texto libre con tipo + mes: aparece entre "FACTURA: ..." y "Documentos asociados"
+  // o entre "FACTURA: ..." y "CAE N°"
+  const mTexto = texto.match(/FACTURA:\s*A\s+\d+\s+\d+\s+\d{2}\/\d{2}\/\d{2}\s*\n+\s*([^\n]+)/);
+  if (mTexto) o.textoTipo = mTexto[1].trim();
+
+  // Mes incentivo: "Marzo 2026" → "2026-03"
+  const meses = {enero:'01',febrero:'02',marzo:'03',abril:'04',mayo:'05',junio:'06',julio:'07',agosto:'08',septiembre:'09',octubre:'10',noviembre:'11',diciembre:'12'};
+  const mMes = (o.textoTipo || texto).match(/(Enero|Febrero|Marzo|Abril|Mayo|Junio|Julio|Agosto|Septiembre|Octubre|Noviembre|Diciembre)\s+(\d{4})/i);
+  if (mMes) o.mesIncentivo = mMes[2] + '-' + meses[mMes[1].toLowerCase()];
+
+  if (!o.ncNum || !o.montoNeto || !o.serie) return null;
+  return o;
+}
+
+// Parser robusto que detecta US (1,121,839.00) vs AR (1.121.839,00) por la
+// posición relativa de . y ,. Los PDFs de VW vienen en formato US.
+function _parseNum(s) {
+  if (!s) return 0;
+  const str = String(s).trim();
+  if (!str) return 0;
+  const lastComma = str.lastIndexOf(',');
+  const lastDot   = str.lastIndexOf('.');
+  let n;
+  if (lastComma > -1 && lastDot > -1) {
+    if (lastDot > lastComma) n = parseFloat(str.replace(/,/g, ''));         // US
+    else                     n = parseFloat(str.replace(/\./g, '').replace(',', '.')); // AR
+  } else if (lastComma > -1) {
+    n = parseFloat(str.replace(',', '.'));
+  } else {
+    n = parseFloat(str);
+  }
+  return isNaN(n) ? 0 : n;
+}
+
+function _normModeloKey(s) {
+  return String(s || '').trim().toUpperCase()
+    .replace(/[ÁÄÀÂ]/g,'A').replace(/[ÉËÈÊ]/g,'E').replace(/[ÍÏÌÎ]/g,'I')
+    .replace(/[ÓÖÒÔ]/g,'O').replace(/[ÚÜÙÛ]/g,'U')
+    .replace(/\s+/g, ' ');
+}
+
+// Pre-carga BT data para un mes específico (cache local + server cache 90s).
+async function _ensureIncentivosData(mes) {
+  if (incentivosDataByMes[mes]) return incentivosDataByMes[mes];
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=incentivos&mes=' + encodeURIComponent(mes);
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data && !data.error) incentivosDataByMes[mes] = data;
+    return data;
+  } catch { return null; }
+}
+
+// Busca modelo por serie en stock + patentamientos (ambas direcciones).
+function _findModeloPorSerie(serie) {
+  const s = String(serie || '').trim();
+  if (!s) return null;
+  if (stockData && Array.isArray(stockData.unidades)) {
+    const u = stockData.unidades.find(x => x.serie === s);
+    if (u) return u.unidad || u.modelo || null;
+  }
+  if (patentData && Array.isArray(patentData.carpetas)) {
+    const c = patentData.carpetas.find(x => x.serie === s);
+    if (c) return c.modelo || null;
+  }
+  return null;
+}
+
+// Dado un pago parseado, busca el modelo y la CC más probable comparando
+// montoNeto contra las CCs esperadas del modelo en la BT del mes_incentivo.
+function _matchearPago(p) {
+  const out = { tipoDetectado: 'desconocido', modelo: null, matchWarn: null };
+  out.modelo = _findModeloPorSerie(p.serie);
+  if (!out.modelo) { out.matchWarn = 'serie no está en stock/patent'; return out; }
+
+  const data = incentivosDataByMes[p.mesIncentivo];
+  if (!data || !data.modelosBT) { out.matchWarn = 'sin BT para ' + p.mesIncentivo; return out; }
+  const cc = data.modelosBT[_normModeloKey(out.modelo)];
+  if (!cc) { out.matchWarn = 'modelo no está en la BT del mes'; return out; }
+
+  // Targets a comparar con el montoNeto del PDF
+  const targets = {
+    cc90:        cc.cc90,
+    cc90_100:    cc.cc90 / 0.9,  // versión al 100%
+    tactico:     cc.tactico,
+    whosale:     cc.whosale,
+    adicional1:  cc.adicional1,
+    adicional2:  cc.adicional2,
+  };
+  let best = null, bestPctDiff = 1;
+  for (const k in targets) {
+    const t = targets[k];
+    if (!t || t === 0) continue;
+    const pctDiff = Math.abs(t - p.montoNeto) / t;
+    if (pctDiff < 0.01 && pctDiff < bestPctDiff) {
+      best = k; bestPctDiff = pctDiff;
+    }
+  }
+  if (best) {
+    out.tipoDetectado = best.startsWith('cc90') ? 'cc90' : best;
+    if (best === 'cc90_100') out.matchWarn = 'matcheó al 100% (vs 90% base)';
+  } else {
+    // Si no matchea por monto, usar texto libre como pista
+    const t = (p.textoTipo || '').toLowerCase();
+    if (/wholesale|whosale/.test(t))    { out.tipoDetectado = 'whosale';    out.matchWarn = 'monto no matchea BT, asignado por texto'; }
+    else if (/tactic/.test(t))          { out.tipoDetectado = 'tactico';    out.matchWarn = 'monto no matchea BT, asignado por texto'; }
+    else if (/cc.?90|c90/i.test(t))     { out.tipoDetectado = 'cc90';       out.matchWarn = 'monto no matchea BT, asignado por texto'; }
+    else if (/adicional/.test(t))       { out.tipoDetectado = 'adicional1'; out.matchWarn = 'monto no matchea BT, asignado por texto (genérico)'; }
+    else                                { out.matchWarn = 'monto no matchea ninguna CC de la BT'; }
+  }
+  return out;
+}
+
+function _resumirPagosParseados(pagos) {
+  const porTipo = {};
+  let totalNeto = 0;
+  for (const p of pagos) {
+    const t = p.tipoDetectado || 'desconocido';
+    porTipo[t] = (porTipo[t] || 0) + 1;
+    totalNeto += p.montoNeto || 0;
+  }
+  return { porTipo, totalNeto };
+}
+
+async function guardarPagosVW() {
+  if (!pagosParseados.length) return;
+  const ok = confirm('¿Guardar ' + pagosParseados.length + ' NCs en la hoja pagos_vw? Los duplicados por N° NC se ignoran.');
+  if (!ok) return;
+
+  parseStatus = 'Guardando...';
+  renderIncentivos();
+
+  try {
+    const res = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify({
+        token:  APPS_SCRIPT_TOKEN,
+        accion: 'guardar',
+        pagos:  pagosParseados,
+      }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    parseStatus = '✅ Guardados: ' + data.guardados + ' · Duplicados ignorados: ' + data.duplicados + ' · Total acumulado en la hoja: ' + data.total;
+    pagosParseados = [];
+    renderIncentivos();
+  } catch (e) {
+    parseStatus = '⚠️ Error al guardar: ' + (e.message || e);
+    renderIncentivos();
+  }
+}
+
+function descartarPagosParseados() {
+  if (pagosParseados.length && !confirm('¿Descartar los ' + pagosParseados.length + ' NCs sin guardar?')) return;
+  pagosParseados = [];
+  parseStatus = '';
+  renderIncentivos();
 }
 
 function setMesPat(mesKey)       { mesSelPat = mesKey || ''; renderPatentamientos(); }

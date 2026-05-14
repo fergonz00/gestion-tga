@@ -57,8 +57,26 @@ function doGet(e) {
     if (tipo === 'ventas')          return jsonResponse(_cached('ventas',         CACHE_TTL_SEC, fresh, getVentas));
     if (tipo === 'patentamientos')  return jsonResponse(_cached('patentamientos', CACHE_TTL_SEC, fresh, getPatentamientos));
     if (tipo === 'incentivos')      return jsonResponse(_cached('incentivos_' + (params.mes || ''), CACHE_TTL_SEC, fresh, () => getIncentivos(params)));
+    if (tipo === 'pagosvw')         return jsonResponse(getPagosVW(params));      // sin cache
     if (tipo === 'ventasdebug')     return jsonResponse(getVentasDebug(params));  // sin cache
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
+  } catch (err) {
+    return jsonResponse({ error: String(err && err.message || err) });
+  }
+}
+
+// POST endpoint para guardar pagos parseados de los PDFs de VW.
+// Body JSON: { token, pagos: [{ ncNum, fechaNc, serie, vin, modelo, tipoDetectado, montoNeto, montoTotal, mesIncentivo, textoTipo, ... }] }
+function doPost(e) {
+  try {
+    const body = JSON.parse((e.postData && e.postData.contents) || '{}');
+    if (String(body.token || '').trim() !== TOKEN) {
+      return jsonResponse({ error: 'forbidden' });
+    }
+    const accion = String(body.accion || 'guardar').toLowerCase();
+    if (accion === 'guardar') return jsonResponse(savePagosVW(body.pagos || []));
+    if (accion === 'eliminar') return jsonResponse(deletePagoVW(body.ncNum));
+    return jsonResponse({ error: 'accion desconocida: ' + accion });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
   }
@@ -746,7 +764,7 @@ function getIncentivos(params) {
     porUnidadPatentada: porUnidadPat,
     porUnidadComprada:  porUnidadCompra,
     modelosSinCC: { patentadas: modelosSinCCPat, compradas: modelosSinCCCom },
-    modelosBT:    Object.values(bt.porModelo).map(m => m.modelo),
+    modelosBT:    bt.porModelo,  // dict normKey → { modelo, cc90, tactico, whosale, adicional1, adicional2 }
     updatedAt:    new Date().toISOString(),
   };
 }
@@ -849,4 +867,98 @@ function _normModeloKey(s) {
     .replace(/[ÁÄÀÂ]/g,'A').replace(/[ÉËÈÊ]/g,'E').replace(/[ÍÏÌÎ]/g,'I')
     .replace(/[ÓÖÒÔ]/g,'O').replace(/[ÚÜÙÛ]/g,'U')
     .replace(/\s+/g, ' ');
+}
+
+// =======================================================================
+// PAGOS VW — persistencia de las NCs parseadas desde los PDFs
+// =======================================================================
+// Guardamos en hoja "pagos_vw" de la espejo. Layout:
+//   A nc_num · B fecha_nc · C serie · D vin · E modelo · F tipo_detectado
+//   G monto_neto · H monto_total · I mes_incentivo · J texto_tipo · K importado_at
+// Dedup por nc_num: si la NC ya está, se ignora (a menos que `forzar=true`).
+
+const PAGOS_VW_HEADERS = [
+  'nc_num', 'fecha_nc', 'serie', 'vin', 'modelo', 'tipo_detectado',
+  'monto_neto', 'monto_total', 'mes_incentivo', 'texto_tipo', 'importado_at',
+];
+
+function _getPagosVWSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName('pagos_vw');
+  if (!sh) {
+    sh = ss.insertSheet('pagos_vw');
+    sh.getRange(1, 1, 1, PAGOS_VW_HEADERS.length).setValues([PAGOS_VW_HEADERS]);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function getPagosVW(params) {
+  const sh = _getPagosVWSheet();
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return { pagos: [], total: 0 };
+  const data = sh.getRange(2, 1, lastRow - 1, PAGOS_VW_HEADERS.length).getValues();
+  const pagos = data.map(r => {
+    const o = {};
+    for (let i = 0; i < PAGOS_VW_HEADERS.length; i++) o[PAGOS_VW_HEADERS[i]] = r[i];
+    return o;
+  }).filter(p => p.nc_num);
+  // Filtro opcional por mes
+  const mes = String(params.mes || '');
+  const filtrados = mes ? pagos.filter(p => p.mes_incentivo === mes) : pagos;
+  return { pagos: filtrados, total: filtrados.length };
+}
+
+function savePagosVW(pagos) {
+  if (!Array.isArray(pagos) || !pagos.length) return { guardados: 0, duplicados: 0 };
+  const sh = _getPagosVWSheet();
+  const lastRow = sh.getLastRow();
+  const existentes = new Set();
+  if (lastRow >= 2) {
+    const nums = sh.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (const r of nums) if (r[0]) existentes.add(String(r[0]).trim());
+  }
+  const ahora = new Date().toISOString();
+  const filasNuevas = [];
+  let duplicados = 0;
+  for (const p of pagos) {
+    const ncNum = String(p.ncNum || '').trim();
+    if (!ncNum) continue;
+    if (existentes.has(ncNum)) { duplicados++; continue; }
+    existentes.add(ncNum);
+    filasNuevas.push([
+      ncNum,
+      p.fechaNc || '',
+      p.serie || '',
+      p.vin || '',
+      p.modelo || '',
+      p.tipoDetectado || 'desconocido',
+      Number(p.montoNeto) || 0,
+      Number(p.montoTotal) || 0,
+      p.mesIncentivo || '',
+      p.textoTipo || '',
+      ahora,
+    ]);
+  }
+  if (filasNuevas.length) {
+    sh.getRange(sh.getLastRow() + 1, 1, filasNuevas.length, PAGOS_VW_HEADERS.length).setValues(filasNuevas);
+  }
+  // Invalidar cache de incentivos así la próxima request muestra los nuevos
+  try { CacheService.getScriptCache().removeAll(['incentivos_', 'incentivos__']); } catch (e) {}
+  return { guardados: filasNuevas.length, duplicados, total: existentes.size };
+}
+
+function deletePagoVW(ncNum) {
+  const sh = _getPagosVWSheet();
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2 || !ncNum) return { eliminado: 0 };
+  const nums = sh.getRange(2, 1, lastRow - 1, 1).getValues();
+  let eliminado = 0;
+  for (let i = nums.length - 1; i >= 0; i--) {
+    if (String(nums[i][0] || '').trim() === String(ncNum).trim()) {
+      sh.deleteRow(i + 2);
+      eliminado++;
+    }
+  }
+  return { eliminado };
 }
