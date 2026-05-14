@@ -197,7 +197,7 @@ thead th {
   border-bottom: 1px solid var(--vw-grey-2);
   white-space: nowrap;
 }
-thead th.num, tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
+thead th.num, tbody td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 thead th.ctr, tbody td.ctr { text-align: center; }
 tbody tr { border-bottom: 1px solid var(--vw-grey-2); }
 tbody tr:hover { background: var(--vw-grey-1); }
@@ -756,6 +756,16 @@ table.patent-tbl.resumida .col-extra { display: none; }
 }
 .save-cta-btn:hover { background: #aa5500; }
 .save-cta-btn:disabled { opacity: 0.6; cursor: wait; }
+
+/* Barra de totales bajo el título de cada tabla de conciliación */
+.tabla-totales {
+  display: flex; gap: 16px; padding: 8px 14px; margin: -8px 0 12px;
+  background: #f6f8fb; border-radius: 6px; font-size: 12.5px;
+  flex-wrap: wrap; border-left: 3px solid var(--vw-blue);
+}
+.tabla-totales .tot-item b { color: var(--vw-blue); font-variant-numeric: tabular-nums; }
+.tabla-totales .tot-cobrado b { color: #0a6b3a; }
+.tabla-totales .tot-pendiente b { color: #cc6600; }
 
 /* Conciliación de cobros — color de fondo por celda */
 .estado-cobrado    { background: #d4f4e2 !important; }   /* verde */
@@ -2277,9 +2287,24 @@ function renderIncentivos() {
   }
 
   // ----- Tabla por unidad patentada -----
+  // Totales de conciliación para mostrar en el header
+  let totalEsperadoPat = 0, totalCobradoPat = 0;
+  for (const u of patUnits) {
+    const cc90Esp = ajuste(u);
+    const paid = u.pagado || {};
+    totalEsperadoPat += cc90Esp + (u.tactico || 0) + (u.adicional1 || 0) + (u.adicional2 || 0);
+    totalCobradoPat  += (paid.cc90 || 0) + (paid.tactico || 0) + (paid.adicional1 || 0) + (paid.adicional2 || 0);
+  }
+  const pendientePat = Math.max(0, totalEsperadoPat - totalCobradoPat);
+
   html += '<div class="table-wrap">'
         + '  <div class="table-head"><h3>Por unidad patentada (sin plan ahorro)</h3>'
         + '    <div class="count">' + patUnits.length + ' unidades</div>'
+        + '  </div>'
+        + '  <div class="tabla-totales">'
+        + '    <span class="tot-item">A cobrar: <b>' + fmtPesos(totalEsperadoPat) + '</b></span>'
+        + '    <span class="tot-item tot-cobrado">Cobrado: <b>' + fmtPesos(totalCobradoPat) + '</b></span>'
+        + '    <span class="tot-item tot-pendiente">Pendiente: <b>' + fmtPesos(pendientePat) + '</b></span>'
         + '  </div>'
         + '  <div class="table-scroll">'
         + '    <table class="patent-tbl responsive-cards ' + (vistaResumidaInc ? 'resumida' : '') + '">'
@@ -2319,9 +2344,21 @@ function renderIncentivos() {
   html += '</tbody></table></div></div>';
 
   // ----- Tabla whosale -----
+  let totalEsperadoWho = 0, totalCobradoWho = 0;
+  for (const u of compUnits) {
+    totalEsperadoWho += (u.whosale || 0);
+    totalCobradoWho  += (u.pagado && u.pagado.whosale || 0);
+  }
+  const pendienteWho = Math.max(0, totalEsperadoWho - totalCobradoWho);
+
   html += '<div class="table-wrap">'
         + '  <div class="table-head"><h3>Whosale — unidades compradas en el mes</h3>'
         + '    <div class="count">' + compUnits.length + ' unidades</div>'
+        + '  </div>'
+        + '  <div class="tabla-totales">'
+        + '    <span class="tot-item">A cobrar: <b>' + fmtPesos(totalEsperadoWho) + '</b></span>'
+        + '    <span class="tot-item tot-cobrado">Cobrado: <b>' + fmtPesos(totalCobradoWho) + '</b></span>'
+        + '    <span class="tot-item tot-pendiente">Pendiente: <b>' + fmtPesos(pendienteWho) + '</b></span>'
         + '  </div>'
         + '  <div class="table-scroll">'
         + '    <table class="patent-tbl responsive-cards">'
