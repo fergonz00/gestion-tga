@@ -2156,10 +2156,12 @@ function renderIncentivos() {
   // ----- KPIs totales -----
   html += '<div class="cards">';
   html += kpi('Total a cobrar', fmtPesos(totales.totalGeneral), patUnits.length + ' patentadas · ' + compUnits.length + ' compradas', totales.totalGeneral > 0 ? 'good' : '');
+  html += kpi('Patentadas',     patUnits.length,  'unidades del mes (sin plan ahorro)', patUnits.length ? 'good' : '');
+  html += kpi('Compras del mes', compUnits.length, 'unidades para whosale',             compUnits.length ? 'good' : '');
   html += kpi('CC 90' + (al100Inc ? ' (100%)' : ''), fmtPesos(totales.cc90), '', '');
   html += kpi('Táctico', fmtPesos(totales.tactico), '', '');
   html += kpi('Adic. 1 + 2', fmtPesos(totales.adicional1 + totales.adicional2), '', '');
-  html += kpi('Whosale', fmtPesos(totales.whosale), 'sobre compras del mes', '');
+  html += kpi('Whosale', fmtPesos(totales.whosale), 'sobre ' + compUnits.length + ' compras', '');
   html += '</div>';
 
   // ----- Modelos sin CC (warning) -----
