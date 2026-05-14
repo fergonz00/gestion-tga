@@ -389,7 +389,9 @@ function _norm(s) {
 //   K fecha liquidación crédito (no usado)
 //
 // Filtro: solo desde PATENTAMIENTOS_MES_MINIMO (2026-04).
-// El mes se determina por col F (texto en español), no por fecha real.
+// El mes se determina por la FECHA REAL de patentamiento (col R) cuando existe;
+// si la carpeta todavía no está patentada, cae al texto de col F ("ABRIL"/etc).
+// Esto matchea con cómo Fer cuenta (por fecha de patentamiento).
 const _MES_TXT_A_NUM = {
   'enero':'01','febrero':'02','marzo':'03','abril':'04','mayo':'05',
   'junio':'06','julio':'07','agosto':'08','septiembre':'09','sept':'09',
@@ -460,15 +462,22 @@ function getPatentamientos() {
     const serie = String(drow[3] || '').trim();
     if (!num && !pv && !serie) continue;
 
-    // F = mes (texto). Si está vacío o no es un mes conocido, salteo.
-    const mesTxt = _norm(drow[5]);
-    const mesNum = _MES_TXT_A_NUM[mesTxt];
-    if (!mesNum) continue;
-    const mesKey = anioActual + '-' + mesNum;
-    if (mesKey < PATENTAMIENTOS_MES_MINIMO) continue;
-
-    // R = fecha patentamiento real
+    // R = fecha patentamiento real (puede determinar el mes)
     const fechaPat = _parseFecha(rrow[17], drow[17]);
+
+    // mesKey: si ya está patentada usamos la fecha REAL (lo que Fer cuenta),
+    // si no, caemos al texto de col F (mes esperado escrito por la admin).
+    // Sin alguno de los dos, salteamos.
+    let mesKey;
+    if (fechaPat) {
+      mesKey = _yyyyMm(fechaPat);
+    } else {
+      const mesTxt = _norm(drow[5]);
+      const mesNum = _MES_TXT_A_NUM[mesTxt];
+      if (!mesNum) continue;
+      mesKey = anioActual + '-' + mesNum;
+    }
+    if (mesKey < PATENTAMIENTOS_MES_MINIMO) continue;
 
     // M = vendedor → mapeo a oficial
     const vendedorRaw = String(drow[12] || '').trim();
