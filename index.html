@@ -2104,27 +2104,17 @@ function renderIncentivos() {
   html += '</div>';
   html += '<div style="font-size:11px;color:var(--vw-grey-3);margin:-6px 0 14px">Hoja BT usada: <b>' + escapeHtml(incentivosData.btHojaUsada || '—') + '</b></div>';
 
-  // ----- Zona de upload de PDFs (solo meses cerrados) -----
-  const mesCerrado = _esMesCerrado(incentivosData.mesKey);
+  // ----- Zona de upload de PDFs (siempre disponible) -----
+  // Los PDFs son independientes del mes seleccionado: cada uno trae su propio
+  // mes_incentivo en el texto y se matchea contra la BT de ese mes.
   html += '<h4 class="desg-title">Cargar pagos de VW (PDFs de NC)</h4>';
-  if (!mesCerrado) {
-    html += '<div class="upload-zone" style="opacity:.7;border-style:solid;border-color:var(--vw-grey-2)">'
-          + '  <div>⏳ <b>Los pagos de este mes todavía no se pueden cargar</b></div>'
-          + '  <div style="font-size:12px;color:var(--vw-grey-3);margin-top:6px;max-width:520px;margin-left:auto;margin-right:auto">'
-          + '    VW paga los incentivos por patentamiento <b>~15 días</b> del mes siguiente, '
-          + '    y el whosale <b>~1 semana</b> después de la compra. '
-          + '    Cuando el mes termine y tengas los PDFs, elegí el mes anterior y soltalos acá.'
-          + '  </div>'
-          + '</div>';
-  } else {
-    html += '<div class="upload-zone" id="uploadZoneInc" ondragover="event.preventDefault();this.classList.add(\'over\')" ondragleave="this.classList.remove(\'over\')" ondrop="onDropPagosVW(event)">'
-          + '  <div>Arrastrá los PDFs acá o</div>'
-          + '  <label class="upload-btn">'
-          + '    <input type="file" multiple accept="application/pdf" onchange="onPickPagosVW(event)"> Elegir archivos'
-          + '  </label>'
-          + '  <div class="upload-progress">' + escapeHtml(parseStatus || 'Soporta múltiples PDFs a la vez. El sistema parsea, identifica el tipo por monto y deduplica por NC.') + '</div>'
-          + '</div>';
-  }
+  html += '<div class="upload-zone" id="uploadZoneInc" ondragover="event.preventDefault();this.classList.add(\'over\')" ondragleave="this.classList.remove(\'over\')" ondrop="onDropPagosVW(event)">'
+        + '  <div>Arrastrá los PDFs acá o</div>'
+        + '  <label class="upload-btn">'
+        + '    <input type="file" multiple accept="application/pdf" onchange="onPickPagosVW(event)"> Elegir archivos'
+        + '  </label>'
+        + '  <div class="upload-progress">' + escapeHtml(parseStatus || 'Soporta múltiples PDFs a la vez. Cada NC se matchea con su mes de incentivo (que puede no coincidir con el mes seleccionado arriba).') + '</div>'
+        + '</div>';
 
   // ----- Preview de pagos parseados (si hay) -----
   if (pagosParseados.length) {
@@ -2246,14 +2236,6 @@ function renderIncentivos() {
   html += '</tbody></table></div></div>';
 
   wrap.innerHTML = html;
-}
-
-// Devuelve true si el mes ya cerró (estrictamente menor al mes actual).
-function _esMesCerrado(mesKey) {
-  if (!mesKey) return false;
-  const ahora = new Date();
-  const ahoraKey = ahora.getFullYear() + '-' + String(ahora.getMonth() + 1).padStart(2, '0');
-  return mesKey < ahoraKey;
 }
 
 // =======================================================================
