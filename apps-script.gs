@@ -56,6 +56,7 @@ function doGet(e) {
     if (tipo === 'stock')           return jsonResponse(_cached('stock',          CACHE_TTL_SEC, fresh, getStock));
     if (tipo === 'ventas')          return jsonResponse(_cached('ventas',         CACHE_TTL_SEC, fresh, getVentas));
     if (tipo === 'patentamientos')  return jsonResponse(_cached('patentamientos', CACHE_TTL_SEC, fresh, getPatentamientos));
+    if (tipo === 'incentivos')      return jsonResponse(_cached('incentivos_' + (params.mes || ''), CACHE_TTL_SEC, fresh, () => getIncentivos(params)));
     if (tipo === 'ventasdebug')     return jsonResponse(getVentasDebug(params));  // sin cache
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
@@ -663,4 +664,159 @@ function toNumber(v) {
     n = parseFloat(s);
   }
   return isNaN(n) ? 0 : n;
+}
+
+// =======================================================================
+// INCENTIVOS — condiciones comerciales VW por unidad
+// =======================================================================
+// Cruza BT del mes × patentamientos × stock (compras) para calcular cuánto
+// debería cobrar TGA a fábrica. La regla del "100%" (CC 90 / 0.9) se aplica
+// en el frontend (server siempre devuelve la base 90).
+//
+// Hojas en la espejo (las crea Fer manualmente con IMPORTRANGE):
+//   actual_bt        → IMPORTRANGE de "Actual BT"   (mes vigente)
+//   bt_2026_04       → IMPORTRANGE de "Abril 26 BT" (cerrado)
+//   bt_2026_05       → cuando cierre mayo se crea esta
+//
+// Layout madre (BT):
+//   B  modelo · U  CC 90 · Y  táctico · Z  whosale · AA adic 1 · AB adic 2
+
+function getIncentivos(params) {
+  const mesKey = String(params.mes || _yyyyMm(new Date()));
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const bt = _readBT(ss, mesKey);
+  if (!bt.encontrado) {
+    return {
+      mesKey,
+      error: 'No encontré la hoja BT del mes. Esperaba "' + bt.nombreBuscado + '" o "actual_bt" en la espejo.',
+    };
+  }
+
+  // 1) Unidades patentadas del mes (no plan ahorro)
+  const pat = getPatentamientos();
+  const patDelMes = (pat.carpetas || []).filter(c =>
+    c.mesKey === mesKey && c.tipoCarpetaCanon !== 'Plan ahorro'
+  );
+  const porUnidadPat = patDelMes.map(c => {
+    const cc = bt.porModelo[_normModeloKey(c.modelo)] || null;
+    return {
+      num:       c.num,
+      pv:        c.pv,
+      serie:     c.serie,
+      modelo:    c.modelo,
+      dominio:   c.dominio,
+      admin:     c.admin,
+      vendedor:  c.vendedor,
+      fechaPat:  c.fechaPatStr || c.fechaPatIso,
+      // valores BASE (90%). El frontend aplica /0.9 al cc90 cuando toggle 100%.
+      cc90Base:    cc ? cc.cc90 : 0,
+      tactico:     cc ? cc.tactico : 0,
+      adicional1:  cc ? cc.adicional1 : 0,
+      adicional2:  cc ? cc.adicional2 : 0,
+      sinCC:       !cc,
+    };
+  });
+
+  // 2) Unidades compradas en el mes (col B "fecha fc"). Aplica a todas, sin
+  //    importar plan ahorro.
+  const compras = _readComprasDelMes(ss, mesKey);
+  const porUnidadCompra = compras.map(u => {
+    const cc = bt.porModelo[_normModeloKey(u.modelo)] || null;
+    return {
+      serie:      u.serie,
+      modelo:     u.modelo,
+      fechaFc:    u.fechaFcStr,
+      fechaFcIso: u.fechaFcIso,
+      whosale:    cc ? cc.whosale : 0,
+      sinCC:      !cc,
+    };
+  });
+
+  // 3) Lista de modelos en BT que no encontraron unidades, y modelos en
+  //    patentamientos/stock que no matchearon BT — útil para Fer afinar nombres.
+  const modelosSinCCPat = Array.from(new Set(porUnidadPat.filter(x => x.sinCC).map(x => x.modelo)));
+  const modelosSinCCCom = Array.from(new Set(porUnidadCompra.filter(x => x.sinCC).map(x => x.modelo)));
+
+  return {
+    mesKey,
+    btHojaUsada: bt.nombreUsado,
+    porUnidadPatentada: porUnidadPat,
+    porUnidadComprada:  porUnidadCompra,
+    modelosSinCC: { patentadas: modelosSinCCPat, compradas: modelosSinCCCom },
+    modelosBT:    Object.values(bt.porModelo).map(m => m.modelo),
+    updatedAt:    new Date().toISOString(),
+  };
+}
+
+function _readBT(ss, mesKey) {
+  const [y, m] = mesKey.split('-');
+  const nombreEspecifico = 'bt_' + y + '_' + m;
+  let sh = ss.getSheetByName(nombreEspecifico);
+  let nombreUsado = nombreEspecifico;
+  if (!sh) {
+    sh = ss.getSheetByName('actual_bt');
+    nombreUsado = 'actual_bt';
+  }
+  if (!sh) return { encontrado: false, nombreBuscado: nombreEspecifico };
+
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return { encontrado: true, nombreUsado, porModelo: {} };
+
+  // IMPORTRANGE A2:AB60 → fila 1 espejo = header "modelos"; data desde fila 2.
+  const numRows = lastRow - 1;
+  const data = sh.getRange(2, 1, numRows, 28).getValues();
+  const porModelo = {};
+  for (const r of data) {
+    const modelo = String(r[1] || '').trim();  // B
+    if (!modelo) continue;
+    porModelo[_normModeloKey(modelo)] = {
+      modelo:      modelo,
+      cc90:        toNumber(r[20]),  // U
+      tactico:     toNumber(r[24]),  // Y
+      whosale:     toNumber(r[25]),  // Z
+      adicional1:  toNumber(r[26]),  // AA
+      adicional2:  toNumber(r[27]),  // AB
+    };
+  }
+  return { encontrado: true, nombreUsado, porModelo };
+}
+
+function _readComprasDelMes(ss, mesKey) {
+  const sh = ss.getSheetByName('stock') || ss.getSheets()[0];
+  if (!sh) return [];
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return [];
+
+  const range   = sh.getRange(1, 1, lastRow, 16);
+  const display = range.getDisplayValues();
+  const raw     = range.getValues();
+
+  const compras = [];
+  for (let i = 0; i < raw.length; i++) {
+    const drow = display[i];
+    const rrow = raw[i];
+    const serie = String(drow[0] || '').trim();
+    if (!serie || /^serie$/i.test(serie)) continue;  // header o vacía
+    const fechaFc = _parseFecha(rrow[1], drow[1]);
+    if (!fechaFc) continue;
+    if (_yyyyMm(fechaFc) !== mesKey) continue;
+    compras.push({
+      serie:      serie,
+      fechaFcStr: String(drow[1] || '').trim(),
+      fechaFcIso: _isoDate(fechaFc),
+      modelo:     String(drow[2] || '').trim(),  // C "unidad" (modelo + versión)
+    });
+  }
+  return compras;
+}
+
+// Normaliza el nombre del modelo para matching difuso entre BT/patent/stock.
+// Quita acentos, espacios múltiples, lo lleva a UPPER. Si Fer escribe "Taos
+// Comfortline" en BT y "TAOS comfortline" en patent, igual matchea.
+function _normModeloKey(s) {
+  return String(s || '').trim().toUpperCase()
+    .replace(/[ÁÄÀÂ]/g,'A').replace(/[ÉËÈÊ]/g,'E').replace(/[ÍÏÌÎ]/g,'I')
+    .replace(/[ÓÖÒÔ]/g,'O').replace(/[ÚÜÙÛ]/g,'U')
+    .replace(/\s+/g, ' ');
 }

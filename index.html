@@ -717,6 +717,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <button class="tab" data-tab="stock" onclick="setTab('stock')">Stock</button>
       <button class="tab" data-tab="ventas" onclick="setTab('ventas')">Ventas</button>
       <button class="tab" data-tab="patentamientos" onclick="setTab('patentamientos')">Patentamientos</button>
+      <button class="tab" data-tab="incentivos" onclick="setTab('incentivos')">Incentivos</button>
     </div>
 
     <!-- =================== RESUMEN =================== -->
@@ -762,6 +763,17 @@ table.patent-tbl.resumida .col-extra { display: none; }
       </div>
       <div id="patentContent"></div>
     </section>
+
+    <!-- =================== INCENTIVOS =================== -->
+    <section class="panel" id="panelIncentivos">
+      <div class="toolbar">
+        <div class="updated" id="updatedAtIncentivos">—</div>
+        <div class="actions">
+          <button class="refresh" id="btnRefreshIncentivos" onclick="loadIncentivos(true)">Actualizar</button>
+        </div>
+      </div>
+      <div id="incentivosContent"></div>
+    </section>
   </main>
 </div>
 
@@ -801,6 +813,12 @@ let patentData = null;            // { carpetas, meses, mesActual, updatedAt }
 let mesSelPat = '';
 let vendedorFiltroPat = '';       // filtro por vendedor (drill-down)
 let vistaResumidaPat = false;     // toggle vista resumida en patentamientos
+
+// Incentivos (Fase 1: cálculo, sin importar pagos VW todavía)
+let incentivosData = null;        // { porUnidadPatentada, porUnidadComprada, ... }
+let mesSelInc = '';               // mes seleccionado
+let al100Inc = false;             // toggle 100% objetivo (afecta CC 90 → /0.9)
+let vistaResumidaInc = false;     // ocultar cols extra
 // Objetivos del mes (cantidad de carpetas a patentar). Defaults pasados por
 // Fer; persistidos en localStorage para que pueda editarlos vivo.
 const OBJETIVOS_PAT_DEFAULT = { '2026-04': 63, '2026-05': 54 };
@@ -832,6 +850,7 @@ const LS_CACHE_KEYS = {
   stock:          'gestion_cache_stock',
   ventas:         'gestion_cache_ventas',
   patentamientos: 'gestion_cache_patent',
+  incentivos:     'gestion_cache_incent',
 };
 function lsCacheGet(tipo) {
   try {
@@ -886,6 +905,8 @@ function startAutoRefresh() {
       _fetchVentasSilent();
     } else if (activo === 'patentamientos') {
       _fetchPatentSilent();
+    } else if (activo === 'incentivos') {
+      _fetchIncentivosSilent();
     }
   }, AUTO_REFRESH_MS);
 }
@@ -906,6 +927,7 @@ function setTab(tab) {
     stock:          'panelStock',
     ventas:         'panelVentas',
     patentamientos: 'panelPatentamientos',
+    incentivos:     'panelIncentivos',
   };
   const el = document.getElementById(map[tab]);
   if (el) el.classList.add('active');
@@ -914,6 +936,7 @@ function setTab(tab) {
   if (tab === 'stock'          && !stockData)    loadStock(false);
   if (tab === 'ventas'         && !ventasData)   loadVentas(false);
   if (tab === 'patentamientos' && !patentData)   loadPatentamientos(false);
+  if (tab === 'incentivos'     && !incentivosData) loadIncentivos(false);
 }
 
 // =======================================================================
@@ -1893,6 +1916,232 @@ async function _fetchPatentSilent() {
     const upd = document.getElementById('updatedAtPatent');
     if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
   } catch { /* silencioso */ }
+}
+
+// =======================================================================
+// INCENTIVOS · fetch
+// =======================================================================
+// El endpoint pide ?mes=YYYY-MM. Si no se manda, server usa el mes vigente.
+// Reusamos el mes de la tab de patentamientos como default si está fijado.
+function _urlIncentivos(mesKey, fresh) {
+  const m = mesKey || (patentData && (mesSelPat || patentData.mesActual)) || '';
+  let url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=incentivos';
+  if (m)     url += '&mes=' + encodeURIComponent(m);
+  if (fresh) url += '&fresh=1';
+  return url;
+}
+
+async function loadIncentivos(forzar) {
+  if (incentivosData && !forzar) { renderIncentivos(); return; }
+
+  // Primer pintado desde localStorage si hay
+  if (!incentivosData && !forzar) {
+    const cached = lsCacheGet('incentivos');
+    if (cached) {
+      incentivosData = cached;
+      mesSelInc = cached.mesKey || '';
+      renderIncentivos();
+      const upd = document.getElementById('updatedAtIncentivos');
+      if (upd && cached.updatedAt) upd.textContent = 'Actualizado: ' + new Date(cached.updatedAt).toLocaleString('es-AR');
+      _fetchIncentivosSilent();
+      return;
+    }
+  }
+
+  const btn  = document.getElementById('btnRefreshIncentivos');
+  const wrap = document.getElementById('incentivosContent');
+  if (btn) { btn.disabled = true; btn.textContent = 'Cargando...'; }
+  wrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>Cargando incentivos...</div></div>';
+
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) {
+    wrap.innerHTML = '<div class="errbox"><div class="ttl">⚙️ Falta conectar la planilla</div></div>';
+    if (btn) { btn.disabled = false; btn.textContent = 'Actualizar'; }
+    return;
+  }
+
+  try {
+    const res = await fetch(_urlIncentivos(mesSelInc, !!forzar));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    incentivosData = data;
+    mesSelInc = data.mesKey || mesSelInc;
+    lsCacheSet('incentivos', data);
+    renderIncentivos();
+    const upd = document.getElementById('updatedAtIncentivos');
+    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+  } catch (e) {
+    console.error(e);
+    wrap.innerHTML = '<div class="errbox"><div class="ttl">⚠️ No se pudieron cargar los incentivos</div>'
+      + '<div>' + escapeHtml(e.message || String(e)) + '</div></div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Actualizar'; }
+  }
+}
+
+async function _fetchIncentivosSilent() {
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return;
+  try {
+    const res = await fetch(_urlIncentivos(mesSelInc, true));
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.error) return;
+    incentivosData = data;
+    mesSelInc = data.mesKey || mesSelInc;
+    lsCacheSet('incentivos', data);
+    renderIncentivos();
+    const upd = document.getElementById('updatedAtIncentivos');
+    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+  } catch { /* silencioso */ }
+}
+
+function setMesInc(mesKey) {
+  mesSelInc = mesKey || '';
+  incentivosData = null;  // forzar recarga porque cambia el mes
+  loadIncentivos(true);
+}
+function toggleAl100Inc()         { al100Inc = !al100Inc; renderIncentivos(); }
+function toggleVistaResumidaInc() { vistaResumidaInc = !vistaResumidaInc; renderIncentivos(); }
+
+// =======================================================================
+// INCENTIVOS · render
+// =======================================================================
+function renderIncentivos() {
+  const wrap = document.getElementById('incentivosContent');
+  if (!wrap) return;
+  if (!incentivosData) {
+    wrap.innerHTML = '<div class="empty">Sin datos.</div>';
+    return;
+  }
+  if (incentivosData.error) {
+    wrap.innerHTML = '<div class="errbox"><div class="ttl">⚠️ ' + escapeHtml(incentivosData.error) + '</div>'
+      + '<div>Verificá que la hoja exista en la planilla espejo (con IMPORTRANGE de la madre).</div></div>';
+    return;
+  }
+
+  const patUnits = incentivosData.porUnidadPatentada || [];
+  const compUnits = incentivosData.porUnidadComprada || [];
+
+  // Aplicar regla 100%: cc90Ajustado = al100 ? cc90Base / 0.9 : cc90Base
+  const ajuste = (u) => al100Inc ? (u.cc90Base / 0.9) : u.cc90Base;
+
+  const totales = {
+    cc90:       patUnits.reduce((a, u) => a + ajuste(u), 0),
+    tactico:    patUnits.reduce((a, u) => a + (u.tactico || 0), 0),
+    adicional1: patUnits.reduce((a, u) => a + (u.adicional1 || 0), 0),
+    adicional2: patUnits.reduce((a, u) => a + (u.adicional2 || 0), 0),
+    whosale:    compUnits.reduce((a, u) => a + (u.whosale || 0), 0),
+  };
+  totales.totalPat   = totales.cc90 + totales.tactico + totales.adicional1 + totales.adicional2;
+  totales.totalGeneral = totales.totalPat + totales.whosale;
+
+  let html = '';
+
+  // ----- Toolbar: selector de mes + toggles -----
+  html += '<div class="mes-row">';
+  html += '  <label for="mesSelInc">Mes:</label>';
+  // Reusamos meses de patentamientos si hay (mismo universo)
+  const mesesDisp = (patentData && patentData.meses) || [{ mesKey: incentivosData.mesKey, label: incentivosData.mesKey }];
+  html += '  <select id="mesSelInc" onchange="setMesInc(this.value)">';
+  for (const m of mesesDisp) {
+    const sel = m.mesKey === incentivosData.mesKey ? ' selected' : '';
+    html += '    <option value="' + m.mesKey + '"' + sel + '>' + escapeHtml(m.label) + '</option>';
+  }
+  html += '  </select>';
+  html += '  <label class="toggle-resumida">'
+        + '    <input type="checkbox" ' + (al100Inc ? 'checked' : '') + ' onchange="toggleAl100Inc()"> Cobranza al 100% (CC 90 / 0.9)'
+        + '  </label>';
+  html += '  <label class="toggle-resumida">'
+        + '    <input type="checkbox" ' + (vistaResumidaInc ? 'checked' : '') + ' onchange="toggleVistaResumidaInc()"> Vista resumida'
+        + '  </label>';
+  html += '  <span style="margin-left:auto;font-size:11px;color:var(--vw-grey-3)">Hoja BT: <b>' + escapeHtml(incentivosData.btHojaUsada || '—') + '</b></span>';
+  html += '</div>';
+
+  // ----- KPIs totales -----
+  html += '<div class="cards">';
+  html += kpi('Total a cobrar', fmtPesos(totales.totalGeneral), patUnits.length + ' patentadas · ' + compUnits.length + ' compradas', totales.totalGeneral > 0 ? 'good' : '');
+  html += kpi('CC 90' + (al100Inc ? ' (100%)' : ''), fmtPesos(totales.cc90), '', '');
+  html += kpi('Táctico', fmtPesos(totales.tactico), '', '');
+  html += kpi('Adic. 1 + 2', fmtPesos(totales.adicional1 + totales.adicional2), '', '');
+  html += kpi('Whosale', fmtPesos(totales.whosale), 'sobre compras del mes', '');
+  html += '</div>';
+
+  // ----- Modelos sin CC (warning) -----
+  const sinPat = incentivosData.modelosSinCC?.patentadas || [];
+  const sinCom = incentivosData.modelosSinCC?.compradas || [];
+  if (sinPat.length || sinCom.length) {
+    html += '<div class="aviso-reemplazar"><span class="ico">⚠️</span><span>';
+    html += '<b>Modelos sin CC en la BT:</b> ';
+    const todos = Array.from(new Set([...sinPat, ...sinCom]));
+    html += escapeHtml(todos.join(' · '));
+    html += ' — revisá que el nombre en BT coincida con el de patentamientos/stock.';
+    html += '</span></div>';
+  }
+
+  // ----- Tabla por unidad patentada -----
+  html += '<div class="table-wrap">'
+        + '  <div class="table-head"><h3>Por unidad patentada (sin plan ahorro)</h3>'
+        + '    <div class="count">' + patUnits.length + ' unidades</div>'
+        + '  </div>'
+        + '  <div class="table-scroll">'
+        + '    <table class="patent-tbl responsive-cards ' + (vistaResumidaInc ? 'resumida' : '') + '">'
+        + '      <thead><tr>'
+        + '        <th>#</th><th>Modelo</th><th>Dominio</th>'
+        + '        <th class="col-extra">PV</th><th class="col-extra">Vendedor</th><th class="col-extra">Admin</th>'
+        + '        <th class="num">CC 90' + (al100Inc ? ' (100%)' : '') + '</th>'
+        + '        <th class="num">Táctico</th>'
+        + '        <th class="num col-extra">Adic 1</th>'
+        + '        <th class="num col-extra">Adic 2</th>'
+        + '        <th class="num">Total</th>'
+        + '      </tr></thead>'
+        + '      <tbody>';
+  if (!patUnits.length) {
+    html += '<tr><td colspan="10" class="empty">No hay unidades patentadas para este mes.</td></tr>';
+  } else {
+    for (const u of patUnits) {
+      const cc90 = ajuste(u);
+      const tot  = cc90 + (u.tactico||0) + (u.adicional1||0) + (u.adicional2||0);
+      html += '<tr' + (u.sinCC ? ' style="background:#fff4e6"' : '') + '>';
+      html += '<td class="ctr" data-label="#">' + (u.num || '—') + '</td>';
+      html += '<td data-label="Modelo">' + escapeHtml(u.modelo || '—') + (u.sinCC ? ' <small style="color:#cc6600">(sin CC)</small>' : '') + '</td>';
+      html += '<td data-label="Dominio">' + escapeHtml(u.dominio || '—') + '</td>';
+      html += '<td class="col-extra" data-label="PV">' + escapeHtml(u.pv || '—') + '</td>';
+      html += '<td class="col-extra" data-label="Vendedor">' + escapeHtml(u.vendedor || u.vendedorRaw || '—') + '</td>';
+      html += '<td class="col-extra" data-label="Admin">' + escapeHtml(u.admin || '—') + '</td>';
+      html += '<td class="num" data-label="CC 90">' + fmtPesos(cc90) + '</td>';
+      html += '<td class="num" data-label="Táctico">' + fmtPesos(u.tactico) + '</td>';
+      html += '<td class="num col-extra" data-label="Adic 1">' + fmtPesos(u.adicional1) + '</td>';
+      html += '<td class="num col-extra" data-label="Adic 2">' + fmtPesos(u.adicional2) + '</td>';
+      html += '<td class="num gcia-pos" data-label="Total">' + fmtPesos(tot) + '</td>';
+      html += '</tr>';
+    }
+  }
+  html += '</tbody></table></div></div>';
+
+  // ----- Tabla whosale -----
+  html += '<div class="table-wrap">'
+        + '  <div class="table-head"><h3>Whosale — unidades compradas en el mes</h3>'
+        + '    <div class="count">' + compUnits.length + ' unidades</div>'
+        + '  </div>'
+        + '  <div class="table-scroll">'
+        + '    <table class="patent-tbl responsive-cards">'
+        + '      <thead><tr><th>Serie</th><th>Modelo</th><th>Fecha FC</th><th class="num">Whosale</th></tr></thead>'
+        + '      <tbody>';
+  if (!compUnits.length) {
+    html += '<tr><td colspan="4" class="empty">No hay compras para este mes.</td></tr>';
+  } else {
+    for (const u of compUnits) {
+      html += '<tr' + (u.sinCC ? ' style="background:#fff4e6"' : '') + '>';
+      html += '<td data-label="Serie"><span class="serie">' + escapeHtml(u.serie || '—') + '</span></td>';
+      html += '<td data-label="Modelo">' + escapeHtml(u.modelo || '—') + (u.sinCC ? ' <small style="color:#cc6600">(sin CC)</small>' : '') + '</td>';
+      html += '<td data-label="Fecha FC">' + escapeHtml(u.fechaFc || '—') + '</td>';
+      html += '<td class="num" data-label="Whosale">' + fmtPesos(u.whosale) + '</td>';
+      html += '</tr>';
+    }
+  }
+  html += '</tbody></table></div></div>';
+
+  wrap.innerHTML = html;
 }
 
 function setMesPat(mesKey)       { mesSelPat = mesKey || ''; renderPatentamientos(); }
