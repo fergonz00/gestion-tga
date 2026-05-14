@@ -2576,19 +2576,19 @@ async function guardarPagosVW() {
   const countAntes = await _contarPagosVW();
   const cantParaGuardar = pagosParseados.length;
 
-  // POST + intentar leer respuesta. Si el read falla (puede pasar por la
-  // redirect chain de Apps Script), verificamos con un GET después.
+  // POST con FormData (en lugar de JSON.stringify) para esquivar la redirect
+  // chain de Apps Script que convierte POST→GET en el browser y pierde el body.
+  // El Apps Script lo lee desde e.parameter.payload.
   let serverResp = null;
   let postError = null;
   try {
-    const res = await fetch(APPS_SCRIPT_URL, {
-      method: 'POST',
-      body: JSON.stringify({
-        token:  APPS_SCRIPT_TOKEN,
-        accion: 'guardar',
-        pagos:  pagosParseados,
-      }),
-    });
+    const fd = new FormData();
+    fd.append('payload', JSON.stringify({
+      token:  APPS_SCRIPT_TOKEN,
+      accion: 'guardar',
+      pagos:  pagosParseados,
+    }));
+    const res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: fd });
     try { serverResp = await res.json(); } catch { /* opaque o no-json */ }
   } catch (e) { postError = e; }
 

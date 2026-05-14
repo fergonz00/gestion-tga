@@ -66,10 +66,19 @@ function doGet(e) {
 }
 
 // POST endpoint para guardar pagos parseados de los PDFs de VW.
-// Body JSON: { token, pagos: [{ ncNum, fechaNc, serie, vin, modelo, tipoDetectado, montoNeto, montoTotal, mesIncentivo, textoTipo, ... }] }
+// Acepta dos formatos para evitar el problema de redirect POST→GET en browsers:
+//   1. FormData con field 'payload' (preferido desde el frontend)
+//   2. Body crudo JSON (compat con curl/PowerShell)
 function doPost(e) {
   try {
-    const body = JSON.parse((e.postData && e.postData.contents) || '{}');
+    let body = {};
+    // Formato 1: FormData con 'payload'
+    if (e && e.parameter && e.parameter.payload) {
+      body = JSON.parse(e.parameter.payload);
+    } else if (e && e.postData && e.postData.contents) {
+      // Formato 2: body crudo JSON
+      try { body = JSON.parse(e.postData.contents); } catch (_) { body = {}; }
+    }
     if (String(body.token || '').trim() !== TOKEN) {
       return jsonResponse({ error: 'forbidden' });
     }
