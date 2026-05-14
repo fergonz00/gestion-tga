@@ -419,6 +419,33 @@ h4.desg-title {
   margin: 8px 0 10px; font-size: 14px; font-weight: 700;
   color: var(--vw-grey-3); text-transform: uppercase; letter-spacing: 0.5px;
 }
+
+/* Resumen — vista panorámica */
+.resumen-block {
+  margin-bottom: 28px;
+}
+.resumen-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 12px; gap: 12px; flex-wrap: wrap;
+}
+.resumen-head h3 {
+  font-size: 16px; font-weight: 700; color: var(--vw-blue);
+  letter-spacing: -0.2px;
+}
+.resumen-link {
+  background: white; border: 1px solid var(--vw-grey-2);
+  padding: 6px 14px; border-radius: var(--radius);
+  font-size: 12px; font-weight: 600; color: var(--vw-blue);
+  cursor: pointer; transition: all 0.15s;
+}
+.resumen-link:hover {
+  background: var(--vw-blue); color: white; border-color: var(--vw-blue);
+}
+.resumen-loading {
+  background: white; padding: 18px; border-radius: var(--radius);
+  color: var(--vw-grey-3); text-align: center; font-size: 13px;
+  box-shadow: var(--shadow);
+}
 .desg .empty-mini { font-size: 12px; color: var(--vw-grey-3); padding: 8px 0; }
 .desg .dr {
   display: grid; grid-template-columns: minmax(0, 90px) 1fr auto;
@@ -686,13 +713,25 @@ table.patent-tbl.resumida .col-extra { display: none; }
     <h2>Stock, ventas y patentamientos</h2>
 
     <div class="tabs">
-      <button class="tab active" data-tab="stock" onclick="setTab('stock')">Stock</button>
+      <button class="tab active" data-tab="resumen" onclick="setTab('resumen')">Resumen</button>
+      <button class="tab" data-tab="stock" onclick="setTab('stock')">Stock</button>
       <button class="tab" data-tab="ventas" onclick="setTab('ventas')">Ventas</button>
       <button class="tab" data-tab="patentamientos" onclick="setTab('patentamientos')">Patentamientos</button>
     </div>
 
+    <!-- =================== RESUMEN =================== -->
+    <section class="panel active" id="panelResumen">
+      <div class="toolbar">
+        <div class="updated">Vista panorámica de las 3 secciones</div>
+        <div class="actions">
+          <button class="refresh" id="btnRefreshResumen" onclick="refreshResumen()">Actualizar todo</button>
+        </div>
+      </div>
+      <div id="resumenContent"></div>
+    </section>
+
     <!-- =================== STOCK =================== -->
-    <section class="panel active" id="panelStock">
+    <section class="panel" id="panelStock">
       <div class="toolbar">
         <div class="updated" id="updatedAtStock">—</div>
         <div class="actions">
@@ -825,7 +864,7 @@ function enterApp(session) {
   document.getElementById('gateScreen').classList.add('hidden');
   document.getElementById('appScreen').classList.remove('hidden');
   document.getElementById('userName').textContent = session.nombre || session.usuario;
-  loadStock(false);
+  setTab('resumen');
   startAutoRefresh();
 }
 
@@ -837,7 +876,11 @@ function startAutoRefresh() {
   if (_autoRefreshTimer) clearInterval(_autoRefreshTimer);
   _autoRefreshTimer = setInterval(() => {
     const activo = document.querySelector('.tab.active')?.dataset.tab;
-    if (activo === 'stock' && !calcOpen) {
+    if (activo === 'resumen') {
+      if (!calcOpen) _fetchStockSilent();
+      _fetchVentasSilent();
+      _fetchPatentSilent();
+    } else if (activo === 'stock' && !calcOpen) {
       _fetchStockSilent();
     } else if (activo === 'ventas') {
       _fetchVentasSilent();
@@ -859,6 +902,7 @@ function setTab(tab) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   const map = {
+    resumen:        'panelResumen',
     stock:          'panelStock',
     ventas:         'panelVentas',
     patentamientos: 'panelPatentamientos',
@@ -866,8 +910,121 @@ function setTab(tab) {
   const el = document.getElementById(map[tab]);
   if (el) el.classList.add('active');
   // Lazy load por tab
-  if (tab === 'ventas' && !ventasData) loadVentas(false);
-  if (tab === 'patentamientos' && !patentData) loadPatentamientos(false);
+  if (tab === 'resumen')                          loadResumen();
+  if (tab === 'stock'          && !stockData)    loadStock(false);
+  if (tab === 'ventas'         && !ventasData)   loadVentas(false);
+  if (tab === 'patentamientos' && !patentData)   loadPatentamientos(false);
+}
+
+// =======================================================================
+// RESUMEN · vista panorámica (Stock + Ventas + Patentamientos)
+// =======================================================================
+// No tiene endpoint propio: reusa los datos cargados de las otras 3 tabs.
+// Cada loadX/_fetchXSilent llama a renderResumen() al final, así esta tab
+// se actualiza sola cuando alguna sección refresca.
+
+function loadResumen() {
+  // Disparamos las cargas — cada una restaura sincrónicamente de localStorage
+  // si hay cache, así renderResumen() de abajo pinta inmediatamente.
+  if (!stockData)  loadStock(false);
+  if (!ventasData) loadVentas(false);
+  if (!patentData) loadPatentamientos(false);
+  renderResumen();
+}
+
+function refreshResumen() {
+  const btn = document.getElementById('btnRefreshResumen');
+  if (btn) { btn.disabled = true; btn.textContent = 'Actualizando...'; }
+  Promise.all([
+    _fetchStockSilent(),
+    _fetchVentasSilent(),
+    _fetchPatentSilent(),
+  ]).finally(() => {
+    if (btn) { btn.disabled = false; btn.textContent = 'Actualizar todo'; }
+  });
+}
+
+function renderResumen() {
+  const wrap = document.getElementById('resumenContent');
+  if (!wrap) return;
+
+  let h = '';
+
+  // ----- STOCK -----
+  h += '<div class="resumen-block">';
+  h += '  <div class="resumen-head"><h3>Stock</h3>'
+     + '    <button class="resumen-link" onclick="setTab(\'stock\')">Ver detalle →</button>'
+     + '  </div>';
+  if (stockData && Array.isArray(stockData.unidades)) {
+    const u = stockData.unidades;
+    const enStock = u.filter(x => !x.vendido).length;
+    const impagas = u.filter(x => !x.vendido && x.pagoEstado === 'impaga').length;
+    const enIndep = u.filter(x => !x.vendido && x.exposicion === 'INDEPENDENCIA').length;
+    const enErios = u.filter(x => !x.vendido && x.exposicion === 'ENTRE RIOS').length;
+    h += '<div class="cards">';
+    h += kpi('Total en stock', enStock, '', 'good');
+    h += kpi('Impagas', impagas, impagas ? 'a pagar' : '', impagas ? 'bad' : '');
+    h += kpi('Independencia', enIndep, 'en exposición', enIndep ? 'expo-in' : '');
+    h += kpi('Entre Ríos',   enErios, 'en exposición', enErios ? 'expo-er' : '');
+    h += '</div>';
+  } else {
+    h += '<div class="resumen-loading">Cargando stock...</div>';
+  }
+  h += '</div>';
+
+  // ----- VENTAS -----
+  h += '<div class="resumen-block">';
+  const mesV = (ventasData && (mesSeleccionado || ventasData.mesActual)) || '';
+  const mesLabelV = (ventasData && ventasData.meses && ventasData.meses.find(m => m.mesKey === mesV)?.label) || '—';
+  h += '  <div class="resumen-head"><h3>Ventas — ' + escapeHtml(mesLabelV) + '</h3>'
+     + '    <button class="resumen-link" onclick="setTab(\'ventas\')">Ver detalle →</button>'
+     + '  </div>';
+  if (ventasData && Array.isArray(ventasData.ventas)) {
+    const delMes = ventasData.ventas.filter(v => v.mesKey === mesV);
+    const cantidad = delMes.length;
+    const gciaPctAvg = delMes.length
+      ? delMes.reduce((a, v) => a + (v.gciaVtaPct || 0), 0) / delMes.length
+      : 0;
+    const ultima = delMes[delMes.length - 1];
+    const acumMes = ultima ? ultima.gciaNetaAcum : 0;
+    h += '<div class="cards">';
+    h += kpi('Ventas en el mes', cantidad, '', cantidad ? 'good' : '');
+    h += kpi('Gcia. neta acumulada', fmtPesos(acumMes), 'al cierre del mes', acumMes > 0 ? 'good' : (acumMes < 0 ? 'bad' : ''));
+    h += kpi('Gcia. % promedio', fmtPct(gciaPctAvg), '', '');
+    h += '</div>';
+  } else {
+    h += '<div class="resumen-loading">Cargando ventas...</div>';
+  }
+  h += '</div>';
+
+  // ----- PATENTAMIENTOS -----
+  h += '<div class="resumen-block">';
+  const mesP = (patentData && (mesSelPat || patentData.mesActual)) || '';
+  const mesLabelP = (patentData && patentData.meses && patentData.meses.find(m => m.mesKey === mesP)?.label) || '—';
+  h += '  <div class="resumen-head"><h3>Patentamientos — ' + escapeHtml(mesLabelP) + '</h3>'
+     + '    <button class="resumen-link" onclick="setTab(\'patentamientos\')">Ver detalle →</button>'
+     + '  </div>';
+  if (patentData && Array.isArray(patentData.carpetas)) {
+    const delMes = patentData.carpetas.filter(c => c.mesKey === mesP);
+    const total = delMes.length;
+    const patentadas = delMes.filter(c => c.patentada).length;
+    const pendientes = total - patentadas;
+    const objetivo = objetivosPat[mesP] || 0;
+    const restanObj = Math.max(0, objetivo - patentadas);
+    h += '<div class="cards">';
+    h += kpi('Carpetas del mes', total, '', total ? 'good' : '');
+    h += kpi('Patentadas', patentadas, total ? Math.round(patentadas / total * 100) + '% del total' : '', patentadas ? 'good' : '');
+    h += kpi('Pendientes', pendientes, '', pendientes ? 'warn' : '');
+    if (objetivo > 0) {
+      h += '<div class="card"><div class="label">Objetivo del mes</div><div class="value">' + objetivo + '</div><div class="sub">Faltan <b>' + restanObj + '</b></div></div>';
+    }
+    h += '</div>';
+  } else {
+    h += '<div class="resumen-loading">Cargando patentamientos...</div>';
+  }
+  h += '</div>';
+
+  wrap.innerHTML = h;
 }
 
 // =======================================================================
@@ -935,6 +1092,7 @@ async function _fetchStockSilent() {
     stockData = data;
     lsCacheSet('stock', data);
     if (!calcOpen) renderStock();
+    else           renderResumen();  // si la calc bloquea el render de stock, al menos actualizo el resumen
     const upd = document.getElementById('updatedAtStock');
     if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
   } catch { /* silencioso */ }
@@ -955,6 +1113,7 @@ async function _fetchStockSilent() {
 //   3) Resto sin exposición (por antigüedad desc)
 //
 function renderStock() {
+  renderResumen();  // mantener la tab de Resumen sincronizada con los datos actuales
   const wrap = document.getElementById('stockContent');
   if (!stockData || !Array.isArray(stockData.unidades)) {
     wrap.innerHTML = '<div class="empty">Sin datos.</div>';
@@ -1461,6 +1620,7 @@ function setMesVentas(mesKey) {
 // VENTAS · render
 // =======================================================================
 function renderVentas() {
+  renderResumen();
   const wrap = document.getElementById('ventasContent');
   if (!ventasData || !Array.isArray(ventasData.ventas)) {
     wrap.innerHTML = '<div class="empty">Sin datos.</div>';
@@ -1751,6 +1911,7 @@ function setObjetivoPat(val) {
 // PATENTAMIENTOS · render
 // =======================================================================
 function renderPatentamientos() {
+  renderResumen();
   const wrap = document.getElementById('patentContent');
   if (!patentData || !Array.isArray(patentData.carpetas)) {
     wrap.innerHTML = '<div class="empty">Sin datos.</div>';
