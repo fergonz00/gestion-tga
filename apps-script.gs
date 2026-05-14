@@ -713,6 +713,9 @@ function getIncentivos(params) {
     };
   }
 
+  // 0) Pagos VW del mes (mapa serie → { tipo: monto sumado })
+  const pagosPorSerie = _pagosPorSerieDelMes(ss, mesKey);
+
   // 1) Unidades patentadas del mes (no plan ahorro). Para el modelo usamos
   //    ventas (canónico por PV) y caemos a patentamientos si no matchea —
   //    el modelo en patentamientos a veces tiene typos por escritura manual.
@@ -730,6 +733,7 @@ function getIncentivos(params) {
     const modeloVentas = c.pv ? (modeloPorPv[String(c.pv).trim()] || '') : '';
     const modelo = modeloVentas || c.modelo || '';
     const cc = bt.porModelo[_normModeloKey(modelo)] || null;
+    const paid = pagosPorSerie[c.serie] || {};
     return {
       num:       c.num,
       pv:        c.pv,
@@ -746,6 +750,13 @@ function getIncentivos(params) {
       adicional1:  cc ? cc.adicional1 : 0,
       adicional2:  cc ? cc.adicional2 : 0,
       sinCC:       !cc,
+      pagado: {
+        cc90:       paid.cc90       || 0,
+        tactico:    paid.tactico    || 0,
+        adicional1: paid.adicional1 || 0,
+        adicional2: paid.adicional2 || 0,
+        whosale:    paid.whosale    || 0,
+      },
     };
   });
 
@@ -754,6 +765,7 @@ function getIncentivos(params) {
   const compras = _readComprasDelMes(ss, mesKey);
   const porUnidadCompra = compras.map(u => {
     const cc = bt.porModelo[_normModeloKey(u.modelo)] || null;
+    const paid = pagosPorSerie[u.serie] || {};
     return {
       serie:      u.serie,
       modelo:     u.modelo,
@@ -761,6 +773,9 @@ function getIncentivos(params) {
       fechaFcIso: u.fechaFcIso,
       whosale:    cc ? cc.whosale : 0,
       sinCC:      !cc,
+      pagado: {
+        whosale: paid.whosale || 0,
+      },
     };
   });
 
@@ -781,9 +796,9 @@ function getIncentivos(params) {
   };
 }
 
-// Devuelve la lista de meses (YYYY-MM) que tienen BT cargada:
-//   - el mes vigente (cubierto por actual_bt si existe)
-//   - todos los meses presentes en col A de bt_anteriores
+// Devuelve la lista de meses (YYYY-MM) que tienen BT cargada Y son posteriores
+// o iguales al mes mínimo de patentamientos (no tiene sentido mostrar marzo
+// si no tenemos patent/ventas de marzo para conciliar).
 function _readMesesBT(ss) {
   const meses = new Set();
   const ahora = new Date();
@@ -799,7 +814,9 @@ function _readMesesBT(ss) {
       }
     }
   }
-  return Array.from(meses).sort().reverse();
+  return Array.from(meses)
+    .filter(m => m >= PATENTAMIENTOS_MES_MINIMO)
+    .sort().reverse();
 }
 
 function _readBT(ss, mesKey) {
@@ -994,4 +1011,30 @@ function deletePagoVW(ncNum) {
     }
   }
   return { eliminado };
+}
+
+// Devuelve { serie → { cc90, tactico, adicional1, adicional2, whosale } }
+// con la suma de los pagos de cada tipo para esa serie en el mes_incentivo.
+// Si una unidad cobra el mismo tipo en 2 NCs distintos, se suma.
+function _pagosPorSerieDelMes(ss, mesKey) {
+  const out = {};
+  const sh = ss.getSheetByName('pagos_vw');
+  if (!sh) return out;
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return out;
+  const data = sh.getRange(2, 1, lastRow - 1, PAGOS_VW_HEADERS.length).getValues();
+  // Index col por header
+  const idxSerie = PAGOS_VW_HEADERS.indexOf('serie');
+  const idxTipo  = PAGOS_VW_HEADERS.indexOf('tipo_detectado');
+  const idxNeto  = PAGOS_VW_HEADERS.indexOf('monto_neto');
+  const idxMes   = PAGOS_VW_HEADERS.indexOf('mes_incentivo');
+  for (const r of data) {
+    if (String(r[idxMes] || '').trim() !== mesKey) continue;
+    const serie = String(r[idxSerie] || '').trim();
+    const tipo  = String(r[idxTipo] || '').trim();
+    if (!serie || !tipo) continue;
+    if (!out[serie]) out[serie] = {};
+    out[serie][tipo] = (out[serie][tipo] || 0) + (Number(r[idxNeto]) || 0);
+  }
+  return out;
 }

@@ -732,6 +732,13 @@ table.patent-tbl.resumida .col-extra { display: none; }
 .tipo-badge.whosale    { background: #e9d6ff; color: #4a008a; }
 .tipo-badge.desconocido { background: #f0f0f0; color: #666; }
 .match-warn { color: #cc6600; font-size: 10px; margin-left: 4px; }
+
+/* Conciliación de cobros — color de fondo por celda */
+.estado-cobrado    { background: #d4f4e2 !important; }   /* verde */
+.estado-pendiente  { background: #fff4e6 !important; }   /* amarillo */
+.estado-diferencia { background: #ffd9d9 !important; }   /* rojo */
+.estado-extra      { background: #d6eaff !important; }   /* azul: cobrado sin esperarlo */
+.cell-pagado       { display: block; font-size: 9.5px; color: #555; margin-top: 1px; font-weight: 500; }
 </style>
 
 <!-- pdf.js para parsing client-side de los NCs -->
@@ -2221,18 +2228,20 @@ function renderIncentivos() {
     for (const u of patUnits) {
       const cc90 = ajuste(u);
       const tot  = cc90 + (u.tactico||0) + (u.adicional1||0) + (u.adicional2||0);
-      html += '<tr' + (u.sinCC ? ' style="background:#fff4e6"' : '') + '>';
+      const paid = u.pagado || {};
+      const totPaid = (paid.cc90 || 0) + (paid.tactico || 0) + (paid.adicional1 || 0) + (paid.adicional2 || 0);
+      html += '<tr>';
       html += '<td class="ctr" data-label="#">' + (u.num || '—') + '</td>';
       html += '<td data-label="Modelo">' + escapeHtml(u.modelo || '—') + (u.sinCC ? ' <small style="color:#cc6600">(sin CC)</small>' : '') + '</td>';
       html += '<td data-label="Dominio">' + escapeHtml(u.dominio || '—') + '</td>';
       html += '<td class="col-extra" data-label="PV">' + escapeHtml(u.pv || '—') + '</td>';
       html += '<td class="col-extra" data-label="Vendedor">' + escapeHtml(u.vendedor || u.vendedorRaw || '—') + '</td>';
       html += '<td class="col-extra" data-label="Admin">' + escapeHtml(u.admin || '—') + '</td>';
-      html += '<td class="num" data-label="CC 90">' + fmtPesos(cc90) + '</td>';
-      html += '<td class="num" data-label="Táctico">' + fmtPesos(u.tactico) + '</td>';
-      html += '<td class="num col-extra" data-label="Adic 1">' + fmtPesos(u.adicional1) + '</td>';
-      html += '<td class="num col-extra" data-label="Adic 2">' + fmtPesos(u.adicional2) + '</td>';
-      html += '<td class="num gcia-pos" data-label="Total">' + fmtPesos(tot) + '</td>';
+      html += _tdCobro('CC 90' + (al100Inc ? ' (100%)' : ''), cc90, paid.cc90, true);
+      html += _tdCobro('Táctico',  u.tactico,    paid.tactico,    false);
+      html += _tdCobro('Adic 1',   u.adicional1, paid.adicional1, false, true);
+      html += _tdCobro('Adic 2',   u.adicional2, paid.adicional2, false, true);
+      html += _tdCobro('Total',    tot,          totPaid,         false, false);
       html += '</tr>';
     }
   }
@@ -2251,11 +2260,12 @@ function renderIncentivos() {
     html += '<tr><td colspan="4" class="empty">No hay compras para este mes.</td></tr>';
   } else {
     for (const u of compUnits) {
-      html += '<tr' + (u.sinCC ? ' style="background:#fff4e6"' : '') + '>';
+      const paid = u.pagado || {};
+      html += '<tr>';
       html += '<td data-label="Serie"><span class="serie">' + escapeHtml(u.serie || '—') + '</span></td>';
       html += '<td data-label="Modelo">' + escapeHtml(u.modelo || '—') + (u.sinCC ? ' <small style="color:#cc6600">(sin CC)</small>' : '') + '</td>';
       html += '<td data-label="Fecha FC">' + escapeHtml(u.fechaFc || '—') + '</td>';
-      html += '<td class="num" data-label="Whosale">' + fmtPesos(u.whosale) + '</td>';
+      html += _tdCobro('Whosale', u.whosale, paid.whosale, false);
       html += '</tr>';
     }
   }
@@ -2269,6 +2279,40 @@ function _labelMes(mesKey) {
   const [y, m] = String(mesKey || '').split('-');
   const idx = parseInt(m, 10) - 1;
   return (nombres[idx] || mesKey) + (y ? ' ' + y : '');
+}
+
+// Genera <td> con color de fondo según el estado de cobro de la CC.
+// esCC90 habilita matchear contra la versión al 100% (esperado / 0.9 o * 0.9).
+function _tdCobro(label, esperado, pagado, esCC90, colExtra) {
+  const e = Number(esperado) || 0;
+  const p = Number(pagado) || 0;
+  let cls = '';
+  let nota = '';
+  if (!e) {
+    if (p > 0) { cls = 'estado-extra'; nota = 'cobrado sin esperar: ' + fmtPesos(p); }
+  } else if (p === 0) {
+    cls = 'estado-pendiente'; nota = 'pendiente';
+  } else if (Math.abs(p - e) / e < 0.02) {
+    cls = 'estado-cobrado';  // match exacto
+  } else if (esCC90) {
+    // Para CC 90 chequear también la otra versión (90% ↔ 100%)
+    const alt = al100Inc ? e * 0.9 : e / 0.9;
+    if (Math.abs(p - alt) / alt < 0.02) {
+      cls = 'estado-cobrado';
+      nota = al100Inc ? 'cobrado al 90%' : 'cobrado al 100%';
+    } else {
+      cls = 'estado-diferencia';
+      nota = 'pagaron ' + fmtPesos(p);
+    }
+  } else {
+    cls = 'estado-diferencia';
+    nota = 'pagaron ' + fmtPesos(p);
+  }
+  const cellClass = ['num', cls, colExtra ? 'col-extra' : ''].filter(Boolean).join(' ');
+  let h = '<td class="' + cellClass + '" data-label="' + escapeHtml(label) + '">' + fmtPesos(e);
+  if (nota) h += '<small class="cell-pagado">' + escapeHtml(nota) + '</small>';
+  h += '</td>';
+  return h;
 }
 
 // =======================================================================
