@@ -402,11 +402,13 @@ const _MES_TXT_A_NUM = {
 // tiene variaciones libres por admin: "TRAD", "FINANCIADO VW", "FINANCIA VW",
 // "FINANCIA NACION ROCIO", "FIANCIA GALICIA" (typo), etc. Lo agrupamos en 4
 // buckets para que los desgloses no se vean fragmentados.
+// Etiquetas cortas a propósito: los desgloses tienen ~90px para el label.
+// Variantes largas se truncaban con ellipsis en las cards más angostas.
 const TIPO_CARPETA_CANON = {
-  TRAD:    'Tradicional / Contado',
-  VW:      'Financiado VW',
-  PLAN:    'Plan de Ahorro',
-  EXTERNO: 'Financia banco externo',
+  TRAD:    'Contado',
+  VW:      'VW',
+  PLAN:    'Plan ahorro',
+  EXTERNO: 'Banco externo',
 };
 
 function _normTipoCarpeta(raw) {
