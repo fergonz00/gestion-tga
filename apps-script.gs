@@ -776,8 +776,30 @@ function getIncentivos(params) {
     porUnidadComprada:  porUnidadCompra,
     modelosSinCC: { patentadas: modelosSinCCPat, compradas: modelosSinCCCom },
     modelosBT:    bt.porModelo,  // dict normKey → { modelo, cc90, tactico, whosale, adicional1, adicional2 }
+    mesesDisponibles: _readMesesBT(ss),  // todos los meses que tienen BT cargado
     updatedAt:    new Date().toISOString(),
   };
+}
+
+// Devuelve la lista de meses (YYYY-MM) que tienen BT cargada:
+//   - el mes vigente (cubierto por actual_bt si existe)
+//   - todos los meses presentes en col A de bt_anteriores
+function _readMesesBT(ss) {
+  const meses = new Set();
+  const ahora = new Date();
+  if (ss.getSheetByName('actual_bt')) meses.add(_yyyyMm(ahora));
+  const sa = ss.getSheetByName('bt_anteriores');
+  if (sa) {
+    const lastRow = sa.getLastRow();
+    if (lastRow >= 1) {
+      const colA = sa.getRange(1, 1, lastRow, 1).getValues();
+      for (const r of colA) {
+        const d = _parseFecha(r[0], '');
+        if (d) meses.add(_yyyyMm(d));
+      }
+    }
+  }
+  return Array.from(meses).sort().reverse();
 }
 
 function _readBT(ss, mesKey) {

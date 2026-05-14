@@ -2107,10 +2107,14 @@ function renderIncentivos() {
   // ----- Toolbar: selector de mes + toggles -----
   html += '<div class="mes-row">';
   html += '  <label for="mesSelInc">Mes:</label>';
-  // Reusamos meses de patentamientos si hay (mismo universo)
-  const mesesDisp = (patentData && patentData.meses) || [{ mesKey: incentivosData.mesKey, label: incentivosData.mesKey }];
+  // Lista de meses: priorizamos los que vienen del endpoint (bt_anteriores +
+  // actual_bt). Fallback a los meses de patentamientos si el endpoint no los
+  // devuelve (no debería pasar tras el redeploy).
+  const mesesIncen = Array.isArray(incentivosData.mesesDisponibles) && incentivosData.mesesDisponibles.length
+    ? incentivosData.mesesDisponibles.map(k => ({ mesKey: k, label: _labelMes(k) }))
+    : (patentData && patentData.meses) || [{ mesKey: incentivosData.mesKey, label: incentivosData.mesKey }];
   html += '  <select id="mesSelInc" onchange="setMesInc(this.value)">';
-  for (const m of mesesDisp) {
+  for (const m of mesesIncen) {
     const sel = m.mesKey === incentivosData.mesKey ? ' selected' : '';
     html += '    <option value="' + m.mesKey + '"' + sel + '>' + escapeHtml(m.label) + '</option>';
   }
@@ -2258,6 +2262,13 @@ function renderIncentivos() {
   html += '</tbody></table></div></div>';
 
   wrap.innerHTML = html;
+}
+
+function _labelMes(mesKey) {
+  const nombres = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const [y, m] = String(mesKey || '').split('-');
+  const idx = parseInt(m, 10) - 1;
+  return (nombres[idx] || mesKey) + (y ? ' ' + y : '');
 }
 
 // =======================================================================
