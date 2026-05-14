@@ -986,15 +986,15 @@ function savePagosVW(pagos) {
     if (existentes.has(ncNum)) { duplicados++; continue; }
     existentes.add(ncNum);
     filasNuevas.push([
-      ncNum,
+      "'" + ncNum,                                    // ' fuerza texto, evita autoformato científico
       p.fechaNc || '',
-      p.serie || '',
-      p.vin || '',
+      "'" + (p.serie || ''),                          // texto, las series suelen tener ceros adelante
+      "'" + (p.vin || ''),
       p.modelo || '',
       p.tipoDetectado || 'desconocido',
       Number(p.montoNeto) || 0,
       Number(p.montoTotal) || 0,
-      p.mesIncentivo || '',
+      "'" + (p.mesIncentivo || ''),                   // '2026-04' como texto, no como fecha
       p.textoTipo || '',
       ahora,
     ]);
@@ -1038,7 +1038,15 @@ function _pagosPorSerieDelMes(ss, mesKey) {
   const idxNeto  = PAGOS_VW_HEADERS.indexOf('monto_neto');
   const idxMes   = PAGOS_VW_HEADERS.indexOf('mes_incentivo');
   for (const r of data) {
-    if (String(r[idxMes] || '').trim() !== mesKey) continue;
+    // mes_incentivo puede venir como string '2026-04' o como Date si Sheets lo
+    // auto-convirtió. Normalizamos a YYYY-MM en ambos casos.
+    let mesCelda = '';
+    if (r[idxMes] instanceof Date) {
+      mesCelda = r[idxMes].getFullYear() + '-' + String(r[idxMes].getMonth() + 1).padStart(2, '0');
+    } else {
+      mesCelda = String(r[idxMes] || '').trim().substring(0, 7);  // recorta si venía con día/hora
+    }
+    if (mesCelda !== mesKey) continue;
     const serie = String(r[idxSerie] || '').trim();
     const tipo  = String(r[idxTipo] || '').trim();
     if (!serie || !tipo) continue;
