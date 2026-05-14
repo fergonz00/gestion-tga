@@ -884,6 +884,7 @@ let vistaResumidaInc = false;     // ocultar cols extra
 let incentivosDataByMes = {};     // cache de BT data por mes para matching multi-mes
 let pagosParseados = [];          // pagos parseados pero NO guardados aún (preview)
 let parseStatus = '';             // texto de progreso del upload
+let totalPagosGuardados = null;   // total persistido en la hoja pagos_vw (null = no contado todavía)
 // Objetivos del mes (cantidad de carpetas a patentar). Defaults pasados por
 // Fer; persistidos en localStorage para que pueda editarlos vivo.
 const OBJETIVOS_PAT_DEFAULT = { '2026-04': 63, '2026-05': 54 };
@@ -2006,6 +2007,9 @@ async function loadIncentivos(forzar) {
   if (!patentData) loadPatentamientos(false);
   if (!stockData)  loadStock(false);
 
+  // Conteo de pagos guardados (en background, para mostrar en la upload zone).
+  _contarPagosVW().then(n => { totalPagosGuardados = n; renderIncentivos(); });
+
   if (incentivosData && !forzar) { renderIncentivos(); return; }
 
   // Primer pintado desde localStorage si hay
@@ -2138,7 +2142,9 @@ function renderIncentivos() {
   // ----- Zona de upload de PDFs (siempre disponible) -----
   // Los PDFs son independientes del mes seleccionado: cada uno trae su propio
   // mes_incentivo en el texto y se matchea contra la BT de ese mes.
-  html += '<h4 class="desg-title">Cargar pagos de VW (PDFs de NC)</h4>';
+  html += '<h4 class="desg-title">Cargar pagos de VW (PDFs de NC)'
+        + (totalPagosGuardados !== null ? ' <small style="font-weight:500;color:var(--vw-grey-3);text-transform:none;letter-spacing:0">· ' + totalPagosGuardados + ' pagos en la base</small>' : '')
+        + '</h4>';
   html += '<div class="upload-zone" id="uploadZoneInc" ondragover="event.preventDefault();this.classList.add(\'over\')" ondragleave="this.classList.remove(\'over\')" ondrop="onDropPagosVW(event)">'
         + '  <div>Arrastrá los PDFs acá o</div>'
         + '  <label class="upload-btn">'
@@ -2567,6 +2573,13 @@ async function guardarPagosVW() {
   parseStatus = 'Guardando...';
   renderIncentivos();
 
+  const countAntes = await _contarPagosVW();
+  const cantParaGuardar = pagosParseados.length;
+
+  // POST + intentar leer respuesta. Si el read falla (puede pasar por la
+  // redirect chain de Apps Script), verificamos con un GET después.
+  let serverResp = null;
+  let postError = null;
   try {
     const res = await fetch(APPS_SCRIPT_URL, {
       method: 'POST',
@@ -2576,15 +2589,40 @@ async function guardarPagosVW() {
         pagos:  pagosParseados,
       }),
     });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    parseStatus = '✅ Guardados: ' + data.guardados + ' · Duplicados ignorados: ' + data.duplicados + ' · Total acumulado en la hoja: ' + data.total;
+    try { serverResp = await res.json(); } catch { /* opaque o no-json */ }
+  } catch (e) { postError = e; }
+
+  // Verificación independiente: re-cuento la hoja
+  const countDespues = await _contarPagosVW();
+  const delta = countDespues - countAntes;
+
+  totalPagosGuardados = countDespues;
+
+  if (delta > 0 || (serverResp && serverResp.guardados > 0)) {
+    const guardados   = delta > 0 ? delta : serverResp.guardados;
+    const duplicados  = cantParaGuardar - guardados;
+    parseStatus = '✅ Guardados ' + guardados + ' NCs nuevas · ' + duplicados + ' duplicadas/ignoradas · Total en la base: ' + countDespues;
     pagosParseados = [];
-    renderIncentivos();
-  } catch (e) {
-    parseStatus = '⚠️ Error al guardar: ' + (e.message || e);
-    renderIncentivos();
+    // Re-fetchear incentivos para que la tabla muestre el cobrado actualizado
+    _fetchIncentivosSilent();
+  } else if (serverResp && serverResp.error) {
+    parseStatus = '⚠️ Server: ' + serverResp.error;
+  } else if (postError) {
+    parseStatus = '⚠️ Error de red: ' + (postError.message || postError) + ' · Mirá la consola (F12).';
+  } else {
+    // Nada cambió → todos eran duplicados
+    parseStatus = '⚠️ No se guardó nada nuevo (probables duplicados). Total en la base: ' + countDespues;
   }
+  renderIncentivos();
+}
+
+async function _contarPagosVW() {
+  try {
+    const r = await fetch(APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=pagosvw');
+    if (!r.ok) return 0;
+    const j = await r.json();
+    return Number(j.total) || 0;
+  } catch { return 0; }
 }
 
 function descartarPagosParseados() {
