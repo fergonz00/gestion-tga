@@ -411,6 +411,14 @@ table.ranking-tbl tbody tr.zero td.vname { color: var(--vw-grey-4); font-weight:
   margin-bottom: 12px; padding-bottom: 8px;
   border-bottom: 1px solid var(--vw-grey-2);
 }
+.desg .hd .hd-sub {
+  color: var(--vw-blue, #001e50); font-weight: 800;
+  text-transform: none; letter-spacing: 0; font-size: 12px;
+}
+h4.desg-title {
+  margin: 8px 0 10px; font-size: 14px; font-weight: 700;
+  color: var(--vw-grey-3); text-transform: uppercase; letter-spacing: 0.5px;
+}
 .desg .empty-mini { font-size: 12px; color: var(--vw-grey-3); padding: 8px 0; }
 .desg .dr {
   display: grid; grid-template-columns: minmax(0, 90px) 1fr auto;
@@ -1767,10 +1775,20 @@ function renderPatentamientos() {
 
   // Desgloses (% por grupo)
   const porPatenta = _agruparCount(delMes, c => c.patentaA || '—');     // TG / CLIENTE / REVENTA
-  const porAdmin   = _agruparCount(delMes, c => c.admin || '—');
-  const porTipo    = _agruparCount(delMes, c => c.tipoCarpeta || '—');  // TRAD / PLAN AHORRO / FINANCIA
+  const porTipo    = _agruparCount(delMes, c => c.tipoCarpetaCanon || c.tipoCarpeta || '—');
   const porRevPart = _agruparCount(delMes, c => c.reventaOParticular || '—');
   const porVend    = _agruparCount(delMes, c => c.vendedor || (c.vendedorRaw || '—'));
+
+  // Mix admin × tipo canónico: por cada admin, cuántas carpetas de cada bucket.
+  // Estructura: { admin: { total, tipos: { 'Tradicional/Contado': N, ... } } }
+  const adminMix = {};
+  for (const c of delMes) {
+    const a = c.admin || '—';
+    const t = c.tipoCarpetaCanon || c.tipoCarpeta || '—';
+    if (!adminMix[a]) adminMix[a] = { total: 0, tipos: {} };
+    adminMix[a].total += 1;
+    adminMix[a].tipos[t] = (adminMix[a].tipos[t] || 0) + 1;
+  }
 
   let html = '';
 
@@ -1843,10 +1861,12 @@ function renderPatentamientos() {
   html += '<div class="desgloses">';
   html += desgloseCard('Quién patenta',     porPatenta, total);
   html += desgloseCard('Reventa / Particular', porRevPart, total);
-  html += desgloseCard('Por admin',         porAdmin,   total);
   html += desgloseCard('Tipo de carpeta',   porTipo,    total);
   html += desgloseCard('Por vendedor',      porVend,    total);
   html += '</div>';
+
+  // ----- Mix por administrativa (admin × tipo de carpeta) -----
+  html += desgloseAdminMix(adminMix);
 
   // ----- Tabla -----
   html += '<div class="table-wrap">'
@@ -1895,7 +1915,7 @@ function filaPatent(c) {
   h += '<td class="col-extra" data-label="Serie"><span class="serie">' + escapeHtml(c.serie) + '</span></td>';
   h += '<td class="ctr" data-label="Patenta">' + patentaBadge + '</td>';
   h += '<td class="col-extra" data-label="Admin">' + escapeHtml(c.admin || '—') + '</td>';
-  h += '<td class="col-extra" data-label="Tipo">' + escapeHtml(c.tipoCarpeta || '—') + '</td>';
+  h += '<td class="col-extra" data-label="Tipo">' + escapeHtml(c.tipoCarpetaCanon || c.tipoCarpeta || '—') + '</td>';
   h += '<td class="col-extra" data-label="Rev/Part">' + escapeHtml(c.reventaOParticular || '—') + '</td>';
   h += '<td data-label="Vendedor">' + escapeHtml(c.vendedor || c.vendedorRaw || '—') + '</td>';
   h += '<td class="col-extra" data-label="Cliente">' + escapeHtml(c.cliente || '—') + '</td>';
@@ -1921,6 +1941,36 @@ function _agruparCount(arr, keyFn) {
     o[k] = (o[k] || 0) + 1;
   }
   return o;
+}
+
+// Sección "Carpetas por administrativa" — una card por admin con el mix de
+// tipos de carpeta. Reutiliza el mismo HTML/CSS de las desgloses (.desg / .dr).
+function desgloseAdminMix(adminMix) {
+  const admins = Object.keys(adminMix);
+  if (!admins.length) return '';
+  // Orden: por total descendente, luego alfabético.
+  admins.sort((a, b) => adminMix[b].total - adminMix[a].total || a.localeCompare(b));
+
+  let h = '<h4 class="desg-title">Carpetas por administrativa</h4>';
+  h += '<div class="desgloses">';
+  for (const a of admins) {
+    const { total: tot, tipos } = adminMix[a];
+    const items = Object.keys(tipos).map(k => ({ k: k, n: tipos[k] }))
+      .sort((x, y) => y.n - x.n);
+    h += '<div class="desg">';
+    h += '  <div class="hd">' + escapeHtml(a) + ' · <span class="hd-sub">' + tot + ' carp.</span></div>';
+    for (const it of items) {
+      const pct = tot ? Math.round(it.n / tot * 100) : 0;
+      h += '<div class="dr">'
+         + '  <div class="dr-k">' + escapeHtml(it.k) + '</div>'
+         + '  <div class="dr-bar"><div class="dr-fill" style="width:' + pct + '%"></div></div>'
+         + '  <div class="dr-v">' + it.n + ' · ' + pct + '%</div>'
+         + '</div>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+  return h;
 }
 
 // Card con bars horizontales: cada key con su cantidad y %

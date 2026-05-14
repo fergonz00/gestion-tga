@@ -396,6 +396,33 @@ const _MES_TXT_A_NUM = {
   'octubre':'10','noviembre':'11','diciembre':'12'
 };
 
+// Tipo de carpeta canónico (col I "AA, Contado o financiado"). La planilla
+// tiene variaciones libres por admin: "TRAD", "FINANCIADO VW", "FINANCIA VW",
+// "FINANCIA NACION ROCIO", "FIANCIA GALICIA" (typo), etc. Lo agrupamos en 4
+// buckets para que los desgloses no se vean fragmentados.
+const TIPO_CARPETA_CANON = {
+  TRAD:    'Tradicional / Contado',
+  VW:      'Financiado VW',
+  PLAN:    'Plan de Ahorro',
+  EXTERNO: 'Financia banco externo',
+};
+
+function _normTipoCarpeta(raw) {
+  const s0 = String(raw || '').trim();
+  if (!s0) return '';
+  const s = s0.toUpperCase()
+    .replace(/[ÁÄÀÂ]/g,'A').replace(/[ÉËÈÊ]/g,'E').replace(/[ÍÏÌÎ]/g,'I')
+    .replace(/[ÓÖÒÔ]/g,'O').replace(/[ÚÜÙÛ]/g,'U');
+  if (/\bTRAD/.test(s) || /\bCONTAD/.test(s))                                                    return TIPO_CARPETA_CANON.TRAD;
+  if (/PLAN.*AHORR|AHORR.*PLAN/.test(s))                                                         return TIPO_CARPETA_CANON.PLAN;
+  // Bancos externos: variantes y typos comunes
+  if (/GALI?CI|GALICA|NACION|FRANC[EÉ]S|HSBC|SUPERVIELLE|MACRO|SANTANDER|BBVA|ICBC|PATAGONIA/.test(s)) return TIPO_CARPETA_CANON.EXTERNO;
+  if (/\bVW\b|VOLKSWAGEN/.test(s))                                                               return TIPO_CARPETA_CANON.VW;
+  // "FINANCIADO" / "FINANCIA" / "FIANCIA" / "FIANANCIA" sin marca → asumo VW (lo más común)
+  if (/FI(N|A)A?NA?CI?[AO]/.test(s))                                                             return TIPO_CARPETA_CANON.VW;
+  return s0;  // sin clasificar → devuelvo el raw
+}
+
 function getPatentamientos() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName('patentamientos')
@@ -457,7 +484,8 @@ function getPatentamientos() {
       mesKey:             mesKey,                                   // 'yyyy-mm'
       patentaA:           String(drow[6] || '').trim().toUpperCase(), // G (TG/CLIENTE/REVENTA)
       admin:              String(drow[7] || '').trim(),             // H
-      tipoCarpeta:        String(drow[8] || '').trim().toUpperCase(), // I (AA)
+      tipoCarpeta:        String(drow[8] || '').trim().toUpperCase(), // I (AA) — raw
+      tipoCarpetaCanon:   _normTipoCarpeta(drow[8]),                  // I → canónico (4 buckets)
       reventaOParticular: String(drow[11] || '').trim().toUpperCase(), // L
       vendedor:           vendedor,                                 // M → oficial
       vendedorRaw:        vendedorRaw,                              // M → tal cual
