@@ -3544,7 +3544,11 @@ function renderPatentamientos() {
   } else {
     for (const m of meses) {
       const sel = m.mesKey === mesSelPat ? ' selected' : '';
-      html += '    <option value="' + m.mesKey + '"' + sel + '>' + escapeHtml(m.label) + ' · ' + m.cuenta + '</option>';
+      const obj = objetivosPat[m.mesKey] || 0;
+      const sufijo = obj > 0
+        ? m.cuenta + ' cargadas · obj ' + obj
+        : m.cuenta + ' cargadas';
+      html += '    <option value="' + m.mesKey + '"' + sel + '>' + escapeHtml(m.label) + ' · ' + sufijo + '</option>';
     }
   }
   html += '  </select>';
