@@ -372,16 +372,6 @@ table.ranking-tbl tbody tr.zero td.vname { color: var(--vw-grey-4); font-weight:
   font-size: 13px; margin-bottom: 14px;
 }
 
-.pat-crossnota {
-  background: rgba(0, 30, 80, 0.06);
-  border-left: 4px solid var(--vw-blue);
-  padding: 12px 16px; border-radius: 8px;
-  font-size: 13px; line-height: 1.5;
-  margin-bottom: 16px;
-  color: var(--vw-grey-4);
-}
-.pat-crossnota b { color: var(--vw-blue); }
-
 .pat-progress {
   background: white; padding: 16px 20px; border-radius: var(--radius);
   box-shadow: var(--shadow); margin-bottom: 18px;
@@ -866,12 +856,6 @@ table.patent-tbl.resumida .col-extra { display: none; }
   background: var(--vw-grey-1); border-radius: 6px; color: var(--vw-grey-4);
 }
 .q-mes .min-nota b { color: var(--vw-blue); }
-.q-mes .cross-nota {
-  margin-top: 8px; font-size: 11.5px; padding: 8px 10px; line-height: 1.4;
-  background: rgba(0, 30, 80, 0.06); border-left: 3px solid var(--vw-blue);
-  border-radius: 6px; color: var(--vw-grey-4);
-}
-.q-mes .cross-nota b { color: var(--vw-blue); }
 
 .q-criterios {
   background: white; padding: 18px 20px; border-radius: var(--radius);
@@ -3424,40 +3408,6 @@ function renderTrimestre() {
         html += '<div class="min-nota">Mínimo de <b>' + minPat + '</b> alcanzado ✓ · margen +' + (m.pat - minPat) + '</div>';
       }
     }
-    // Nota de "interacción" entre meses del trimestre: cuando este mes está en
-    // curso y los anteriores ya cerraron, mostramos cómo el resultado anterior
-    // baja o sube el objetivo efectivo de este mes para llegar al 100% del
-    // bi/trimestre.
-    if (m.estado === 'current' && m.pos >= 2 && m.obj > 0) {
-      let sumObjAnt = 0, sumPatAnt = 0, anterioresOk = true;
-      for (let k = 0; k < m.pos - 1; k++) {
-        const ma = rt.meses[k];
-        if (ma.estado !== 'past' || !ma.obj) { anterioresOk = false; break; }
-        sumObjAnt += ma.obj;
-        sumPatAnt += ma.pat;
-      }
-      if (anterioresOk) {
-        const delta = sumPatAnt - sumObjAnt;  // +sobrante / -déficit acumulado
-        const objEfectivo = Math.max(0, (sumObjAnt + m.obj) - sumPatAnt);
-        const periodo = (m.pos === 2) ? 'el bimestre' : 'el trimestre';
-        const refMes = (m.pos === 2)
-          ? escapeHtml(rt.meses[0].label)
-          : escapeHtml(rt.meses[0].label + ' + ' + rt.meses[1].label);
-        let txt;
-        if (delta > 0) {
-          txt = 'Sumando las <b>+' + delta + '</b> que sobraron de ' + refMes + ', este mes alcanza con <b>' + objEfectivo + '</b> para que ' + periodo + ' cierre al 100% (en vez de ' + m.obj + ')';
-        } else if (delta < 0) {
-          txt = refMes + ' cerró <b>' + delta + '</b> bajo objetivo · este mes necesita <b>' + objEfectivo + '</b> para que ' + periodo + ' cierre al 100% (en vez de ' + m.obj + ')';
-        } else {
-          txt = refMes + ' cerró justo al 100% · este mes mantiene su objetivo de <b>' + m.obj + '</b>';
-        }
-        const restanTxt = Math.max(0, objEfectivo - m.pat);
-        const sufijo = restanTxt > 0
-          ? ' · faltan <b>' + restanTxt + '</b>'
-          : ' · ya cubierto ✓ (margen +' + (m.pat - objEfectivo) + ')';
-        html += '<div class="cross-nota">' + txt + sufijo + '</div>';
-      }
-    }
     html += '</div>';
   }
   html += '</div>';
@@ -3629,6 +3579,34 @@ function renderPatentamientos() {
   const faltanCargar = objetivo > 0 ? Math.max(0, objetivo - total) : 0;
   const objetivo90   = objetivo > 0 ? Math.ceil(objetivo * 0.9) : 0;
   const faltan90     = objetivo > 0 ? Math.max(0, objetivo90 - total) : 0;
+  // Objetivo efectivo del mes considerando el sobrante/déficit del mes 1.
+  // Compensación SOLO se aplica al mes 2 del trimestre (criterio B bimestral
+  // de VW). El mes 3 no compensa: tiene piso propio del 100% (criterio C).
+  let objEfect = objetivo;       // por defecto = objetivo propio
+  let obj90Efect = objetivo90;
+  let sobranteAnt = 0;           // +N sobró del mes 1 / -N faltó
+  let labelAnt = '';
+  if (objetivo > 0 && _mesEstado(mesSelPat) === 'current') {
+    const qkSel = _mesAQuarter(mesSelPat);
+    const mesesQ = _quarterMeses(qkSel);
+    const idxSel = mesesQ.indexOf(mesSelPat);
+    if (idxSel === 1) {  // SOLO mes 2 — la circular permite compensar entre mes 1 y 2
+      const mk1 = mesesQ[0];
+      if (_mesEstado(mk1) === 'past') {
+        const o1 = objetivosPat[mk1] || 0;
+        const p1 = _patentadasMes(mk1);
+        if (o1 > 0) {
+          sobranteAnt = p1 - o1;
+          objEfect = Math.max(0, (o1 + objetivo) - p1);
+          obj90Efect = Math.ceil(objEfect * 0.9);
+          labelAnt = _mesLabelLargo(mk1);
+        }
+      }
+    }
+  }
+  const faltanCargarEfect = Math.max(0, objEfect - total);
+  const faltan90Efect     = Math.max(0, obj90Efect - total);
+
   html += '<div class="cards">';
   html += kpi('Carpetas del mes', total, '', total ? 'good' : '');
   html += kpi('Patentadas', patentadas, total ? Math.round(patentadas / total * 100) + '% del total' : '', patentadas ? 'good' : '');
@@ -3643,8 +3621,20 @@ function renderPatentamientos() {
   }
   html += kpi('Pendientes de patentar', pendientes, 'cargadas sin fecha aún', pendientes ? 'warn' : '');
   if (objetivo > 0) {
-    html += kpi('Faltan p/ 90%', faltan90, 'cargar p/ llegar a ' + objetivo90 + ' (90% de ' + objetivo + ')', faltan90 > 0 ? 'warn' : 'good');
-    html += kpi('Faltan al objetivo', faltanCargar, 'carpetas a cargar', faltanCargar > 0 ? 'warn' : 'good');
+    // Sub-text común que aclara la compensación cuando aplica.
+    const compTxt = sobranteAnt > 0
+      ? 'incluye +' + sobranteAnt + ' de ' + labelAnt
+      : (sobranteAnt < 0 ? 'incluye ' + sobranteAnt + ' (déficit ' + labelAnt + ')' : '');
+
+    const sub90 = compTxt
+      ? 'p/ llegar a ' + obj90Efect + ' (90% del obj efect ' + objEfect + ') · ' + compTxt
+      : 'p/ llegar a ' + obj90Efect + ' (90% de ' + objetivo + ')';
+    html += kpi('Faltan p/ 90%', faltan90Efect, sub90, faltan90Efect > 0 ? 'warn' : 'good');
+
+    const subObj = compTxt
+      ? 'p/ llegar a obj efect ' + objEfect + ' · ' + compTxt
+      : 'carpetas a cargar (obj ' + objetivo + ')';
+    html += kpi('Faltan al objetivo', faltanCargarEfect, subObj, faltanCargarEfect > 0 ? 'warn' : 'good');
   }
   // KPI: mínimo del mes para no romper el recupero trimestral.
   const minRec = _minimoPatRecupero(mesSelPat);
@@ -3661,47 +3651,6 @@ function renderPatentamientos() {
         + '  <div class="sub">' + (objetivo > 0 ? 'patentadas: ' + patentadas + ' / ' + objetivo : 'editar para fijar') + '</div>'
         + '</div>';
   html += '</div>';
-
-  // ----- Banda de interacción con meses anteriores del mismo trimestre -----
-  // Solo cuando el mes seleccionado es el "current" (mes en curso) y los meses
-  // anteriores del trimestre ya cerraron con objetivo cargado.
-  if (objetivo > 0 && _mesEstado(mesSelPat) === 'current') {
-    const qkSel = _mesAQuarter(mesSelPat);
-    const mesesQ = _quarterMeses(qkSel);
-    const idxSel = mesesQ.indexOf(mesSelPat);
-    if (idxSel >= 1) {
-      let sumObjAnt = 0, sumPatAnt = 0, antOk = true;
-      const refLabels = [];
-      for (let k = 0; k < idxSel; k++) {
-        const mk = mesesQ[k];
-        if (_mesEstado(mk) !== 'past') { antOk = false; break; }
-        const oa = objetivosPat[mk] || 0;
-        if (!oa) { antOk = false; break; }
-        sumObjAnt += oa;
-        sumPatAnt += _patentadasMes(mk);
-        refLabels.push(_mesLabelLargo(mk));
-      }
-      if (antOk) {
-        const delta = sumPatAnt - sumObjAnt;
-        const objEfect = Math.max(0, (sumObjAnt + objetivo) - sumPatAnt);
-        const periodo = (idxSel === 1) ? 'el bimestre' : 'el trimestre';
-        const refMes = refLabels.join(' + ');
-        const restanCross = Math.max(0, objEfect - patentadas);
-        let txt;
-        if (delta > 0) {
-          txt = 'Sumando las <b>+' + delta + '</b> que sobraron de ' + escapeHtml(refMes) + ', este mes alcanza con <b>' + objEfect + '</b> patentadas para que ' + periodo + ' cierre al 100% (en vez de ' + objetivo + ')';
-        } else if (delta < 0) {
-          txt = escapeHtml(refMes) + ' cerró <b>' + delta + '</b> bajo objetivo · este mes necesita <b>' + objEfect + '</b> patentadas para que ' + periodo + ' cierre al 100% (en vez de ' + objetivo + ')';
-        } else {
-          txt = escapeHtml(refMes) + ' cerró justo al 100% · este mes mantiene su objetivo de <b>' + objetivo + '</b>';
-        }
-        const sufijo = restanCross > 0
-          ? ' · faltan <b>' + restanCross + '</b>'
-          : ' · ya cubierto ✓ (margen +' + (patentadas - objEfect) + ')';
-        html += '<div class="pat-crossnota">📐 ' + txt + sufijo + '</div>';
-      }
-    }
-  }
 
   // ----- Barras de progreso vs objetivo -----
   if (objetivo > 0) {
