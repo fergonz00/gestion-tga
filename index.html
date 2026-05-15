@@ -3004,13 +3004,13 @@ function renderPatentamientos() {
   //   - Faltan al objetivo    = objetivo - cargadas (carpetas que falta CARGAR)
   const faltanCargar = objetivo > 0 ? Math.max(0, objetivo - total) : 0;
   const objetivo90   = objetivo > 0 ? Math.ceil(objetivo * 0.9) : 0;
-  const faltan90     = objetivo > 0 ? Math.max(0, objetivo90 - patentadas) : 0;
+  const faltan90     = objetivo > 0 ? Math.max(0, objetivo90 - total) : 0;
   html += '<div class="cards">';
   html += kpi('Carpetas del mes', total, '', total ? 'good' : '');
   html += kpi('Patentadas', patentadas, total ? Math.round(patentadas / total * 100) + '% del total' : '', patentadas ? 'good' : '');
   html += kpi('Pendientes de patentar', pendientes, 'cargadas sin fecha aún', pendientes ? 'warn' : '');
   if (objetivo > 0) {
-    html += kpi('Faltan p/ 90%', faltan90, 'patentar p/ llegar a ' + objetivo90 + ' (90% de ' + objetivo + ')', faltan90 > 0 ? 'warn' : 'good');
+    html += kpi('Faltan p/ 90%', faltan90, 'cargar p/ llegar a ' + objetivo90 + ' (90% de ' + objetivo + ')', faltan90 > 0 ? 'warn' : 'good');
     html += kpi('Faltan al objetivo', faltanCargar, 'carpetas a cargar', faltanCargar > 0 ? 'warn' : 'good');
   }
   html += '<div class="card editable">'
