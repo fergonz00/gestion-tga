@@ -3537,6 +3537,15 @@ function renderPatentamientos() {
   html += '<div class="cards">';
   html += kpi('Carpetas del mes', total, '', total ? 'good' : '');
   html += kpi('Patentadas', patentadas, total ? Math.round(patentadas / total * 100) + '% del total' : '', patentadas ? 'good' : '');
+  if (objetivo > 0) {
+    // Alcance del mes vs objetivo (lo que VW usa para liquidar).
+    const alcMes = patentadas / objetivo * 100;
+    const alcMesTxt = alcMes.toLocaleString('es-AR', { maximumFractionDigits: 1 }) + '%';
+    const alcCls = alcMes >= 100 ? 'good' : (alcMes >= 90 ? 'warn' : 'bad');
+    const alcDelta = patentadas - objetivo;
+    const alcSub = (alcDelta > 0 ? '+' + alcDelta : alcDelta) + ' vs objetivo ' + objetivo;
+    html += kpi('Alcance del mes', alcMesTxt, alcSub, alcCls);
+  }
   html += kpi('Pendientes de patentar', pendientes, 'cargadas sin fecha aún', pendientes ? 'warn' : '');
   if (objetivo > 0) {
     html += kpi('Faltan p/ 90%', faltan90, 'cargar p/ llegar a ' + objetivo90 + ' (90% de ' + objetivo + ')', faltan90 > 0 ? 'warn' : 'good');
