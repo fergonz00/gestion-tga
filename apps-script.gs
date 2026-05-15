@@ -58,6 +58,7 @@ function doGet(e) {
     if (tipo === 'patentamientos')  return jsonResponse(_cached('patentamientos', CACHE_TTL_SEC, fresh, getPatentamientos));
     if (tipo === 'incentivos')      return jsonResponse(_cached('incentivos_' + (params.mes || ''), CACHE_TTL_SEC, fresh, () => getIncentivos(params)));
     if (tipo === 'pagosvw')         return jsonResponse(getPagosVW(params));      // sin cache
+    if (tipo === 'objetivos')       return jsonResponse(getObjetivosPat());       // sin cache (es chico)
     if (tipo === 'ventasdebug')     return jsonResponse(getVentasDebug(params));  // sin cache
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
@@ -83,8 +84,9 @@ function doPost(e) {
       return jsonResponse({ error: 'forbidden' });
     }
     const accion = String(body.accion || 'guardar').toLowerCase();
-    if (accion === 'guardar') return jsonResponse(savePagosVW(body.pagos || []));
-    if (accion === 'eliminar') return jsonResponse(deletePagoVW(body.ncNum));
+    if (accion === 'guardar')      return jsonResponse(savePagosVW(body.pagos || []));
+    if (accion === 'eliminar')     return jsonResponse(deletePagoVW(body.ncNum));
+    if (accion === 'setobjetivo')  return jsonResponse(setObjetivoPat(body));
     return jsonResponse({ error: 'accion desconocida: ' + accion });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
@@ -1070,4 +1072,70 @@ function _pagosPorSerieDelMes(ss, mesKey) {
     out[serie][tipo] = (out[serie][tipo] || 0) + (Number(r[idxTotal]) || 0);
   }
   return out;
+}
+
+// =======================================================================
+// OBJETIVOS DE PATENTAMIENTOS — clave/valor mesKey → objetivo
+// =======================================================================
+// VW reasigna objetivos periódicamente, por eso vivían en localStorage del
+// browser. Mover a Sheets así editar desde la plataforma persiste para todos
+// los usuarios y dispositivos (y resiste limpiar cache).
+//
+// Hoja "objetivos_pat" (autocreada). Columnas:
+//   A mesKey ('YYYY-MM')   B objetivo (int)   C actualizado_at (ISO)
+// Upsert por mesKey.
+
+const OBJETIVOS_PAT_HEADERS = ['mesKey', 'objetivo', 'actualizado_at'];
+
+function _getObjetivosPatSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName('objetivos_pat');
+  if (!sh) {
+    sh = ss.insertSheet('objetivos_pat');
+    sh.getRange(1, 1, 1, OBJETIVOS_PAT_HEADERS.length).setValues([OBJETIVOS_PAT_HEADERS]);
+    sh.setFrozenRows(1);
+    // Forzar formato texto en col A así "2026-04" no se interpreta como resta.
+    sh.getRange('A:A').setNumberFormat('@');
+  }
+  return sh;
+}
+
+function getObjetivosPat() {
+  const sh = _getObjetivosPatSheet();
+  const lastRow = sh.getLastRow();
+  const objetivos = {};
+  if (lastRow >= 2) {
+    const data = sh.getRange(2, 1, lastRow - 1, OBJETIVOS_PAT_HEADERS.length).getValues();
+    for (const r of data) {
+      const mesKey = String(r[0] || '').trim();
+      const valor = Number(r[1]);
+      if (!/^\d{4}-\d{2}$/.test(mesKey)) continue;
+      if (isNaN(valor) || valor < 0) continue;
+      objetivos[mesKey] = valor;
+    }
+  }
+  return { objetivos: objetivos, updatedAt: new Date().toISOString() };
+}
+
+function setObjetivoPat(body) {
+  const mesKey = String(body.mesKey || '').trim();
+  const valor = Number(body.valor);
+  if (!/^\d{4}-\d{2}$/.test(mesKey)) return { error: 'mesKey inválido: ' + mesKey };
+  if (isNaN(valor) || valor < 0) return { error: 'valor inválido: ' + body.valor };
+
+  const sh = _getObjetivosPatSheet();
+  const lastRow = sh.getLastRow();
+  const ahora = new Date().toISOString();
+
+  if (lastRow >= 2) {
+    const keys = sh.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (let i = 0; i < keys.length; i++) {
+      if (String(keys[i][0] || '').trim() === mesKey) {
+        sh.getRange(i + 2, 1, 1, OBJETIVOS_PAT_HEADERS.length).setValues([[mesKey, valor, ahora]]);
+        return { ok: true, mesKey: mesKey, valor: valor, accion: 'update' };
+      }
+    }
+  }
+  sh.appendRow(["'" + mesKey, valor, ahora]);  // ' fuerza texto en col A
+  return { ok: true, mesKey: mesKey, valor: valor, accion: 'insert' };
 }

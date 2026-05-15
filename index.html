@@ -1106,17 +1106,56 @@ let incentivosDataByMes = {};     // cache de BT data por mes para matching mult
 let pagosParseados = [];          // pagos parseados pero NO guardados aún (preview)
 let parseStatus = '';             // texto de progreso del upload
 let totalPagosGuardados = null;   // total persistido en la hoja pagos_vw (null = no contado todavía)
-// Objetivos del mes (cantidad de carpetas a patentar). Defaults pasados por
-// Fer; persistidos en localStorage para que pueda editarlos vivo.
-const OBJETIVOS_PAT_DEFAULT = { '2026-04': 63, '2026-05': 54 };
+// Objetivos del mes (cantidad de carpetas a patentar).
+// Persistidos en la hoja "objetivos_pat" de la planilla espejo (vía Apps Script).
+// localStorage queda como cache para pintar instantáneo al recargar; el fetch
+// remoto pisa el cache cuando llega.
 let objetivosPat = (() => {
   try {
     const s = localStorage.getItem('gestion_objetivos_pat');
-    return s ? Object.assign({}, OBJETIVOS_PAT_DEFAULT, JSON.parse(s)) : Object.assign({}, OBJETIVOS_PAT_DEFAULT);
-  } catch { return Object.assign({}, OBJETIVOS_PAT_DEFAULT); }
+    return s ? JSON.parse(s) : {};
+  } catch { return {}; }
 })();
-function saveObjetivosPat() {
+function saveObjetivosPatCache() {
   try { localStorage.setItem('gestion_objetivos_pat', JSON.stringify(objetivosPat)); } catch {}
+}
+// Pisado por loadObjetivosPat() al init/refresh. Se rerendera todo cuando llega.
+async function loadObjetivosPat() {
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return;
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=objetivos';
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.error) { console.error('objetivos:', data.error); return; }
+    if (data && data.objetivos && typeof data.objetivos === 'object') {
+      objetivosPat = data.objetivos;
+      saveObjetivosPatCache();
+      renderTrimestre();
+      renderResumen();
+      if (patentData) renderPatentamientos();
+    }
+  } catch (e) { console.error('loadObjetivosPat:', e); }
+}
+// POST al Apps Script para persistir un cambio. Optimista: el front ya se
+// pintó con el valor nuevo antes de llamar esto. Si falla, log + se mantiene
+// local (el próximo loadObjetivosPat lo sobrescribirá con la verdad de Sheets).
+async function saveObjetivoPatRemote(mesKey, valor) {
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return false;
+  try {
+    const body = new URLSearchParams();
+    body.set('payload', JSON.stringify({
+      token: APPS_SCRIPT_TOKEN, accion: 'setobjetivo', mesKey: mesKey, valor: valor,
+    }));
+    const res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    return true;
+  } catch (e) {
+    console.error('saveObjetivoPatRemote(' + mesKey + ', ' + valor + '):', e);
+    return false;
+  }
 }
 
 // Filtros activos
@@ -1200,6 +1239,7 @@ function enterApp(session) {
   document.getElementById('gateScreen').classList.add('hidden');
   document.getElementById('appScreen').classList.remove('hidden');
   document.getElementById('userName').textContent = session.nombre || session.usuario;
+  loadObjetivosPat();  // pisa el cache local con la verdad de la planilla
   setTab('resumen');
   startAutoRefresh();
 }
@@ -1212,6 +1252,9 @@ function startAutoRefresh() {
   if (_autoRefreshTimer) clearInterval(_autoRefreshTimer);
   _autoRefreshTimer = setInterval(() => {
     const activo = document.querySelector('.tab.active')?.dataset.tab;
+    // Refrescamos objetivos en cada ciclo: son ~chicos y permiten ver cambios
+    // hechos por otros usuarios (fngonzalez/fgonzalez comparten la planilla).
+    loadObjetivosPat();
     if (activo === 'resumen') {
       if (!calcOpen) _fetchStockSilent();
       _fetchVentasSilent();
@@ -3098,7 +3141,8 @@ function setObjetivoPat(val) {
   const n = parseInt(val, 10);
   if (!isNaN(n) && n >= 0) {
     objetivosPat[mesSelPat] = n;
-    saveObjetivosPat();
+    saveObjetivosPatCache();
+    saveObjetivoPatRemote(mesSelPat, n);
     renderPatentamientos();
   }
 }
@@ -3283,7 +3327,8 @@ function setObjetivoPatMes(mesKey, val) {
   const n = parseInt(val, 10);
   if (!isNaN(n) && n >= 0) {
     objetivosPat[mesKey] = n;
-    saveObjetivosPat();
+    saveObjetivosPatCache();
+    saveObjetivoPatRemote(mesKey, n);
     renderTrimestre();
     renderResumen();
     if (mesKey === mesSelPat) renderPatentamientos();

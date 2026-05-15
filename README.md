@@ -101,6 +101,33 @@ Editar `USUARIOS_PERMITIDOS` en `index.html` Y `requiereUsuario` en `portal-tga/
 1. Editar `TOKEN` en `apps-script.gs` y redesplegar el Web App.
 2. Editar `APPS_SCRIPT_TOKEN` en `index.html` con el mismo valor.
 
+### Re-deployar el Apps Script después de tocar `apps-script.gs`
+
+El Web App no actualiza automáticamente cuando guardás cambios en el editor.
+
+1. Pegar el nuevo `apps-script.gs` y **Guardar**.
+2. **Implementar → Administrar implementaciones**.
+3. En la implementación activa, click en el ✏️ (Editar).
+4. En "Versión" elegir **Nueva versión**, descripción libre.
+5. **Implementar**.
+
+Hacer "Nueva versión" sobre la implementación existente preserva la URL
+del Web App, así no hay que actualizar `APPS_SCRIPT_URL` en `index.html`.
+
+### Hoja `objetivos_pat`
+
+Se autocrea la primera vez que la app guarda un objetivo (no hace falta crearla
+a mano). Layout:
+
+| Col | Campo            | Notas |
+|-----|------------------|-------|
+| A   | `mesKey`         | 'YYYY-MM' como texto (no fecha) |
+| B   | `objetivo`       | Cantidad de carpetas a patentar |
+| C   | `actualizado_at` | ISO del último cambio |
+
+Si VW cambia un objetivo a mitad del mes, se edita desde la tab Patentamientos o
+Trimestre del portal y queda persistido para todos los usuarios.
+
 ### Agregar las próximas solapas (Ventas / Patentamientos)
 1. Confirmar con Fer las columnas y hojas de origen.
 2. Agregar fórmulas IMPORTRANGE en la espejo (probablemente en hojas nuevas: `ventas`, `patentamientos`).
