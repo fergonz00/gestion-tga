@@ -773,6 +773,172 @@ table.patent-tbl.resumida .col-extra { display: none; }
 .estado-diferencia { background: #ffd9d9 !important; }   /* rojo */
 .estado-extra      { background: #d6eaff !important; }   /* azul: cobrado sin esperarlo */
 .cell-pagado       { display: block; font-size: 9.5px; color: #555; margin-top: 1px; font-weight: 500; }
+
+/* ========== TRIMESTRE ========== */
+.q-toolbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.q-toolbar label { font-size: 12px; color: var(--vw-grey-4); font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+.q-toolbar select {
+  padding: 7px 12px; border: 1px solid var(--vw-grey-2);
+  border-radius: 6px; background: white; font-size: 13px; font-weight: 600;
+  color: var(--vw-blue); min-width: 220px;
+}
+.q-toolbar .q-status {
+  margin-left: auto; font-size: 12px; padding: 6px 12px; border-radius: 100px;
+  font-weight: 700; letter-spacing: 0.2px;
+}
+.q-status.live   { background: var(--vw-blue); color: white; }
+.q-status.closed { background: var(--vw-grey-2); color: var(--vw-grey-4); }
+.q-status.future { background: var(--purple-soft); color: var(--purple-dark); }
+
+.q-meses {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 14px; margin-bottom: 20px;
+}
+@media (max-width: 800px) { .q-meses { grid-template-columns: 1fr; } }
+.q-mes {
+  background: white; border-radius: var(--radius);
+  padding: 16px 18px 14px; box-shadow: var(--shadow);
+  border-top: 4px solid var(--vw-grey-2);
+}
+.q-mes.cur { border-top-color: var(--vw-blue); }
+.q-mes.ok  { border-top-color: var(--green); }
+.q-mes.warn { border-top-color: var(--orange); }
+.q-mes.bad  { border-top-color: var(--red); }
+.q-mes .q-mes-hd {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 10px; gap: 8px;
+}
+.q-mes .q-mes-hd .nm {
+  font-size: 15px; font-weight: 700; color: var(--vw-blue); letter-spacing: -0.2px;
+}
+.q-mes .q-mes-hd .pos {
+  font-size: 10.5px; color: var(--vw-grey-3); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.q-mes .alc {
+  display: flex; align-items: baseline; gap: 6px; margin-bottom: 6px;
+}
+.q-mes .alc .num {
+  font-size: 28px; font-weight: 700; letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums; color: var(--vw-blue);
+}
+.q-mes.ok  .alc .num { color: var(--green-dark); }
+.q-mes.warn .alc .num { color: var(--orange-dark); }
+.q-mes.bad .alc .num { color: var(--red-dark); }
+.q-mes .alc .lbl { font-size: 12px; color: var(--vw-grey-4); }
+.q-mes .det { font-size: 12.5px; color: var(--vw-grey-4); font-variant-numeric: tabular-nums; }
+.q-mes .det b { color: var(--vw-black); font-weight: 700; }
+.q-mes .q-bar {
+  height: 8px; background: var(--vw-grey-1); border-radius: 100px;
+  overflow: hidden; margin-top: 8px;
+}
+.q-mes .q-bar .fill {
+  height: 100%; transition: width 0.4s ease;
+  background: linear-gradient(90deg, var(--vw-blue-light), var(--vw-blue));
+}
+.q-mes.ok  .q-bar .fill { background: linear-gradient(90deg, var(--green), var(--green-dark)); }
+.q-mes.warn .q-bar .fill { background: linear-gradient(90deg, var(--orange), var(--orange-dark)); }
+.q-mes.bad .q-bar .fill { background: linear-gradient(90deg, var(--red), var(--red-dark)); }
+.q-mes .obj-edit {
+  margin-top: 10px; display: flex; align-items: center; gap: 6px;
+  font-size: 11.5px; color: var(--vw-grey-4);
+}
+.q-mes .obj-edit input {
+  width: 70px; padding: 3px 6px; border: 1px solid var(--vw-grey-2);
+  border-radius: 4px; font-size: 12px; font-weight: 600; color: var(--vw-blue);
+  font-variant-numeric: tabular-nums;
+}
+.q-mes .min-nota {
+  margin-top: 10px; font-size: 11.5px; padding: 6px 10px;
+  background: var(--vw-grey-1); border-radius: 6px; color: var(--vw-grey-4);
+}
+.q-mes .min-nota b { color: var(--vw-blue); }
+
+.q-criterios {
+  background: white; padding: 18px 20px; border-radius: var(--radius);
+  box-shadow: var(--shadow); margin-bottom: 20px;
+}
+.q-criterios h3 {
+  font-size: 14px; font-weight: 700; color: var(--vw-blue);
+  margin-bottom: 14px; letter-spacing: -0.1px;
+}
+.q-crit-row {
+  display: grid; grid-template-columns: 110px 1fr auto;
+  align-items: center; gap: 14px; padding: 8px 0;
+  border-bottom: 1px dashed var(--vw-grey-2);
+}
+.q-crit-row:last-child { border-bottom: none; }
+.q-crit-row .crit-id {
+  font-size: 11px; font-weight: 700; color: var(--vw-grey-4);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.q-crit-row .crit-desc { font-size: 12.5px; color: var(--vw-grey-4); }
+.q-crit-row .crit-desc b { color: var(--vw-black); }
+.q-crit-row .crit-state {
+  font-size: 11.5px; font-weight: 700; padding: 4px 12px; border-radius: 100px;
+  text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap;
+}
+.crit-state.ok      { background: var(--green-soft); color: var(--green-dark); }
+.crit-state.fail    { background: var(--red-soft);   color: var(--red-dark); }
+.crit-state.pending { background: var(--vw-grey-2);  color: var(--vw-grey-4); }
+@media (max-width: 700px) {
+  .q-crit-row { grid-template-columns: 1fr auto; }
+  .q-crit-row .crit-id { display: none; }
+}
+
+.q-totales {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 14px; margin-bottom: 20px;
+}
+@media (max-width: 700px) { .q-totales { grid-template-columns: 1fr; } }
+.q-tot {
+  background: white; padding: 16px 18px; border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.q-tot .lab {
+  font-size: 11px; color: var(--vw-grey-3); text-transform: uppercase;
+  letter-spacing: 0.6px; font-weight: 700; margin-bottom: 6px;
+}
+.q-tot .val {
+  font-size: 26px; font-weight: 700; color: var(--vw-blue);
+  letter-spacing: -0.5px; font-variant-numeric: tabular-nums;
+}
+.q-tot .sub { font-size: 12px; color: var(--vw-grey-4); margin-top: 4px; }
+.q-tot.good .val { color: var(--green-dark); }
+.q-tot.warn .val { color: var(--orange-dark); }
+.q-tot.bad  .val { color: var(--red-dark); }
+
+.q-recupero {
+  background: white; border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 18px 20px;
+  border-left: 4px solid var(--vw-grey-2);
+}
+.q-recupero.ok   { border-left-color: var(--green); background: linear-gradient(90deg, rgba(16,185,129,0.06), white 280px); }
+.q-recupero.fail { border-left-color: var(--red); background: linear-gradient(90deg, rgba(239,68,68,0.06), white 280px); }
+.q-recupero.pending { border-left-color: var(--vw-blue); }
+.q-recupero h3 { font-size: 15px; font-weight: 700; color: var(--vw-blue); margin-bottom: 10px; }
+.q-recupero .lead { font-size: 13.5px; color: var(--vw-grey-4); line-height: 1.5; margin-bottom: 12px; }
+.q-recupero .lead b { color: var(--vw-black); }
+.q-recupero .ajustes {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.q-recupero .aj {
+  background: var(--vw-grey-1); padding: 12px 14px; border-radius: 8px;
+}
+.q-recupero .aj .ttl { font-size: 11.5px; color: var(--vw-grey-4); font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; }
+.q-recupero .aj .v { font-size: 17px; font-weight: 700; color: var(--vw-blue); font-variant-numeric: tabular-nums; }
+.q-recupero .aj .d { font-size: 11.5px; color: var(--vw-grey-4); margin-top: 2px; }
+
+.q-empty {
+  background: white; padding: 28px 20px; border-radius: var(--radius);
+  box-shadow: var(--shadow); text-align: center;
+  color: var(--vw-grey-4); font-size: 13px;
+}
+.q-empty b { color: var(--vw-blue); }
 </style>
 
 <!-- pdf.js para parsing client-side de los NCs -->
@@ -814,6 +980,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <button class="tab" data-tab="stock" onclick="setTab('stock')">Stock</button>
       <button class="tab" data-tab="ventas" onclick="setTab('ventas')">Ventas</button>
       <button class="tab" data-tab="patentamientos" onclick="setTab('patentamientos')">Patentamientos</button>
+      <button class="tab" data-tab="trimestre" onclick="setTab('trimestre')">Trimestre</button>
       <button class="tab" data-tab="incentivos" onclick="setTab('incentivos')">Incentivos</button>
     </div>
 
@@ -859,6 +1026,17 @@ table.patent-tbl.resumida .col-extra { display: none; }
         </div>
       </div>
       <div id="patentContent"></div>
+    </section>
+
+    <!-- =================== TRIMESTRE =================== -->
+    <section class="panel" id="panelTrimestre">
+      <div class="toolbar">
+        <div class="updated">Seguimiento del recupero trimestral VW (criterios A · B · C)</div>
+        <div class="actions">
+          <button class="refresh" onclick="loadPatentamientos(true)">Actualizar</button>
+        </div>
+      </div>
+      <div id="trimestreContent"></div>
     </section>
 
     <!-- =================== INCENTIVOS =================== -->
@@ -910,6 +1088,9 @@ let patentData = null;            // { carpetas, meses, mesActual, updatedAt }
 let mesSelPat = '';
 let vendedorFiltroPat = '';       // filtro por vendedor (drill-down)
 let vistaResumidaPat = false;     // toggle vista resumida en patentamientos
+
+// Trimestre — formato 'YYYY-Qn'. Default = trimestre calendario actual.
+let quarterSel = '';
 
 // Incentivos
 let incentivosData = null;        // { porUnidadPatentada, porUnidadComprada, modelosBT, ... }
@@ -1041,6 +1222,8 @@ function startAutoRefresh() {
       _fetchVentasSilent();
     } else if (activo === 'patentamientos') {
       _fetchPatentSilent();
+    } else if (activo === 'trimestre') {
+      _fetchPatentSilent();
     } else if (activo === 'incentivos') {
       _fetchIncentivosSilent();
     }
@@ -1063,6 +1246,7 @@ function setTab(tab) {
     stock:          'panelStock',
     ventas:         'panelVentas',
     patentamientos: 'panelPatentamientos',
+    trimestre:      'panelTrimestre',
     incentivos:     'panelIncentivos',
   };
   const el = document.getElementById(map[tab]);
@@ -1072,6 +1256,10 @@ function setTab(tab) {
   if (tab === 'stock'          && !stockData)    loadStock(false);
   if (tab === 'ventas'         && !ventasData)   loadVentas(false);
   if (tab === 'patentamientos' && !patentData)   loadPatentamientos(false);
+  if (tab === 'trimestre') {
+    if (!patentData) loadPatentamientos(false);
+    else             renderTrimestre();
+  }
   if (tab === 'incentivos'     && !incentivosData) loadIncentivos(false);
 }
 
@@ -2916,10 +3104,351 @@ function setObjetivoPat(val) {
 }
 
 // =======================================================================
+// TRIMESTRE · helpers
+// =======================================================================
+// Esquema oficial VW de recupero por trimestre calendario.
+//   Criterio A: alcance trimestral >= 100%
+//   Criterio B: bimestre (mes1+mes2) >= 95% Y cada uno >= 90%
+//   Criterio C: mes 3 >= 100%
+// Si A+B+C se cumplen al cierre del mes 3 → meses 1 y 2 se "recuperan" al nivel
+// trimestral (no necesariamente al 100%, al % real del trimestre).
+
+const _MESES_NOMBRES_LARGOS = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+function _mesAQuarter(mesKey) {
+  const m = (mesKey || '').match(/^(\d{4})-(\d{2})/);
+  if (!m) return '';
+  return m[1] + '-Q' + Math.ceil(parseInt(m[2], 10) / 3);
+}
+function _quarterMeses(quarterKey) {
+  const m = (quarterKey || '').match(/^(\d{4})-Q(\d)/);
+  if (!m) return [];
+  const start = (parseInt(m[2], 10) - 1) * 3 + 1;
+  const out = [];
+  for (let i = 0; i < 3; i++) out.push(m[1] + '-' + String(start + i).padStart(2, '0'));
+  return out;
+}
+function _quarterLabel(quarterKey) {
+  const m = (quarterKey || '').match(/^(\d{4})-Q(\d)/);
+  if (!m) return quarterKey;
+  const ranges = ['Ene–Mar', 'Abr–Jun', 'Jul–Sep', 'Oct–Dic'];
+  return 'Q' + m[2] + ' ' + m[1] + ' · ' + ranges[parseInt(m[2], 10) - 1];
+}
+function _mesLabelLargo(mesKey) {
+  const m = (mesKey || '').match(/^(\d{4})-(\d{2})/);
+  if (!m) return mesKey;
+  return _MESES_NOMBRES_LARGOS[parseInt(m[2], 10) - 1];
+}
+function _quarterActual() {
+  const d = new Date();
+  return d.getFullYear() + '-Q' + Math.ceil((d.getMonth() + 1) / 3);
+}
+function _mesActualReal() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+// Estado calendario de un mes respecto a hoy: 'past' | 'current' | 'future'
+function _mesEstado(mesKey) {
+  const hoy = _mesActualReal();
+  if (mesKey < hoy) return 'past';
+  if (mesKey > hoy) return 'future';
+  return 'current';
+}
+
+function _patentadasMes(mesKey) {
+  if (!patentData || !Array.isArray(patentData.carpetas)) return 0;
+  return patentData.carpetas.filter(c => c.mesKey === mesKey && c.patentada).length;
+}
+
+// Lista de quarters disponibles para el selector: une los que aparecen en
+// patentData.meses con los que tienen objetivo cargado y el quarter actual.
+function _quartersDisponibles() {
+  const set = new Set();
+  set.add(_quarterActual());
+  if (patentData && Array.isArray(patentData.meses)) {
+    for (const m of patentData.meses) set.add(_mesAQuarter(m.mesKey));
+  }
+  for (const mk of Object.keys(objetivosPat)) set.add(_mesAQuarter(mk));
+  return Array.from(set).filter(Boolean).sort();  // YYYY-Qn ordena alfabéticamente bien
+}
+
+// Resumen del trimestre: 3 filas con obj/patent/alcance + agregados bi y tri.
+function _resumenTrimestre(quarterKey) {
+  const meses = _quarterMeses(quarterKey);
+  const filas = meses.map((mk, i) => {
+    const obj = objetivosPat[mk] || 0;
+    const pat = _patentadasMes(mk);
+    const alc = obj > 0 ? pat / obj : null;
+    return { mesKey: mk, label: _mesLabelLargo(mk), pos: i + 1, obj, pat, alc, estado: _mesEstado(mk) };
+  });
+  const sumObjBi = filas[0].obj + filas[1].obj;
+  const sumPatBi = filas[0].pat + filas[1].pat;
+  const alcBi = sumObjBi > 0 ? sumPatBi / sumObjBi : null;
+  const sumObjTri = sumObjBi + filas[2].obj;
+  const sumPatTri = sumPatBi + filas[2].pat;
+  const alcTri = sumObjTri > 0 ? sumPatTri / sumObjTri : null;
+  return { meses: filas, sumObjBi, sumPatBi, alcBi, sumObjTri, sumPatTri, alcTri };
+}
+
+// Evalúa los 3 criterios. Cada uno → 'ok' | 'fail' | 'pending'.
+// 'pending' = todavía no se puede evaluar (mes en curso o futuro, o falta objetivo).
+function _evalCriteriosTrimestre(rt) {
+  const m1Estado = rt.meses[0].estado;
+  const m2Estado = rt.meses[1].estado;
+  const m3Estado = rt.meses[2].estado;
+
+  // A: trimestre >= 100%. Solo se puede afirmar al cierre del mes 3.
+  let A = 'pending';
+  if (rt.sumObjTri > 0 && m3Estado === 'past') {
+    A = rt.alcTri >= 1.0 ? 'ok' : 'fail';
+  }
+
+  // B: bimestre + cada mes >= 90%. Se puede afirmar al cierre del mes 2.
+  let B = 'pending';
+  if (rt.meses[0].obj > 0 && rt.meses[1].obj > 0 && m2Estado === 'past') {
+    const bimOk = rt.alcBi >= 0.95;
+    const m1Ok  = rt.meses[0].alc >= 0.90;
+    const m2Ok  = rt.meses[1].alc >= 0.90;
+    B = (bimOk && m1Ok && m2Ok) ? 'ok' : 'fail';
+  }
+
+  // C: mes 3 >= 100%. Solo al cierre del mes 3.
+  let C = 'pending';
+  if (rt.meses[2].obj > 0 && m3Estado === 'past') {
+    C = rt.meses[2].alc >= 1.0 ? 'ok' : 'fail';
+  }
+
+  return { A, B, C, recupero: (A === 'ok' && B === 'ok' && C === 'ok') };
+}
+
+// Mínimo de patentadas que necesita un mes en curso para no romper la chance
+// de recupero al cierre del trimestre.
+// Si falta algún objetivo o el mes no es el actual, devuelve null.
+function _minimoPatRecupero(mesKey) {
+  if (_mesEstado(mesKey) !== 'current') return null;
+  const qk = _mesAQuarter(mesKey);
+  const meses = _quarterMeses(qk);
+  const idx = meses.indexOf(mesKey);
+  if (idx < 0) return null;
+
+  const o = [objetivosPat[meses[0]] || 0, objetivosPat[meses[1]] || 0, objetivosPat[meses[2]] || 0];
+  if (!o[0] || !o[1] || !o[2]) return null;
+
+  const p1 = _patentadasMes(meses[0]);
+  const p2 = _patentadasMes(meses[1]);
+
+  if (idx === 0) {
+    // Mes 1: piso = 90% del propio (criterio B individual).
+    return Math.ceil(o[0] * 0.9);
+  }
+  if (idx === 1) {
+    // Mes 2: max(piso propio 90%, mínimo bimestral 95% - p1).
+    const minPropio = Math.ceil(o[1] * 0.9);
+    const minBi     = Math.max(0, Math.ceil((o[0] + o[1]) * 0.95) - p1);
+    return Math.max(minPropio, minBi);
+  }
+  // Mes 3: max(100% propio para criterio C, faltante trimestral para criterio A).
+  const minC = Math.ceil(o[2] * 1.0);
+  const minA = Math.max(0, Math.ceil((o[0] + o[1] + o[2]) * 1.0) - p1 - p2);
+  return Math.max(minC, minA);
+}
+
+// Cuando el trimestre cerró y los 3 criterios se cumplen, los meses 1 y 2 se
+// recobran al nivel del trimestre. Devuelve cuántas carpetas "adicionales"
+// se acreditan a cada mes vs lo cobrado al alcance propio.
+function _ajusteRecupero(rt) {
+  const nivelTri = rt.alcTri;  // ej. 1.034
+  const aj = [];
+  for (let i = 0; i < 2; i++) {
+    const m = rt.meses[i];
+    const equivalenteAlNivelTri = Math.round(m.obj * nivelTri);
+    aj.push({
+      mesKey: m.mesKey, label: m.label,
+      patReal: m.pat,
+      patAlNivelTri: equivalenteAlNivelTri,
+      ajuste: Math.max(0, equivalenteAlNivelTri - m.pat),
+    });
+  }
+  return { nivelTri, aj };
+}
+
+// =======================================================================
+// TRIMESTRE · setters
+// =======================================================================
+function setQuarter(qk) {
+  quarterSel = qk || _quarterActual();
+  renderTrimestre();
+}
+function setObjetivoPatMes(mesKey, val) {
+  const n = parseInt(val, 10);
+  if (!isNaN(n) && n >= 0) {
+    objetivosPat[mesKey] = n;
+    saveObjetivosPat();
+    renderTrimestre();
+    renderResumen();
+    if (mesKey === mesSelPat) renderPatentamientos();
+  }
+}
+
+// =======================================================================
+// TRIMESTRE · render
+// =======================================================================
+function renderTrimestre() {
+  const wrap = document.getElementById('trimestreContent');
+  if (!wrap) return;
+
+  if (!quarterSel) quarterSel = _quarterActual();
+  const qk = quarterSel;
+  const rt = _resumenTrimestre(qk);
+  const cri = _evalCriteriosTrimestre(rt);
+
+  const qActual = _quarterActual();
+  let qStatus = 'live', qStatusLabel = 'En curso';
+  if (qk < qActual) { qStatus = 'closed'; qStatusLabel = 'Cerrado'; }
+  else if (qk > qActual) { qStatus = 'future'; qStatusLabel = 'Próximo'; }
+
+  // Selector
+  const quarters = _quartersDisponibles();
+  let html = '<div class="q-toolbar">';
+  html += '  <label for="qSel">Trimestre:</label>';
+  html += '  <select id="qSel" onchange="setQuarter(this.value)">';
+  for (const q of quarters) {
+    const sel = q === qk ? ' selected' : '';
+    html += '    <option value="' + q + '"' + sel + '>' + escapeHtml(_quarterLabel(q)) + '</option>';
+  }
+  html += '  </select>';
+  html += '  <span class="q-status ' + qStatus + '">' + qStatusLabel + '</span>';
+  html += '</div>';
+
+  // 3 cards de mes
+  html += '<div class="q-meses">';
+  for (const m of rt.meses) {
+    let cls = '';
+    if (m.estado === 'current') cls = 'cur';
+    if (m.obj > 0 && m.alc != null) {
+      // Piso aplicable según posición: mes1/mes2 → 90%, mes3 → 100%
+      const piso = (m.pos === 3) ? 1.0 : 0.9;
+      if (m.estado === 'past' || m.estado === 'current') {
+        if (m.alc >= 1.0) cls = 'ok';
+        else if (m.alc >= piso) cls = 'warn';
+        else cls = 'bad';
+      }
+    }
+    const alcPct = m.alc != null ? Math.round(m.alc * 1000) / 10 : null;  // 1 decimal
+    const barPct = m.obj > 0 ? Math.min(120, Math.round((m.pat / m.obj) * 100)) : 0;
+    const minPat = _minimoPatRecupero(m.mesKey);
+
+    html += '<div class="q-mes ' + cls + '">';
+    html += '  <div class="q-mes-hd">'
+         +  '    <div class="nm">' + escapeHtml(m.label) + '</div>'
+         +  '    <div class="pos">Mes ' + m.pos + '</div>'
+         +  '  </div>';
+    if (m.obj > 0) {
+      html += '<div class="alc"><div class="num">' + (alcPct != null ? alcPct.toLocaleString('es-AR', { maximumFractionDigits: 1 }) + '%' : '—') + '</div>'
+           +  '  <div class="lbl">alcance</div></div>';
+      html += '<div class="det"><b>' + m.pat + '</b> patentadas · objetivo <b>' + m.obj + '</b></div>';
+      html += '<div class="q-bar"><div class="fill" style="width:' + Math.min(100, barPct) + '%"></div></div>';
+    } else {
+      html += '<div class="det" style="color:var(--vw-grey-3);font-style:italic">Sin objetivo cargado</div>';
+    }
+    html += '<div class="obj-edit">Obj: <input type="number" min="0" step="1" value="' + m.obj + '" '
+         +  '  onchange="setObjetivoPatMes(\'' + m.mesKey + '\', this.value)" />';
+    html += '  <span class="muted">(' + (m.estado === 'current' ? 'mes en curso' : (m.estado === 'past' ? 'cerrado' : 'a futuro')) + ')</span>';
+    html += '</div>';
+    if (m.estado === 'current' && minPat != null) {
+      const restan = Math.max(0, minPat - m.pat);
+      if (restan > 0) {
+        html += '<div class="min-nota">Para no romper el recupero, este mes necesita <b>' + minPat + '</b> patentadas en total · faltan <b>' + restan + '</b></div>';
+      } else {
+        html += '<div class="min-nota">Mínimo de <b>' + minPat + '</b> alcanzado ✓ · margen +' + (m.pat - minPat) + '</div>';
+      }
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // Totales bimestral y trimestral
+  const alcBiPct = rt.alcBi != null ? (rt.alcBi * 100) : null;
+  const alcTriPct = rt.alcTri != null ? (rt.alcTri * 100) : null;
+  const biCls  = alcBiPct == null ? '' : (alcBiPct >= 95 ? 'good' : (alcBiPct >= 90 ? 'warn' : 'bad'));
+  const triCls = alcTriPct == null ? '' : (alcTriPct >= 100 ? 'good' : (alcTriPct >= 95 ? 'warn' : 'bad'));
+  html += '<div class="q-totales">';
+  html += '  <div class="q-tot ' + biCls + '">'
+       +  '    <div class="lab">Bimestre (Mes 1 + Mes 2)</div>'
+       +  '    <div class="val">' + (alcBiPct != null ? alcBiPct.toLocaleString('es-AR', { maximumFractionDigits: 1 }) + '%' : '—') + '</div>'
+       +  '    <div class="sub">' + rt.sumPatBi + ' / ' + rt.sumObjBi + ' patentadas · piso 95%</div>'
+       +  '  </div>';
+  html += '  <div class="q-tot ' + triCls + '">'
+       +  '    <div class="lab">Trimestre completo</div>'
+       +  '    <div class="val">' + (alcTriPct != null ? alcTriPct.toLocaleString('es-AR', { maximumFractionDigits: 1 }) + '%' : '—') + '</div>'
+       +  '    <div class="sub">' + rt.sumPatTri + ' / ' + rt.sumObjTri + ' patentadas · piso 100%</div>'
+       +  '  </div>';
+  html += '</div>';
+
+  // Criterios A/B/C
+  html += '<div class="q-criterios">';
+  html += '  <h3>Criterios de recupero VW</h3>';
+  const critRows = [
+    { id: 'A', state: cri.A, desc: 'Alcance del <b>trimestre</b> ≥ 100%' },
+    { id: 'B', state: cri.B, desc: 'Alcance del <b>bimestre</b> ≥ 95% <b>y</b> cada uno de los meses 1 y 2 ≥ 90%' },
+    { id: 'C', state: cri.C, desc: 'Alcance del <b>mes 3</b> ≥ 100%' },
+  ];
+  for (const r of critRows) {
+    const label = r.state === 'ok' ? '✓ Cumple' : (r.state === 'fail' ? '✗ No cumple' : '⏳ Pendiente');
+    html += '<div class="q-crit-row">'
+         +  '  <div class="crit-id">Criterio ' + r.id + '</div>'
+         +  '  <div class="crit-desc">' + r.desc + '</div>'
+         +  '  <div class="crit-state ' + r.state + '">' + label + '</div>'
+         +  '</div>';
+  }
+  html += '</div>';
+
+  // Bloque de recupero — cambia según estado del trimestre
+  if (qStatus === 'closed') {
+    if (cri.recupero) {
+      const aj = _ajusteRecupero(rt);
+      html += '<div class="q-recupero ok">';
+      html += '  <h3>✅ Recupero activado</h3>';
+      html += '  <div class="lead">El trimestre cumplió los 3 criterios. Los meses 1 y 2 se re-liquidan al nivel del trimestre (<b>' + (aj.nivelTri * 100).toLocaleString('es-AR', { maximumFractionDigits: 1 }) + '%</b>) en la liquidación del mes 3.</div>';
+      html += '  <div class="ajustes">';
+      for (const a of aj.aj) {
+        html += '<div class="aj">'
+             +  '  <div class="ttl">' + escapeHtml(a.label) + ' · ajuste</div>'
+             +  '  <div class="v">+' + a.ajuste + ' carpetas equivalentes</div>'
+             +  '  <div class="d">cobrado al alcance propio (' + a.patReal + '), se equipara a ' + a.patAlNivelTri + ' (' + (aj.nivelTri * 100).toLocaleString('es-AR', { maximumFractionDigits: 1 }) + '%)</div>'
+             +  '</div>';
+      }
+      html += '  </div>';
+      html += '</div>';
+    } else {
+      html += '<div class="q-recupero fail">';
+      html += '  <h3>❌ Sin recupero</h3>';
+      html += '  <div class="lead">El trimestre <b>no</b> cumplió los 3 criterios. Los meses 1 y 2 quedan cobrados al alcance propio y no hay ajuste.</div>';
+      html += '</div>';
+    }
+  } else if (qStatus === 'live') {
+    // Proyección en curso: si faltan datos no la mostramos.
+    html += '<div class="q-recupero pending">';
+    html += '  <h3>📊 Trimestre en curso</h3>';
+    if (rt.sumObjTri === 0) {
+      html += '  <div class="lead">Cargá los objetivos de los 3 meses para ver la proyección del recupero.</div>';
+    } else {
+      const faltaTri = Math.max(0, rt.sumObjTri - rt.sumPatTri);
+      html += '  <div class="lead">Para gatillar el recupero faltan <b>' + faltaTri + '</b> patentamientos en lo que queda del trimestre, sumado al cumplimiento de los criterios B y C.</div>';
+    }
+    html += '</div>';
+  }
+  // qStatus === 'future' → no mostramos bloque, ya basta con el toolbar.
+
+  wrap.innerHTML = html;
+}
+
+// =======================================================================
 // PATENTAMIENTOS · render
 // =======================================================================
 function renderPatentamientos() {
   renderResumen();
+  renderTrimestre();
   const wrap = document.getElementById('patentContent');
   if (!patentData || !Array.isArray(patentData.carpetas)) {
     wrap.innerHTML = '<div class="empty">Sin datos.</div>';
@@ -3012,6 +3541,15 @@ function renderPatentamientos() {
   if (objetivo > 0) {
     html += kpi('Faltan p/ 90%', faltan90, 'cargar p/ llegar a ' + objetivo90 + ' (90% de ' + objetivo + ')', faltan90 > 0 ? 'warn' : 'good');
     html += kpi('Faltan al objetivo', faltanCargar, 'carpetas a cargar', faltanCargar > 0 ? 'warn' : 'good');
+  }
+  // KPI: mínimo del mes para no romper el recupero trimestral.
+  const minRec = _minimoPatRecupero(mesSelPat);
+  if (minRec != null) {
+    const faltanRec = Math.max(0, minRec - patentadas);
+    const subTxt = faltanRec > 0
+      ? 'faltan ' + faltanRec + ' patentadas · ver tab Trimestre'
+      : 'mínimo alcanzado ✓';
+    html += kpi('Mínimo p/ recupero', minRec, subTxt, faltanRec > 0 ? 'warn' : 'good');
   }
   html += '<div class="card editable">'
         + '  <div class="label">Objetivo del mes</div>'
