@@ -484,7 +484,6 @@ function getPatentamientos() {
 
   const carpetas = [];
   const cuentaPorMes = {};
-  const anioActual = new Date().getFullYear();
 
   for (let i = headerRow + 1; i < display.length; i++) {
     const drow = display[i];
@@ -495,20 +494,31 @@ function getPatentamientos() {
     const serie = String(drow[3] || '').trim();
     if (!num && !pv && !serie) continue;
 
+    // C = fecha PV (cuándo se vendió). Es la referencia de "qué año" cuando
+    // sólo tenemos texto en col F. Sin fecha PV, no podemos garantizar que la
+    // carpeta sea reciente → la descartamos (evita filas viejas con col F
+    // "MAYO" que se contaban como mayo del año actual).
+    const fechaPv  = _parseFecha(rrow[2], drow[2]);
     // R = fecha patentamiento real (puede determinar el mes)
     const fechaPat = _parseFecha(rrow[17], drow[17]);
 
-    // mesKey: si ya está patentada usamos la fecha REAL (lo que Fer cuenta),
-    // si no, caemos al texto de col F (mes esperado escrito por la admin).
-    // Sin alguno de los dos, salteamos.
     let mesKey;
+    let mesKeyOrigen;
     if (fechaPat) {
       mesKey = _yyyyMm(fechaPat);
+      mesKeyOrigen = 'fechaR';
     } else {
       const mesTxt = _norm(drow[5]);
       const mesNum = _MES_TXT_A_NUM[mesTxt];
       if (!mesNum) continue;
-      mesKey = anioActual + '-' + mesNum;
+      if (!fechaPv) continue;
+      // Si col F dice un mes anterior al de la PV asumimos que es el año
+      // siguiente (ej. PV en diciembre y col F "ENERO").
+      let anio = fechaPv.getFullYear();
+      const mesPvNum = fechaPv.getMonth() + 1;
+      if (parseInt(mesNum, 10) < mesPvNum) anio += 1;
+      mesKey = anio + '-' + mesNum;
+      mesKeyOrigen = 'colF';
     }
     if (mesKey < PATENTAMIENTOS_MES_MINIMO) continue;
 
@@ -533,9 +543,12 @@ function getPatentamientos() {
       vendedorRaw:        vendedorRaw,                              // M → tal cual
       cliente:            String(drow[14] || '').trim(),            // O
       modelo:             String(drow[15] || '').trim(),            // P
+      fechaPvIso:         fechaPv ? _isoDate(fechaPv) : '',         // C → ISO
+      fechaPvStr:         String(drow[2] || '').trim(),             // C → display
       fechaPatIso:        fechaPat ? _isoDate(fechaPat) : '',       // R → ISO
       fechaPatStr:        String(drow[17] || '').trim(),            // R → display
       patentada:          !!fechaPat,                                // R → bool
+      mesKeyOrigen:       mesKeyOrigen,                              // 'fechaR' | 'colF'
       dominio:            String(drow[18] || '').trim(),            // S
     });
   }
