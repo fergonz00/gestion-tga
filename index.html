@@ -914,7 +914,12 @@ let vistaResumidaPat = false;     // toggle vista resumida en patentamientos
 // Incentivos
 let incentivosData = null;        // { porUnidadPatentada, porUnidadComprada, modelosBT, ... }
 let mesSelInc = '';               // mes seleccionado en la tab
-let al100Inc = false;             // toggle 100% objetivo (afecta CC 90 → /0.9)
+// Objetivo CC 90 alcanzado por mes: '' (no marcado) | 'ninguno' | '90' | '100'.
+// Persistido en localStorage para no tener que marcarlo cada vez que se entra.
+let objetivoIncen = (() => {
+  try { return JSON.parse(localStorage.getItem('gestion_objetivo_incen') || '{}'); }
+  catch { return {}; }
+})();
 let vistaResumidaInc = false;     // ocultar cols extra
 let incentivosDataByMes = {};     // cache de BT data por mes para matching multi-mes
 let pagosParseados = [];          // pagos parseados pero NO guardados aún (preview)
@@ -2144,7 +2149,21 @@ function setMesInc(mesKey) {
   incentivosData = null;  // forzar recarga porque cambia el mes
   loadIncentivos(true);
 }
-function toggleAl100Inc()         { al100Inc = !al100Inc; renderIncentivos(); }
+function _objetivoIncMes(mesKey) { return objetivoIncen[mesKey] || ''; }
+function _factorCC90(mesKey) {
+  const o = _objetivoIncMes(mesKey);
+  if (o === '100')     return 1 / 0.9;
+  if (o === 'ninguno') return 0;
+  return 1;  // '90' o no marcado → cobra base
+}
+function setObjetivoIncMes(val) {
+  const mes = (incentivosData && incentivosData.mesKey) || mesSelInc;
+  if (!mes) return;
+  if (val === 'ninguno' || val === '90' || val === '100') objetivoIncen[mes] = val;
+  else delete objetivoIncen[mes];
+  try { localStorage.setItem('gestion_objetivo_incen', JSON.stringify(objetivoIncen)); } catch {}
+  renderIncentivos();
+}
 function toggleVistaResumidaInc() { vistaResumidaInc = !vistaResumidaInc; renderIncentivos(); }
 
 // =======================================================================
@@ -2166,8 +2185,17 @@ function renderIncentivos() {
   const patUnits = incentivosData.porUnidadPatentada || [];
   const compUnits = incentivosData.porUnidadComprada || [];
 
-  // Aplicar regla 100%: cc90Ajustado = al100 ? cc90Base / 0.9 : cc90Base
-  const ajuste = (u) => al100Inc ? (u.cc90Base / 0.9) : u.cc90Base;
+  // Objetivo CC 90 alcanzado en este mes (persistido).
+  // factor = 0 (ninguno) · 1 (90%) · 1/0.9 (100%) · default 1 si no marcado.
+  const mesKeyInc      = incentivosData.mesKey;
+  const objetivoMarc   = _objetivoIncMes(mesKeyInc);
+  const factorCC90     = _factorCC90(mesKeyInc);
+  const isAl100        = objetivoMarc === '100';
+  const sufijoCC90     = isAl100 ? ' (100%)' : (objetivoMarc === 'ninguno' ? ' (sin objetivo)' : '');
+  const ajuste = (u) => (Number(u.cc90Base) || 0) * factorCC90;
+  const _hoy           = new Date();
+  const mesActualSys   = _hoy.getFullYear() + '-' + String(_hoy.getMonth() + 1).padStart(2, '0');
+  const esMesVencido   = mesKeyInc && mesKeyInc < mesActualSys;
 
   const totales = {
     cc90:       patUnits.reduce((a, u) => a + ajuste(u), 0),
@@ -2196,13 +2224,25 @@ function renderIncentivos() {
     html += '    <option value="' + m.mesKey + '"' + sel + '>' + escapeHtml(m.label) + '</option>';
   }
   html += '  </select>';
-  html += '  <label class="toggle-resumida">'
-        + '    <input type="checkbox" ' + (al100Inc ? 'checked' : '') + ' onchange="toggleAl100Inc()"> Cobranza al 100% (CC 90 / 0.9)'
+  html += '  <label class="toggle-resumida" style="gap:6px">'
+        + '    <span>🎯 Objetivo CC 90:</span>'
+        + '    <select onchange="setObjetivoIncMes(this.value)" title="Persistente por mes">'
+        + '      <option value=""'        + (objetivoMarc === ''        ? ' selected' : '') + '>— sin marcar</option>'
+        + '      <option value="ninguno"' + (objetivoMarc === 'ninguno' ? ' selected' : '') + '>Ninguno (no cobra)</option>'
+        + '      <option value="90"'      + (objetivoMarc === '90'      ? ' selected' : '') + '>90% (cobra base)</option>'
+        + '      <option value="100"'     + (objetivoMarc === '100'     ? ' selected' : '') + '>100% (cobra base/0.9)</option>'
+        + '    </select>'
         + '  </label>';
   html += '  <label class="toggle-resumida">'
         + '    <input type="checkbox" ' + (vistaResumidaInc ? 'checked' : '') + ' onchange="toggleVistaResumidaInc()"> Vista resumida'
         + '  </label>';
   html += '</div>';
+  if (esMesVencido && !objetivoMarc) {
+    html += '<div class="aviso-reemplazar" style="margin:-4px 0 10px"><span class="ico">🎯</span><span>'
+          + 'Mes cerrado: marcá si llegaste al <b>90%</b>, <b>100%</b> o <b>ninguno</b> arriba para calcular CC 90 correctamente. '
+          + 'Queda guardado para este mes.'
+          + '</span></div>';
+  }
   html += '<div style="font-size:11px;color:var(--vw-grey-3);margin:-6px 0 14px">Hoja BT usada: <b>' + escapeHtml(incentivosData.btHojaUsada || '—') + '</b></div>';
 
   // ----- Zona de upload de PDFs (siempre disponible) -----
@@ -2268,7 +2308,7 @@ function renderIncentivos() {
   html += kpi('Total a cobrar', fmtPesos(totales.totalGeneral), patUnits.length + ' patentadas · ' + compUnits.length + ' compradas', totales.totalGeneral > 0 ? 'good' : '');
   html += kpi('Patentadas',     patUnits.length,  'unidades del mes (sin plan ahorro)', patUnits.length ? 'good' : '');
   html += kpi('Compras del mes', compUnits.length, 'unidades para whosale',             compUnits.length ? 'good' : '');
-  html += kpi('CC 90' + (al100Inc ? ' (100%)' : ''), fmtPesos(totales.cc90), '', '');
+  html += kpi('CC 90' + sufijoCC90, fmtPesos(totales.cc90), '', '');
   html += kpi('Táctico', fmtPesos(totales.tactico), '', '');
   html += kpi('Adic. 1 + 2', fmtPesos(totales.adicional1 + totales.adicional2), '', '');
   html += kpi('Whosale', fmtPesos(totales.whosale), 'sobre ' + compUnits.length + ' compras', '');
@@ -2312,7 +2352,7 @@ function renderIncentivos() {
         + '      <thead><tr>'
         + '        <th>#</th><th>Modelo</th><th>Dominio</th>'
         + '        <th class="col-extra">PV</th><th class="col-extra">Vendedor</th><th class="col-extra">Admin</th>'
-        + '        <th class="num">CC 90' + (al100Inc ? ' (100%)' : '') + '</th>'
+        + '        <th class="num">CC 90' + sufijoCC90 + '</th>'
         + '        <th class="num">Táctico</th>'
         + '        <th class="num col-extra">Adic 1</th>'
         + '        <th class="num col-extra">Adic 2</th>'
@@ -2334,7 +2374,7 @@ function renderIncentivos() {
       html += '<td class="col-extra" data-label="PV">' + escapeHtml(u.pv || '—') + '</td>';
       html += '<td class="col-extra" data-label="Vendedor">' + escapeHtml(u.vendedor || u.vendedorRaw || '—') + '</td>';
       html += '<td class="col-extra" data-label="Admin">' + escapeHtml(u.admin || '—') + '</td>';
-      html += _tdCobro('CC 90' + (al100Inc ? ' (100%)' : ''), cc90, paid.cc90, true);
+      html += _tdCobro('CC 90' + sufijoCC90, cc90, paid.cc90, true, false, isAl100);
       html += _tdCobro('Táctico',  u.tactico,    paid.tactico,    false);
       html += _tdCobro('Adic 1',   u.adicional1, paid.adicional1, false, true);
       html += _tdCobro('Adic 2',   u.adicional2, paid.adicional2, false, true);
@@ -2393,7 +2433,7 @@ function _labelMes(mesKey) {
 
 // Genera <td> con color de fondo según el estado de cobro de la CC.
 // esCC90 habilita matchear contra la versión al 100% (esperado / 0.9 o * 0.9).
-function _tdCobro(label, esperado, pagado, esCC90, colExtra) {
+function _tdCobro(label, esperado, pagado, esCC90, colExtra, al100) {
   const e = Number(esperado) || 0;
   const p = Number(pagado) || 0;
   let cls = '';
@@ -2406,10 +2446,10 @@ function _tdCobro(label, esperado, pagado, esCC90, colExtra) {
     cls = 'estado-cobrado';  // match exacto
   } else if (esCC90) {
     // Para CC 90 chequear también la otra versión (90% ↔ 100%)
-    const alt = al100Inc ? e * 0.9 : e / 0.9;
+    const alt = al100 ? e * 0.9 : e / 0.9;
     if (Math.abs(p - alt) / alt < 0.02) {
       cls = 'estado-cobrado';
-      nota = al100Inc ? 'cobrado al 90%' : 'cobrado al 100%';
+      nota = al100 ? 'cobrado al 90%' : 'cobrado al 100%';
     } else {
       cls = 'estado-diferencia';
       nota = 'pagaron ' + fmtPesos(p);
