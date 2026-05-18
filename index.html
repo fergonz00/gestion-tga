@@ -295,6 +295,23 @@ table.ventas-tbl.resumida .col-extra { display: none; }
 .mes-row select:focus { border-color: var(--vw-blue); }
 table.ventas-tbl tbody td.gcia-pos { color: var(--green-dark); font-weight: 600; }
 
+/* Badge "vs Baratito" — pill compacta de color por estado.
+   - bar-up    (mejor)   verde
+   - bar-eq    (baratito) gris
+   - bar-down  (peor)    rojo
+   - bar-na    (sin oferta / sin PV)
+   - bar-loading (snapshot en curso) */
+.bar-badge {
+  display: inline-block; padding: 3px 8px; border-radius: 12px;
+  font-size: 11px; font-weight: 600; white-space: nowrap;
+  letter-spacing: 0.2px; line-height: 1.4;
+}
+.bar-up      { background: #e6f4ea; color: #1e7d36; border: 1px solid #b6dec3; }
+.bar-eq      { background: #f1f3f4; color: #5f6368; border: 1px solid #dadce0; }
+.bar-down    { background: #fce8e6; color: #c5221f; border: 1px solid #f4c7c3; }
+.bar-na      { background: #f8f9fa; color: #80868b; border: 1px dashed #dadce0; }
+.bar-loading { background: #fef7e0; color: #b06000; border: 1px solid #feefc3; }
+
 /* Botón toggle del ranking */
 .rank-toggle {
   background: var(--vw-blue); color: white;
@@ -1064,6 +1081,16 @@ const USUARIOS_PERMITIDOS = ['fngonzalez', 'fgonzalez'];
 // Pendiente: pegar acá la URL que devuelve "Deploy → Web app" en el editor de Apps Script.
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwL1T3T3_u4NXRFOXa-sdc0hAnXdCI-qjWRhi0t5yTjFNzCAvbpPHUSNKLk7sicECIv6g/exec';
 const APPS_SCRIPT_TOKEN = 'tga-gestion-R7nQ4xK8jL';
+
+// CSV público del Google Sheet de ofertas (la misma fuente que sincroniza
+// portal-precios hacia su Supabase). No requiere auth y no está afectado por
+// RLS. Cols: modelo, precio_lista, oferta_fyf, stock, dto, colores.
+const PORTAL_OFERTAS_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTD40FCkAXCrVNslz1OtxnYm1DRhDulVOHaCxJ81-kiQL17KnfimCOPn3hJDHAvJsF9ROEZdePuRw2E/pub?gid=1432576316&single=true&output=csv';
+
+// Flete y Formularios: total fijo que la oferta del portal trae incluido.
+// Mirror de la constante FYF en apps-script.gs.
+const FYF = 1_110_000;
+const BARATITO_TOLERANCIA = 10_000;
 
 // =======================================================================
 // ESTADO
@@ -1976,6 +2003,7 @@ async function loadVentas(forzar) {
     renderVentas();
     const upd = document.getElementById('updatedAtVentas');
     if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+    _snapshotearVentasNuevas();
   } catch (e) {
     console.error(e);
     wrap.innerHTML = '<div class="errbox"><div class="ttl">⚠️ No se pudieron cargar las ventas</div>'
@@ -2002,7 +2030,190 @@ async function _fetchVentasSilent() {
     renderVentas();
     const upd = document.getElementById('updatedAtVentas');
     if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+    _snapshotearVentasNuevas();
   } catch { /* silencioso */ }
+}
+
+// =======================================================================
+// BARATITO · snapshot por venta
+// =======================================================================
+// Después de cargar las ventas, para cada una que todavía no tenga snapshot
+// (no figura en ventasData.baratitoSnapshots): leemos la oferta vigente del
+// portal (Supabase portal_ofertas), calculamos cliente_pago vs baratito_sin_fyf,
+// armamos el snapshot y lo persistimos en la espejo. El primer load tras
+// publicar este feature snapshotea retroactivamente todo lo viejo con la
+// oferta actual; las ventas nuevas se snapshotean con la oferta vigente
+// del momento.
+
+let _portalOfertasCache = null;  // { ofertas: [{ key, modelo, ofertaFyf }], fetchedAt }
+
+async function _fetchPortalOfertas(force) {
+  if (_portalOfertasCache && !force) {
+    if (Date.now() - _portalOfertasCache.fetchedAt < 5 * 60 * 1000) {
+      return _portalOfertasCache.ofertas;
+    }
+  }
+  const res = await fetch(PORTAL_OFERTAS_CSV_URL, { redirect: 'follow' });
+  if (!res.ok) throw new Error('CSV HTTP ' + res.status);
+  const csv = await res.text();
+  const ofertas = _parseOfertasCSV(csv);
+  _portalOfertasCache = { ofertas: ofertas, fetchedAt: Date.now() };
+  return ofertas;
+}
+
+function _parseOfertasCSV(text) {
+  const rows = _parseCSV(text);
+  if (rows.length < 2) return [];
+  // Headers row asumido: modelo, precio_lista, oferta_fyf, stock, dto, colores
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    const modelo = String(r[0] || '').trim();
+    const oferta = _parseDinero(r[2]);
+    if (!modelo || !oferta) continue;
+    out.push({ key: _normModeloKey(modelo), modelo: modelo, ofertaFyf: oferta });
+  }
+  return out;
+}
+
+// Parser mínimo de CSV con soporte de comillas dobles (formato Sheets).
+function _parseCSV(text) {
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += c;
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+      else if (c === '\r') { /* skip */ }
+      else field += c;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+function _parseDinero(s) {
+  if (typeof s === 'number') return s;
+  const cleaned = String(s || '').replace(/[^\d.,-]/g, '');
+  if (!cleaned) return 0;
+  // Formato US ("26,280,225.00") o AR ("26.280.225,00"). Heurística: si hay
+  // exactamente una coma y va seguida de 2 dígitos al final → decimal AR.
+  let n;
+  if (/,\d{2}$/.test(cleaned) && (cleaned.match(/,/g) || []).length === 1) {
+    n = parseFloat(cleaned.replace(/\./g, '').replace(',', '.'));
+  } else {
+    n = parseFloat(cleaned.replace(/,/g, ''));
+  }
+  return isNaN(n) ? 0 : n;
+}
+
+// Normaliza un nombre de modelo para matching. Quita prefijos comunes ("VW "),
+// "MY26"/"MY25", "G1", acentos, espacios extra. Lo deja UPPER y compacto.
+function _normModeloKey(s) {
+  return String(s || '').toUpperCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/\bVW\b|\bVOLKSWAGEN\b/g, '')
+    .replace(/\bMY ?\d{2,4}\b/g, '')
+    .replace(/\bG\d\b/g, '')
+    .replace(/\bNUEVO\b|\bNUEVA\b/g, '')
+    .replace(/[^A-Z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Busca la oferta vigente para el modelo de una venta. Estrategia:
+//   1) match exacto por normKey
+//   2) si la key de la venta es subcadena de UNA sola oferta → esa
+//   3) si matchea varias → ambiguo → null (snapshot 'sin_oferta')
+function _matchOfertaParaVenta(modeloVenta, ofertas) {
+  const k = _normModeloKey(modeloVenta);
+  if (!k) return null;
+  const exact = ofertas.filter(o => o.key === k);
+  if (exact.length === 1) return exact[0];
+  const subset = ofertas.filter(o => o.key.indexOf(k) >= 0 || k.indexOf(o.key) >= 0);
+  if (subset.length === 1) return subset[0];
+  return null;
+}
+
+function _calcStatusBaratito(diff) {
+  if (diff > BARATITO_TOLERANCIA) return 'mejor';
+  if (diff < -BARATITO_TOLERANCIA) return 'peor';
+  return 'baratito';
+}
+
+async function _snapshotearVentasNuevas() {
+  if (!ventasData || !Array.isArray(ventasData.ventas) || !ventasData.ventas.length) return;
+  // Pendientes: tienen preventaNum y o no tienen snapshot o el snapshot guardado
+  // es 'sin_oferta' (lo reintentamos por si mejoró el matching de modelos).
+  const snapshots = ventasData.baratitoSnapshots || {};
+  const pendientes = ventasData.ventas.filter(v => {
+    const k = String(v.preventaNum || '').trim();
+    if (!k) return false;
+    const existente = snapshots[k];
+    if (!existente) return true;
+    return existente.status === 'sin_oferta';
+  });
+  if (!pendientes.length) return;
+
+  let ofertas;
+  try {
+    ofertas = await _fetchPortalOfertas(false);
+  } catch (e) {
+    console.warn('No pude leer ofertas del portal, no snapshot:', e);
+    return;
+  }
+
+  const nuevos = [];
+  for (const v of pendientes) {
+    const pvKey = String(v.preventaNum).trim();
+    const match = _matchOfertaParaVenta(v.modelo, ofertas);
+    if (!match) {
+      nuevos.push({
+        pvKey, modelo: v.modelo,
+        baratitoFyf: 0, baratitoSinFyf: 0,
+        montoFc: v.montoFc || 0, acc: v.acc || 0,
+        clientePago: (v.montoFc || 0) + (v.acc || 0),
+        diff: 0, status: 'sin_oferta',
+      });
+      continue;
+    }
+    const baratitoFyf = match.ofertaFyf;
+    const baratitoSinFyf = baratitoFyf - FYF;
+    const clientePago = (v.montoFc || 0) + (v.acc || 0);
+    const diff = clientePago - baratitoSinFyf;
+    nuevos.push({
+      pvKey, modelo: v.modelo,
+      baratitoFyf, baratitoSinFyf,
+      montoFc: v.montoFc || 0, acc: v.acc || 0,
+      clientePago, diff,
+      status: _calcStatusBaratito(diff),
+    });
+  }
+  if (!nuevos.length) return;
+
+  // Merge optimista para repintar ya, antes de esperar el POST
+  for (const s of nuevos) snapshots[s.pvKey] = s;
+  ventasData.baratitoSnapshots = snapshots;
+  lsCacheSet('ventas', ventasData);
+  renderVentas();
+
+  // Persistir en la espejo
+  try {
+    const body = new URLSearchParams();
+    body.set('payload', JSON.stringify({
+      token: APPS_SCRIPT_TOKEN, accion: 'setbaratitosnapshot', snapshots: nuevos,
+    }));
+    await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+  } catch (e) {
+    console.warn('setbaratitosnapshot POST falló (los locales siguen disponibles):', e);
+  }
 }
 
 function setMesVentas(mesKey) {
@@ -2087,13 +2298,14 @@ function renderVentas() {
         + '        <th class="col-extra">Serie</th>'
         + '        <th>Modelo</th>'
         + '        <th class="col-extra">Color</th>'
+        + '        <th>vs Baratito</th>'
         + '        <th class="num">Gcia $</th>'
         + '        <th class="num">Gcia %</th>'
         + '      </tr></thead>'
         + '      <tbody>';
 
   if (!delMes.length) {
-    html += '<tr><td colspan="12" class="empty">No hay ventas registradas en ' + escapeHtml(meses.find(m => m.mesKey === mesSeleccionado)?.label || 'este mes') + '.</td></tr>';
+    html += '<tr><td colspan="13" class="empty">No hay ventas registradas en ' + escapeHtml(meses.find(m => m.mesKey === mesSeleccionado)?.label || 'este mes') + '.</td></tr>';
   } else {
     for (const v of delMes) html += filaVenta(v);
   }
@@ -2205,10 +2417,44 @@ function filaVenta(v) {
   html += '<td class="col-extra" data-label="Serie"><span class="serie">' + escapeHtml(v.serie) + '</span></td>';
   html += '<td data-label="Modelo">' + escapeHtml(v.modelo) + '</td>';
   html += '<td class="col-extra" data-label="Color">' + escapeHtml(v.color) + '</td>';
+  html += '<td data-label="vs Baratito">' + badgeBaratito(v) + '</td>';
   html += '<td class="num gcia-pos" data-label="Gcia $">' + fmtPesos(v.gciaVtaPesos) + '</td>';
   html += '<td class="num gcia-pos" data-label="Gcia %">' + fmtPct(v.gciaVtaPct) + '</td>';
   html += '</tr>';
   return html;
+}
+
+function badgeBaratito(v) {
+  const snap = (ventasData && ventasData.baratitoSnapshots) ? ventasData.baratitoSnapshots[String(v.preventaNum || '').trim()] : null;
+  if (!snap) {
+    // Snapshot todavía no calculado (loading o sin preventaNum)
+    if (!v.preventaNum) return '<span class="bar-badge bar-na" title="Sin # preventa">—</span>';
+    return '<span class="bar-badge bar-loading" title="Calculando contra oferta vigente...">…</span>';
+  }
+  if (snap.status === 'sin_oferta') {
+    return '<span class="bar-badge bar-na" title="' + escapeHtml(snap.modelo) + ' no tenía oferta vigente al momento del snapshot">sin oferta</span>';
+  }
+  if (snap.status === 'baratito') {
+    return '<span class="bar-badge bar-eq" title="Cliente pagó ' + fmtPesos(snap.clientePago)
+      + ' vs baratito s/FYF ' + fmtPesos(snap.baratitoSinFyf) + ' · diferencia ' + fmtPesos(snap.diff) + '">baratito</span>';
+  }
+  if (snap.status === 'mejor') {
+    return '<span class="bar-badge bar-up" title="Cliente pagó ' + fmtPesos(snap.clientePago)
+      + ' vs baratito s/FYF ' + fmtPesos(snap.baratitoSinFyf) + '">mejor +' + fmtPesosCompact(snap.diff) + '</span>';
+  }
+  if (snap.status === 'peor') {
+    return '<span class="bar-badge bar-down" title="Cliente pagó ' + fmtPesos(snap.clientePago)
+      + ' vs baratito s/FYF ' + fmtPesos(snap.baratitoSinFyf) + '">peor −' + fmtPesosCompact(Math.abs(snap.diff)) + '</span>';
+  }
+  return '<span class="bar-badge bar-na">—</span>';
+}
+
+// Formato corto para badges: $120k, $1,2M
+function fmtPesosCompact(n) {
+  const abs = Math.abs(n || 0);
+  if (abs >= 1_000_000) return '$' + (n / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1).replace('.', ',') + 'M';
+  if (abs >= 1_000)     return '$' + Math.round(n / 1_000) + 'k';
+  return '$' + Math.round(n);
 }
 
 // =======================================================================

@@ -29,6 +29,14 @@
 
 const TOKEN = 'tga-gestion-R7nQ4xK8jL';
 
+// Flete y Formularios: total fijo que la oferta del portal trae incluido.
+// Para comparar contra factura+accesorios hay que descontárselo a la oferta.
+const FYF = 1_110_000;
+
+// Tolerancia en pesos para considerar "vendió al baratito" (igual). Fuera de
+// este margen cae a 'mejor' (cliente pagó más) o 'peor' (cliente pagó menos).
+const BARATITO_TOLERANCIA = 10_000;
+
 // Mes mínimo desde el cual mostramos ventas (los anteriores no se incluyen
 // porque los números no estaban alineados todavía).
 const VENTAS_MES_MINIMO = '2026-03';
@@ -84,9 +92,10 @@ function doPost(e) {
       return jsonResponse({ error: 'forbidden' });
     }
     const accion = String(body.accion || 'guardar').toLowerCase();
-    if (accion === 'guardar')      return jsonResponse(savePagosVW(body.pagos || []));
-    if (accion === 'eliminar')     return jsonResponse(deletePagoVW(body.ncNum));
-    if (accion === 'setobjetivo')  return jsonResponse(setObjetivoPat(body));
+    if (accion === 'guardar')              return jsonResponse(savePagosVW(body.pagos || []));
+    if (accion === 'eliminar')             return jsonResponse(deletePagoVW(body.ncNum));
+    if (accion === 'setobjetivo')          return jsonResponse(setObjetivoPat(body));
+    if (accion === 'setbaratitosnapshot')  return jsonResponse(saveBaratitoSnapshots(body.snapshots || []));
     return jsonResponse({ error: 'accion desconocida: ' + accion });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
@@ -349,11 +358,19 @@ function getVentas() {
     cuenta: cuentaPorMes[k],
   }));
 
+  // Snapshots de comparación contra baratito (key = # preventa).
+  // El frontend los cruza por preventaNum y dispara el cálculo solo para las
+  // ventas que todavía no tienen snapshot.
+  const baratitoSnapshots = _readBaratitoSnapshots();
+
   return {
     ventas:    ventas,
     meses:     meses,
     mesActual: _yyyyMm(new Date()),
     vendedoresOficiales: VENDEDORES_OFICIALES,
+    baratitoSnapshots: baratitoSnapshots,
+    fyf:       FYF,
+    baratitoTolerancia: BARATITO_TOLERANCIA,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -1138,4 +1155,127 @@ function setObjetivoPat(body) {
   }
   sh.appendRow(["'" + mesKey, valor, ahora]);  // ' fuerza texto en col A
   return { ok: true, mesKey: mesKey, valor: valor, accion: 'insert' };
+}
+
+// =======================================================================
+// BARATITO SNAPSHOTS — comparación venta vs oferta vigente del portal
+// =======================================================================
+// Cada venta tiene un snapshot del precio "baratito" al momento que aparece
+// por primera vez. Permite que el indicador no cambie después aunque la
+// oferta del portal varíe — refleja lo que el vendedor podía ofrecer en ese
+// momento. Snapshot por # preventa (col C de la planilla "PVs").
+//
+// Hoja "ventas_baratito" (autocreada). Una fila por preventa:
+//   A pv_key            (# preventa, texto)
+//   B modelo
+//   C baratito_fyf      (con flete y formulario)
+//   D baratito_sin_fyf  (= baratito_fyf - FYF; 0 si sin_oferta)
+//   E monto_fc          (factura cliente)
+//   F acc               (accesorios)
+//   G cliente_pago      (= monto_fc + acc)
+//   H diff              (= cliente_pago - baratito_sin_fyf; 0 si sin_oferta)
+//   I status            ('mejor' | 'baratito' | 'peor' | 'sin_oferta')
+//   J snapshot_at       (ISO)
+
+const VENTAS_BARATITO_HEADERS = [
+  'pv_key', 'modelo', 'baratito_fyf', 'baratito_sin_fyf',
+  'monto_fc', 'acc', 'cliente_pago', 'diff', 'status', 'snapshot_at',
+];
+
+function _getVentasBaratitoSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName('ventas_baratito');
+  if (!sh) {
+    sh = ss.insertSheet('ventas_baratito');
+    sh.getRange(1, 1, 1, VENTAS_BARATITO_HEADERS.length).setValues([VENTAS_BARATITO_HEADERS]);
+    sh.setFrozenRows(1);
+    sh.getRange('A:A').setNumberFormat('@');  // pv_key como texto (puede tener ceros)
+  }
+  return sh;
+}
+
+function _readBaratitoSnapshots() {
+  const sh = _getVentasBaratitoSheet();
+  const lastRow = sh.getLastRow();
+  const out = {};
+  if (lastRow < 2) return out;
+  const data = sh.getRange(2, 1, lastRow - 1, VENTAS_BARATITO_HEADERS.length).getValues();
+  for (const r of data) {
+    const pvKey = String(r[0] || '').trim();
+    if (!pvKey) continue;
+    out[pvKey] = {
+      pvKey:          pvKey,
+      modelo:         String(r[1] || ''),
+      baratitoFyf:    Number(r[2]) || 0,
+      baratitoSinFyf: Number(r[3]) || 0,
+      montoFc:        Number(r[4]) || 0,
+      acc:            Number(r[5]) || 0,
+      clientePago:    Number(r[6]) || 0,
+      diff:           Number(r[7]) || 0,
+      status:         String(r[8] || ''),
+      snapshotAt:     r[9] instanceof Date ? r[9].toISOString() : String(r[9] || ''),
+    };
+  }
+  return out;
+}
+
+// Recibe un array de snapshots desde el frontend, los persiste:
+//   - si no existe pv_key → append
+//   - si existe con status 'sin_oferta' → update (puede haber mejorado el match)
+//   - si existe con cualquier otro status → NO se pisa (snapshot inmutable)
+function saveBaratitoSnapshots(snapshots) {
+  if (!Array.isArray(snapshots) || !snapshots.length) {
+    return { guardados: 0, actualizados: 0, duplicados: 0 };
+  }
+  const sh = _getVentasBaratitoSheet();
+  const lastRow = sh.getLastRow();
+  // Map pvKey → { fila (1-based), status }
+  const existentes = {};
+  if (lastRow >= 2) {
+    const data = sh.getRange(2, 1, lastRow - 1, VENTAS_BARATITO_HEADERS.length).getValues();
+    for (let i = 0; i < data.length; i++) {
+      const k = String(data[i][0] || '').trim();
+      if (k) existentes[k] = { fila: i + 2, status: String(data[i][8] || '').trim() };
+    }
+  }
+  const ahora = new Date().toISOString();
+  const filasNuevas = [];
+  let actualizados = 0, duplicados = 0;
+  for (const s of snapshots) {
+    const pvKey = String(s.pvKey || '').trim();
+    if (!pvKey) continue;
+    const status = String(s.status || '').trim();
+    if (!/^(mejor|baratito|peor|sin_oferta)$/.test(status)) continue;
+
+    const fila = [
+      "'" + pvKey,                       // texto, pv_key
+      String(s.modelo || ''),
+      Number(s.baratitoFyf) || 0,
+      Number(s.baratitoSinFyf) || 0,
+      Number(s.montoFc) || 0,
+      Number(s.acc) || 0,
+      Number(s.clientePago) || 0,
+      Number(s.diff) || 0,
+      status,
+      ahora,
+    ];
+
+    const prev = existentes[pvKey];
+    if (!prev) {
+      existentes[pvKey] = { fila: lastRow + 1 + filasNuevas.length, status: status };
+      filasNuevas.push(fila);
+    } else if (prev.status === 'sin_oferta' && status !== 'sin_oferta') {
+      sh.getRange(prev.fila, 1, 1, VENTAS_BARATITO_HEADERS.length).setValues([fila]);
+      actualizados++;
+    } else {
+      duplicados++;
+    }
+  }
+  if (filasNuevas.length) {
+    sh.getRange(sh.getLastRow() + 1, 1, filasNuevas.length, VENTAS_BARATITO_HEADERS.length)
+      .setValues(filasNuevas);
+  }
+  // Invalidar cache de ventas así la próxima request trae los snapshots nuevos
+  try { CacheService.getScriptCache().remove('ventas'); } catch (e) {}
+  return { guardados: filasNuevas.length, actualizados: actualizados, duplicados: duplicados };
 }
