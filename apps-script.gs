@@ -31,11 +31,11 @@ const TOKEN = 'tga-gestion-R7nQ4xK8jL';
 
 // Flete y Formularios: total fijo que la oferta del portal trae incluido.
 // Para comparar contra factura+accesorios hay que descontárselo a la oferta.
-const FYF = 1_110_000;
+const FYF = 1110000;
 
 // Tolerancia en pesos para considerar "vendió al baratito" (igual). Fuera de
 // este margen cae a 'mejor' (cliente pagó más) o 'peor' (cliente pagó menos).
-const BARATITO_TOLERANCIA = 10_000;
+const BARATITO_TOLERANCIA = 10000;
 
 // Mes mínimo desde el cual mostramos ventas (los anteriores no se incluyen
 // porque los números no estaban alineados todavía).
