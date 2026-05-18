@@ -294,6 +294,7 @@ table.ventas-tbl.resumida .col-extra { display: none; }
 }
 .mes-row select:focus { border-color: var(--vw-blue); }
 table.ventas-tbl tbody td.gcia-pos { color: var(--green-dark); font-weight: 600; }
+table.ventas-tbl tbody td.gcia-neg { color: var(--orange-dark); font-weight: 600; }
 
 /* Badge "vs Baratito" — pill compacta de color por estado.
    - bar-up    (mejor)   verde
@@ -2439,8 +2440,9 @@ function filaVenta(v) {
   html += '<td data-label="Modelo">' + escapeHtml(v.modelo) + '</td>';
   html += '<td class="col-extra" data-label="Color">' + escapeHtml(v.color) + '</td>';
   html += '<td data-label="vs Baratito">' + badgeBaratito(v) + '</td>';
-  html += '<td class="num gcia-pos" data-label="Gcia $">' + fmtPesos(v.gciaVtaPesos) + '</td>';
-  html += '<td class="num gcia-pos" data-label="Gcia %">' + fmtPct(v.gciaVtaPct) + '</td>';
+  const gciaCls = (v.gciaVtaPesos || 0) < 0 ? 'gcia-neg' : 'gcia-pos';
+  html += '<td class="num ' + gciaCls + '" data-label="Gcia $">' + fmtPesos(v.gciaVtaPesos) + '</td>';
+  html += '<td class="num ' + gciaCls + '" data-label="Gcia %">' + fmtPct(v.gciaVtaPct) + '</td>';
   html += '</tr>';
   return html;
 }
