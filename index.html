@@ -2150,9 +2150,30 @@ function _calcStatusBaratito(diff) {
 
 async function _snapshotearVentasNuevas() {
   if (!ventasData || !Array.isArray(ventasData.ventas) || !ventasData.ventas.length) return;
+  const snapshots = ventasData.baratitoSnapshots || {};
+
+  // Defensivo: si la hoja de snapshots está vacía (primera vez con el feature),
+  // pedimos al backend que inicialice el baseline marcando todas las PVs
+  // actuales como 'pre_feature'. NO snapshoteamos retroactivo — solo PVs que
+  // aparezcan después de este punto generan snapshot real.
+  if (Object.keys(snapshots).length === 0 && ventasData.ventas.length > 0) {
+    try {
+      const body = new URLSearchParams();
+      body.set('payload', JSON.stringify({
+        token: APPS_SCRIPT_TOKEN, accion: 'initbaratitobaseline',
+      }));
+      await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+      // Re-fetch silencioso para traer el baseline recién creado
+      await _fetchVentasSilent();
+    } catch (e) {
+      console.warn('initbaratitobaseline falló:', e);
+    }
+    return;
+  }
+
   // Pendientes: tienen preventaNum y o no tienen snapshot o el snapshot guardado
   // es 'sin_oferta' (lo reintentamos por si mejoró el matching de modelos).
-  const snapshots = ventasData.baratitoSnapshots || {};
+  // 'pre_feature' nunca se reintenta — es el baseline histórico.
   const pendientes = ventasData.ventas.filter(v => {
     const k = String(v.preventaNum || '').trim();
     if (!k) return false;
@@ -2430,6 +2451,10 @@ function badgeBaratito(v) {
     // Snapshot todavía no calculado (loading o sin preventaNum)
     if (!v.preventaNum) return '<span class="bar-badge bar-na" title="Sin # preventa">—</span>';
     return '<span class="bar-badge bar-loading" title="Calculando contra oferta vigente...">…</span>';
+  }
+  if (snap.status === 'pre_feature') {
+    // PV histórica del baseline: no hay snapshot de la oferta original.
+    return '<span class="bar-badge bar-na" title="Histórica — sin oferta de referencia al momento de la venta">—</span>';
   }
   if (snap.status === 'sin_oferta') {
     return '<span class="bar-badge bar-na" title="' + escapeHtml(snap.modelo) + ' no tenía oferta vigente al momento del snapshot">sin oferta</span>';

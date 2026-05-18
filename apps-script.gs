@@ -96,6 +96,8 @@ function doPost(e) {
     if (accion === 'eliminar')             return jsonResponse(deletePagoVW(body.ncNum));
     if (accion === 'setobjetivo')          return jsonResponse(setObjetivoPat(body));
     if (accion === 'setbaratitosnapshot')  return jsonResponse(saveBaratitoSnapshots(body.snapshots || []));
+    if (accion === 'resetbaratito')        return jsonResponse(resetBaratitoBaseline());
+    if (accion === 'initbaratitobaseline') return jsonResponse(initBaratitoBaselineIfEmpty());
     return jsonResponse({ error: 'accion desconocida: ' + accion });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
@@ -1264,6 +1266,10 @@ function saveBaratitoSnapshots(snapshots) {
     if (!prev) {
       existentes[pvKey] = { fila: lastRow + 1 + filasNuevas.length, status: status };
       filasNuevas.push(fila);
+    } else if (prev.status === 'pre_feature') {
+      // PV histórica del baseline → NO se snapshotea (la oferta de hoy no
+      // refleja la del momento de la venta). Cuenta como duplicado.
+      duplicados++;
     } else if (prev.status === 'sin_oferta' && status !== 'sin_oferta') {
       sh.getRange(prev.fila, 1, 1, VENTAS_BARATITO_HEADERS.length).setValues([fila]);
       actualizados++;
@@ -1278,4 +1284,76 @@ function saveBaratitoSnapshots(snapshots) {
   // Invalidar cache de ventas así la próxima request trae los snapshots nuevos
   try { CacheService.getScriptCache().remove('ventas'); } catch (e) {}
   return { guardados: filasNuevas.length, actualizados: actualizados, duplicados: duplicados };
+}
+
+// Lee de la hoja "ventas" todos los # preventa actuales (filtrados desde el
+// VENTAS_MES_MINIMO). Sirve para armar el baseline "pre_feature".
+function _readAllPvKeysFromVentas() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName('ventas') || ss.getSheets().find(s =>
+    /^pvs?$/i.test(s.getName()) || /^ventas/i.test(s.getName())
+  );
+  if (!sh) return [];
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return [];
+
+  // Col A=# venta · B=fecha PV · C=# preventa
+  const range   = sh.getRange(1, 1, lastRow, 3);
+  const display = range.getDisplayValues();
+  const raw     = range.getValues();
+
+  let headerRow = -1;
+  for (let i = 0; i < Math.min(5, display.length); i++) {
+    const a = String(display[i][0] || '').toLowerCase().trim();
+    const b = String(display[i][1] || '').toLowerCase().trim();
+    if (/(nro|n\b|venta|#)/.test(a) && /fecha/.test(b)) { headerRow = i; break; }
+  }
+  if (headerRow < 0) headerRow = 0;
+
+  const out = [];
+  for (let i = headerRow + 1; i < display.length; i++) {
+    const fechaPv = _parseFecha(raw[i][1], display[i][1]);
+    if (!fechaPv) continue;
+    if (_yyyyMm(fechaPv) < VENTAS_MES_MINIMO) continue;
+    const pvKey = String(display[i][2] || '').trim();
+    if (pvKey) out.push(pvKey);
+  }
+  return out;
+}
+
+// Wipea TODOS los snapshots existentes y marca todas las PVs actuales como
+// 'pre_feature' (baseline histórico, no se comparan). De acá en adelante,
+// solo las PVs que aparezcan después de este punto van a generar snapshot
+// real al cargarse la tab por primera vez.
+//
+// Acción destructiva: invalida los snapshots reales que existieran. Se llama
+// una sola vez para limpiar la corrida retroactiva accidental, o cuando se
+// quiere resetear el baseline a propósito.
+function resetBaratitoBaseline() {
+  const sh = _getVentasBaratitoSheet();
+  const lastRow = sh.getLastRow();
+  if (lastRow >= 2) {
+    sh.getRange(2, 1, lastRow - 1, VENTAS_BARATITO_HEADERS.length).clearContent();
+  }
+  const pvKeys = _readAllPvKeysFromVentas();
+  const ahora = new Date().toISOString();
+  const filas = pvKeys.map(k => [
+    "'" + k, '', 0, 0, 0, 0, 0, 0, 'pre_feature', ahora
+  ]);
+  if (filas.length) {
+    sh.getRange(2, 1, filas.length, VENTAS_BARATITO_HEADERS.length).setValues(filas);
+  }
+  try { CacheService.getScriptCache().remove('ventas'); } catch (e) {}
+  return { ok: true, pre_feature: filas.length };
+}
+
+// Si la hoja ventas_baratito está vacía (sin filas de data), inicializa el
+// baseline. Si ya hay filas (sea baseline o snapshots reales), no toca nada.
+// Idempotente — el frontend lo llama una vez por primera carga, defensivo.
+function initBaratitoBaselineIfEmpty() {
+  const sh = _getVentasBaratitoSheet();
+  if (sh.getLastRow() >= 2) {
+    return { ok: true, accion: 'noop', motivo: 'baseline ya existe' };
+  }
+  return resetBaratitoBaseline();
 }
