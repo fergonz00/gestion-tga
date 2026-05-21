@@ -3903,10 +3903,11 @@ function renderPatentamientos() {
       ? 'incluye +' + sobranteAnt + ' de ' + labelAnt
       : (sobranteAnt < 0 ? 'incluye ' + sobranteAnt + ' (déficit ' + labelAnt + ')' : '');
 
-    const sub90 = compTxt
-      ? 'p/ llegar a ' + obj90Efect + ' (90% del obj efect ' + objEfect + ') · ' + compTxt
-      : 'p/ llegar a ' + obj90Efect + ' (90% de ' + objetivo + ')';
-    html += kpi('Faltan p/ 90%', faltan90Efect, sub90, faltan90Efect > 0 ? 'warn' : 'good');
+    // 90% NO compensa: el criterio B exige que CADA mes alcance ≥90% por su
+    // cuenta para habilitar el bimestral. Por eso el KPI siempre va contra el
+    // 90% propio del mes, aunque haya sobrante del mes 1.
+    const sub90 = 'p/ llegar a ' + objetivo90 + ' (90% de ' + objetivo + ')';
+    html += kpi('Faltan p/ 90%', faltan90, sub90, faltan90 > 0 ? 'warn' : 'good');
 
     const subObj = compTxt
       ? 'p/ llegar a obj efect ' + objEfect + ' · ' + compTxt
