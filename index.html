@@ -103,6 +103,82 @@ h2 { font-size: 22px; font-weight: 700; color: var(--vw-blue); margin-bottom: 4p
 .panel { display: none; }
 .panel.active { display: block; }
 
+/* ========== SUBTABS (Stock → Stock/Compras) ========== */
+.subtabs {
+  display: inline-flex; gap: 4px; background: var(--vw-grey-1);
+  padding: 4px; border-radius: 8px; margin-bottom: 14px;
+}
+.subtab {
+  padding: 6px 14px; background: transparent; border: none;
+  font-size: 13px; font-weight: 600; color: var(--vw-grey-4);
+  border-radius: 6px; cursor: pointer; transition: all 0.15s;
+}
+.subtab:hover { color: var(--vw-blue); }
+.subtab.active { background: var(--vw-blue); color: white; }
+.subpanel { display: none; }
+.subpanel.active { display: block; }
+
+/* ========== COMPRAS ========== */
+.compras-mes-actual {
+  background: linear-gradient(135deg, #f5f9ff, #eaf2fc);
+  border: 1px solid var(--vw-grey-2); border-radius: 12px;
+  padding: 18px 20px; margin-bottom: 18px;
+}
+.compras-mes-actual .titulo {
+  font-size: 13px; color: var(--vw-grey-4); text-transform: uppercase;
+  letter-spacing: 1px; font-weight: 700; margin-bottom: 4px;
+}
+.compras-mes-actual .mes { font-size: 22px; font-weight: 700; color: var(--vw-blue); margin-bottom: 14px; }
+.compras-obj-row {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap;
+}
+.compras-obj-row label { font-size: 13px; color: var(--vw-grey-4); }
+.compras-obj-row input {
+  width: 90px; padding: 7px 10px; border: 1.5px solid var(--vw-grey-2);
+  border-radius: 6px; font-size: 14px; font-family: inherit; text-align: center;
+}
+.compras-progress-block {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.compras-progress-line {
+  font-size: 15px; color: var(--vw-grey-5);
+}
+.compras-progress-line strong { color: var(--vw-blue); font-size: 18px; }
+.compras-progress-bar {
+  height: 12px; background: var(--vw-grey-1); border-radius: 6px; overflow: hidden;
+}
+.compras-progress-fill {
+  height: 100%; border-radius: 6px; transition: width 0.3s;
+}
+.compras-progress-fill.bad  { background: linear-gradient(90deg, #e08080, #c0657a); }
+.compras-progress-fill.warn { background: linear-gradient(90deg, #e0b070, #c08838); }
+.compras-progress-fill.good { background: linear-gradient(90deg, #6fb888, #3d8956); }
+.compras-faltan { font-size: 13px; color: var(--vw-grey-4); }
+
+.compras-historico-titulo {
+  font-size: 13px; color: var(--vw-grey-4); text-transform: uppercase;
+  letter-spacing: 1px; font-weight: 700; margin: 18px 0 10px;
+}
+.compras-hist-row {
+  display: grid; grid-template-columns: 1fr auto auto auto; gap: 10px;
+  padding: 12px 14px; background: white; border: 1px solid var(--vw-grey-2);
+  border-radius: 8px; margin-bottom: 6px; align-items: center;
+}
+.compras-hist-mes { font-size: 14px; font-weight: 600; color: var(--vw-blue); }
+.compras-hist-num { font-size: 14px; color: var(--vw-grey-5); }
+.compras-hist-input {
+  width: 70px; padding: 5px 8px; border: 1px solid var(--vw-grey-2);
+  border-radius: 5px; font-size: 13px; font-family: inherit; text-align: center;
+}
+.compras-hist-pct {
+  font-size: 14px; font-weight: 700; min-width: 60px; text-align: right;
+  padding: 4px 10px; border-radius: 5px;
+}
+.compras-hist-pct.bad  { background: #fae0d4; color: #c0657a; }
+.compras-hist-pct.warn { background: #fff3cd; color: #a07000; }
+.compras-hist-pct.good { background: #d4edda; color: #2d6a4f; }
+.compras-hist-pct.none { background: var(--vw-grey-1); color: var(--vw-grey-3); font-weight: 500; font-style: italic; }
+
 /* ========== TOOLBAR ========== */
 .toolbar {
   display: flex; justify-content: space-between; align-items: center;
@@ -1015,13 +1091,30 @@ table.patent-tbl.resumida .col-extra { display: none; }
 
     <!-- =================== STOCK =================== -->
     <section class="panel" id="panelStock">
-      <div class="toolbar">
-        <div class="updated" id="updatedAtStock">—</div>
-        <div class="actions">
-          <button class="refresh" id="btnRefreshStock" onclick="loadStock(true)">Actualizar</button>
-        </div>
+      <div class="subtabs">
+        <button class="subtab active" data-subtab="stock"    onclick="setStockSubtab('stock')">Stock</button>
+        <button class="subtab"        data-subtab="compras"  onclick="setStockSubtab('compras')">Compras</button>
       </div>
-      <div id="stockContent"></div>
+
+      <div class="subpanel active" id="subpanelStock">
+        <div class="toolbar">
+          <div class="updated" id="updatedAtStock">—</div>
+          <div class="actions">
+            <button class="refresh" id="btnRefreshStock" onclick="loadStock(true)">Actualizar</button>
+          </div>
+        </div>
+        <div id="stockContent"></div>
+      </div>
+
+      <div class="subpanel" id="subpanelCompras">
+        <div class="toolbar">
+          <div class="updated">Compras a VW (por fecha de factura)</div>
+          <div class="actions">
+            <button class="refresh" onclick="loadStock(true)">Actualizar</button>
+          </div>
+        </div>
+        <div id="comprasContent"></div>
+      </div>
     </section>
 
     <!-- =================== VENTAS =================== -->
@@ -1335,6 +1428,127 @@ function setTab(tab) {
 }
 
 // =======================================================================
+// STOCK SUB-TABS (Stock / Compras)
+// =======================================================================
+function setStockSubtab(name) {
+  document.querySelectorAll('.subtab').forEach(b => b.classList.toggle('active', b.dataset.subtab === name));
+  document.getElementById('subpanelStock').classList.toggle('active',   name === 'stock');
+  document.getElementById('subpanelCompras').classList.toggle('active', name === 'compras');
+  if (name === 'compras') {
+    if (!stockData) loadStock(false);
+    else            renderCompras();
+  }
+}
+
+// =======================================================================
+// COMPRAS · agrupar por mes y mostrar objetivo vs realizado
+// =======================================================================
+//
+// Compras = unidades con fechaFcIso en el mes. Incluye vendidas e impagas:
+// son compras a VW independientemente de qué pase después con la unidad.
+//
+// Objetivos: persistidos en localStorage por mes (clave gestion_objetivos_compras).
+// Edición del mes actual + edición histórica también permitida (caja chiquita)
+// porque puede ser que VW haya cambiado el objetivo de un mes ya pasado.
+
+function _mesKeyHoy() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+function _mesLabel(mk) {
+  const [y, m] = mk.split('-').map(Number);
+  const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  return meses[m - 1] + ' ' + y;
+}
+function getObjetivosCompras() {
+  try { return JSON.parse(localStorage.getItem('gestion_objetivos_compras') || '{}'); }
+  catch { return {}; }
+}
+function setObjetivoCompra(mesKey, valor) {
+  const obj = getObjetivosCompras();
+  const n = Math.max(0, parseInt(valor || '0', 10) || 0);
+  if (n > 0) obj[mesKey] = n;
+  else       delete obj[mesKey];
+  localStorage.setItem('gestion_objetivos_compras', JSON.stringify(obj));
+  renderCompras();
+}
+function _pctCls(pct) {
+  if (pct >= 100) return 'good';
+  if (pct >= 80)  return 'warn';
+  return 'bad';
+}
+function renderCompras() {
+  const wrap = document.getElementById('comprasContent');
+  if (!stockData || !Array.isArray(stockData.unidades)) {
+    wrap.innerHTML = '<div class="empty">Sin datos. Cargá el stock primero.</div>';
+    return;
+  }
+  // Agrupar por mes (yyyy-mm) usando fechaFcIso
+  const porMes = {};  // mesKey → count
+  stockData.unidades.forEach(u => {
+    if (!u.fechaFcIso) return;
+    const mk = u.fechaFcIso.slice(0, 7);
+    porMes[mk] = (porMes[mk] || 0) + 1;
+  });
+  const objetivos = getObjetivosCompras();
+  const mesHoy = _mesKeyHoy();
+
+  // Mes actual (puede no tener compras todavía)
+  const comprasActual = porMes[mesHoy] || 0;
+  const objActual = objetivos[mesHoy] || 0;
+  const pctActual = objActual ? (comprasActual / objActual * 100) : 0;
+  const faltanActual = Math.max(0, objActual - comprasActual);
+
+  let html = '';
+  html += '<div class="compras-mes-actual">';
+  html += '  <div class="titulo">Mes en curso</div>';
+  html += '  <div class="mes">' + _mesLabel(mesHoy) + '</div>';
+  html += '  <div class="compras-obj-row">';
+  html += '    <label>Objetivo VW:</label>';
+  html += '    <input type="number" min="0" step="1" value="' + (objActual || '') + '" onchange="setObjetivoCompra(\'' + mesHoy + '\', this.value)" placeholder="—">';
+  html += '    <span style="font-size:12px;color:var(--vw-grey-3)">carpetas</span>';
+  html += '  </div>';
+
+  if (objActual > 0) {
+    const cls = _pctCls(pctActual);
+    const w = Math.min(100, pctActual);
+    html += '  <div class="compras-progress-block">';
+    html += '    <div class="compras-progress-line"><strong>' + comprasActual + '</strong> / ' + objActual + ' compras · <strong>' + pctActual.toFixed(1) + '%</strong></div>';
+    html += '    <div class="compras-progress-bar"><div class="compras-progress-fill ' + cls + '" style="width:' + w + '%"></div></div>';
+    if (faltanActual > 0) {
+      html += '    <div class="compras-faltan">Faltan <strong>' + faltanActual + '</strong> compras para llegar al objetivo</div>';
+    } else {
+      html += '    <div class="compras-faltan" style="color:#2d6a4f;font-weight:600">✓ Objetivo alcanzado · superado por ' + (comprasActual - objActual) + '</div>';
+    }
+    html += '  </div>';
+  } else {
+    html += '  <div class="compras-progress-line"><strong>' + comprasActual + '</strong> compras este mes · Cargá el objetivo para ver el avance</div>';
+  }
+  html += '</div>';
+
+  // Histórico: meses anteriores (los que tengan al menos 1 compra)
+  const mesesHist = Object.keys(porMes).filter(mk => mk !== mesHoy).sort((a, b) => b.localeCompare(a));
+  if (mesesHist.length) {
+    html += '<div class="compras-historico-titulo">Histórico mensual</div>';
+    mesesHist.forEach(mk => {
+      const compras = porMes[mk];
+      const obj = objetivos[mk] || 0;
+      const pct = obj ? (compras / obj * 100) : null;
+      const pctCls = pct !== null ? _pctCls(pct) : 'none';
+      const pctTxt = pct !== null ? pct.toFixed(1) + '%' : 'sin obj.';
+      html += '<div class="compras-hist-row">';
+      html += '  <div class="compras-hist-mes">' + _mesLabel(mk) + '</div>';
+      html += '  <div class="compras-hist-num"><strong>' + compras + '</strong> / </div>';
+      html += '  <input class="compras-hist-input" type="number" min="0" step="1" value="' + (obj || '') + '" onchange="setObjetivoCompra(\'' + mk + '\', this.value)" placeholder="obj.">';
+      html += '  <div class="compras-hist-pct ' + pctCls + '">' + pctTxt + '</div>';
+      html += '</div>';
+    });
+  }
+
+  wrap.innerHTML = html;
+}
+
+// =======================================================================
 // RESUMEN · vista panorámica (Stock + Ventas + Patentamientos)
 // =======================================================================
 // No tiene endpoint propio: reusa los datos cargados de las otras 3 tabs.
@@ -1536,6 +1750,7 @@ async function _fetchStockSilent() {
 //
 function renderStock() {
   renderResumen();  // mantener la tab de Resumen sincronizada con los datos actuales
+  if (document.getElementById('comprasContent')) renderCompras();  // mantener sub-tab Compras sincronizada
   const wrap = document.getElementById('stockContent');
   if (!stockData || !Array.isArray(stockData.unidades)) {
     wrap.innerHTML = '<div class="empty">Sin datos.</div>';
