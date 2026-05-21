@@ -1464,6 +1464,15 @@ function getObjetivosCompras() {
   try { return JSON.parse(localStorage.getItem('gestion_objetivos_compras') || '{}'); }
   catch { return {}; }
 }
+// Seed inicial: si nunca se cargó el objetivo de abril 2026, ponerlo en 49.
+// Solo corre una vez por browser — después la clave existe y el if no entra.
+(function seedObjetivosCompras() {
+  const obj = getObjetivosCompras();
+  if (!('2026-04' in obj)) {
+    obj['2026-04'] = 49;
+    localStorage.setItem('gestion_objetivos_compras', JSON.stringify(obj));
+  }
+})();
 function setObjetivoCompra(mesKey, valor) {
   const obj = getObjetivosCompras();
   const n = Math.max(0, parseInt(valor || '0', 10) || 0);
@@ -1526,12 +1535,15 @@ function renderCompras() {
   }
   html += '</div>';
 
-  // Histórico: meses anteriores (los que tengan al menos 1 compra)
-  const mesesHist = Object.keys(porMes).filter(mk => mk !== mesHoy).sort((a, b) => b.localeCompare(a));
+  // Histórico: meses anteriores (con compras O con objetivo cargado, así no se
+  // pierden los meses cuyas unidades ya no están en la planilla de stock).
+  const mesesUnicos = new Set([...Object.keys(porMes), ...Object.keys(objetivos)]);
+  mesesUnicos.delete(mesHoy);
+  const mesesHist = [...mesesUnicos].sort((a, b) => b.localeCompare(a));
   if (mesesHist.length) {
     html += '<div class="compras-historico-titulo">Histórico mensual</div>';
     mesesHist.forEach(mk => {
-      const compras = porMes[mk];
+      const compras = porMes[mk] || 0;
       const obj = objetivos[mk] || 0;
       const pct = obj ? (compras / obj * 100) : null;
       const pctCls = pct !== null ? _pctCls(pct) : 'none';
