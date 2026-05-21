@@ -1535,11 +1535,15 @@ function renderCompras() {
   }
   html += '</div>';
 
-  // Histórico: meses anteriores (con compras O con objetivo cargado, así no se
-  // pierden los meses cuyas unidades ya no están en la planilla de stock).
+  // Histórico: meses anteriores desde abril 2026 en adelante. Antes de ese
+  // mes no arrancamos a llevar registro, así que no los mostramos aunque
+  // queden compras viejas en el stockData.
+  const MES_INICIO = '2026-04';
   const mesesUnicos = new Set([...Object.keys(porMes), ...Object.keys(objetivos)]);
   mesesUnicos.delete(mesHoy);
-  const mesesHist = [...mesesUnicos].sort((a, b) => b.localeCompare(a));
+  const mesesHist = [...mesesUnicos]
+    .filter(mk => mk >= MES_INICIO)
+    .sort((a, b) => b.localeCompare(a));
   if (mesesHist.length) {
     html += '<div class="compras-historico-titulo">Histórico mensual</div>';
     mesesHist.forEach(mk => {
