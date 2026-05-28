@@ -1319,6 +1319,55 @@ async function saveObjetivoPatRemote(mesKey, valor) {
   }
 }
 
+// Objetivos de compras (cantidad de unidades a comprar a VW por mes).
+// Mismo patrón que objetivosPat: persistidos en hoja "objetivos_compras" del
+// Sheet espejo. localStorage queda como cache instantáneo para el primer
+// pintado; loadObjetivosCompras() pisa con la verdad de Sheets.
+let objetivosCompras = (() => {
+  try {
+    const s = localStorage.getItem('gestion_objetivos_compras');
+    return s ? JSON.parse(s) : {};
+  } catch { return {}; }
+})();
+function saveObjetivosComprasCache() {
+  try { localStorage.setItem('gestion_objetivos_compras', JSON.stringify(objetivosCompras)); } catch {}
+}
+async function loadObjetivosCompras() {
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return;
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=objetivoscompras';
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.error) { console.error('objetivoscompras:', data.error); return; }
+    if (data && data.objetivos && typeof data.objetivos === 'object') {
+      objetivosCompras = data.objetivos;
+      saveObjetivosComprasCache();
+      // Re-render si la sub-tab compras está visible
+      if (document.getElementById('subpanelCompras') && document.getElementById('subpanelCompras').classList.contains('active')) {
+        renderCompras();
+      }
+    }
+  } catch (e) { console.error('loadObjetivosCompras:', e); }
+}
+async function saveObjetivoCompraRemote(mesKey, valor) {
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return false;
+  try {
+    const body = new URLSearchParams();
+    body.set('payload', JSON.stringify({
+      token: APPS_SCRIPT_TOKEN, accion: 'setobjetivocompra', mesKey: mesKey, valor: valor,
+    }));
+    const res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    return true;
+  } catch (e) {
+    console.error('saveObjetivoCompraRemote(' + mesKey + ', ' + valor + '):', e);
+    return false;
+  }
+}
+
 // Filtros activos
 let filtros = {
   search:    '',
@@ -1400,7 +1449,8 @@ function enterApp(session) {
   document.getElementById('gateScreen').classList.add('hidden');
   document.getElementById('appScreen').classList.remove('hidden');
   document.getElementById('userName').textContent = session.nombre || session.usuario;
-  loadObjetivosPat();  // pisa el cache local con la verdad de la planilla
+  loadObjetivosPat();      // pisa el cache local con la verdad de la planilla
+  loadObjetivosCompras();  // idem para objetivos de compras
   setTab('resumen');
   startAutoRefresh();
 }
@@ -1416,6 +1466,7 @@ function startAutoRefresh() {
     // Refrescamos objetivos en cada ciclo: son ~chicos y permiten ver cambios
     // hechos por otros usuarios (fngonzalez/fgonzalez comparten la planilla).
     loadObjetivosPat();
+    loadObjetivosCompras();
     if (activo === 'resumen') {
       if (!calcOpen) _fetchStockSilent();
       _fetchVentasSilent();
@@ -1512,25 +1563,13 @@ function _mesLabel(mk) {
   const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
   return meses[m - 1] + ' ' + y;
 }
-function getObjetivosCompras() {
-  try { return JSON.parse(localStorage.getItem('gestion_objetivos_compras') || '{}'); }
-  catch { return {}; }
-}
-// Seed inicial: si nunca se cargó el objetivo de abril 2026, ponerlo en 49.
-// Solo corre una vez por browser — después la clave existe y el if no entra.
-(function seedObjetivosCompras() {
-  const obj = getObjetivosCompras();
-  if (!('2026-04' in obj)) {
-    obj['2026-04'] = 49;
-    localStorage.setItem('gestion_objetivos_compras', JSON.stringify(obj));
-  }
-})();
+function getObjetivosCompras() { return objetivosCompras; }
 function setObjetivoCompra(mesKey, valor) {
-  const obj = getObjetivosCompras();
   const n = Math.max(0, parseInt(valor || '0', 10) || 0);
-  if (n > 0) obj[mesKey] = n;
-  else       delete obj[mesKey];
-  localStorage.setItem('gestion_objetivos_compras', JSON.stringify(obj));
+  if (n > 0) objetivosCompras[mesKey] = n;
+  else       delete objetivosCompras[mesKey];
+  saveObjetivosComprasCache();
+  saveObjetivoCompraRemote(mesKey, n);  // optimista: pintamos primero, persistimos atrás
   renderCompras();
 }
 function _pctCls(pct) {
