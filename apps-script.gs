@@ -1250,6 +1250,18 @@ function setObjetivoCompra(body) {
 
 const INDUSTRIA_HEADERS = ['mesKey', 'industria_total', 'vw_total', 'tga_total', 'actualizado_at'];
 
+// Google Sheets a veces auto-convierte "2026-01" a un Date (1 de enero de 2026)
+// aún cuando se intenta forzar texto con apóstrofe inicial. Este helper
+// normaliza: si la celda es Date, devuelve "YYYY-MM"; si es string, lo trimea.
+function _industriaMesKeyDeCelda(v) {
+  if (v instanceof Date) {
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, '0');
+    return y + '-' + m;
+  }
+  return String(v || '').trim();
+}
+
 function _getIndustriaSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sh = ss.getSheetByName('industria');
@@ -1283,7 +1295,7 @@ function getIndustria() {
   if (lastRow >= 2) {
     const data = sh.getRange(2, 1, lastRow - 1, INDUSTRIA_HEADERS.length).getValues();
     for (const r of data) {
-      const mesKey = String(r[0] || '').trim();
+      const mesKey = _industriaMesKeyDeCelda(r[0]);
       if (!/^\d{4}-\d{2}$/.test(mesKey)) continue;
       const ind = Number(r[1]);
       const vw  = Number(r[2]);
@@ -1324,10 +1336,14 @@ function setIndustria(body) {
   const lastRow = sh.getLastRow();
   const ahora = new Date().toISOString();
 
+  // Aseguramos col A formato texto antes de cualquier escritura, así Sheets no
+  // re-interpreta el mesKey "YYYY-MM" como Date (bug confirmado 2026-05-28).
+  sh.getRange('A:A').setNumberFormat('@');
+
   if (lastRow >= 2) {
     const keys = sh.getRange(2, 1, lastRow - 1, 1).getValues();
     for (let i = 0; i < keys.length; i++) {
-      if (String(keys[i][0] || '').trim() === mesKey) {
+      if (_industriaMesKeyDeCelda(keys[i][0]) === mesKey) {
         const row = i + 2;
         const cur = sh.getRange(row, 1, 1, INDUSTRIA_HEADERS.length).getValues()[0];
         const curInd = (isNaN(Number(cur[1])) ? null : Number(cur[1]));
@@ -1336,12 +1352,13 @@ function setIndustria(body) {
         const newInd = hasInd ? ind : curInd;
         const newVw  = hasVw  ? vw  : curVw;
         const newTga = hasTga ? tga : curTga;
+        // Re-escribimos el mesKey como texto puro (sin apóstrofe ni Date) para limpiar legacy.
         sh.getRange(row, 1, 1, INDUSTRIA_HEADERS.length).setValues([[mesKey, newInd, newVw, newTga, ahora]]);
         return { ok: true, mesKey: mesKey, industria_total: newInd, vw_total: newVw, tga_total: newTga, accion: 'update' };
       }
     }
   }
-  sh.appendRow(["'" + mesKey, hasInd ? ind : null, hasVw ? vw : null, hasTga ? tga : null, ahora]);
+  sh.appendRow([mesKey, hasInd ? ind : null, hasVw ? vw : null, hasTga ? tga : null, ahora]);
   return { ok: true, mesKey: mesKey, industria_total: (hasInd ? ind : null), vw_total: (hasVw ? vw : null), tga_total: (hasTga ? tga : null), accion: 'insert' };
 }
 
