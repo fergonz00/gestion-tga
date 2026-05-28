@@ -1105,6 +1105,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <button class="tab" data-tab="patentamientos" onclick="setTab('patentamientos')">Patentamientos</button>
       <button class="tab" data-tab="trimestre" onclick="setTab('trimestre')">Trimestre</button>
       <button class="tab" data-tab="incentivos" onclick="setTab('incentivos')">Incentivos</button>
+      <button class="tab" data-tab="industria" onclick="setTab('industria')">Industria</button>
     </div>
 
     <!-- =================== RESUMEN =================== -->
@@ -1199,6 +1200,17 @@ table.patent-tbl.resumida .col-extra { display: none; }
         </div>
       </div>
       <div id="incentivosContent"></div>
+    </section>
+
+    <!-- =================== INDUSTRIA =================== -->
+    <section class="panel" id="panelIndustria">
+      <div class="toolbar">
+        <div class="updated">Comparación de patentamientos TGA vs industria total y total VW</div>
+        <div class="actions">
+          <button class="refresh" onclick="loadIndustria()">Actualizar</button>
+        </div>
+      </div>
+      <div id="industriaContent"></div>
     </section>
   </main>
 </div>
@@ -1368,6 +1380,67 @@ async function saveObjetivoCompraRemote(mesKey, valor) {
   }
 }
 
+// Data de industria por mes: { 'YYYY-MM': { industria_total, vw_total } }
+// Persistida en hoja "industria" del Sheet espejo (vía Apps Script).
+// Mismo patrón que objetivosPat / objetivosCompras: cache localStorage para
+// instant paint en reload, pisado por loadIndustria() con la verdad remota.
+let industriaData = (() => {
+  try {
+    const s = localStorage.getItem('gestion_industria');
+    return s ? JSON.parse(s) : {};
+  } catch { return {}; }
+})();
+function saveIndustriaCache() {
+  try { localStorage.setItem('gestion_industria', JSON.stringify(industriaData)); } catch {}
+}
+async function loadIndustria() {
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return;
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=industria';
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.error) { console.error('industria:', data.error); return; }
+    if (data && data.datos && typeof data.datos === 'object') {
+      industriaData = data.datos;
+      saveIndustriaCache();
+      if (document.getElementById('panelIndustria') && document.getElementById('panelIndustria').classList.contains('active')) {
+        renderIndustria();
+      }
+    }
+  } catch (e) { console.error('loadIndustria:', e); }
+}
+// POST optimista: el front ya está pintado con el valor nuevo, esto lo persiste atrás.
+async function saveIndustriaRemote(mesKey, campo, valor) {
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return false;
+  try {
+    const payload = { token: APPS_SCRIPT_TOKEN, accion: 'setindustria', mesKey: mesKey };
+    payload[campo] = valor;   // 'industria_total' o 'vw_total'
+    const body = new URLSearchParams();
+    body.set('payload', JSON.stringify(payload));
+    const res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    return true;
+  } catch (e) {
+    console.error('saveIndustriaRemote(' + mesKey + ', ' + campo + ', ' + valor + '):', e);
+    return false;
+  }
+}
+function setIndustriaCampo(mesKey, campo, raw) {
+  let n = null;
+  if (raw !== '' && raw != null) {
+    const parsed = parseInt(String(raw).replace(/[^0-9]/g, ''), 10);
+    n = isNaN(parsed) ? null : Math.max(0, parsed);
+  }
+  if (!industriaData[mesKey]) industriaData[mesKey] = { industria_total: null, vw_total: null };
+  industriaData[mesKey][campo] = n;
+  saveIndustriaCache();
+  saveIndustriaRemote(mesKey, campo, n);
+  renderIndustria();
+}
+
 // Filtros activos
 let filtros = {
   search:    '',
@@ -1451,6 +1524,7 @@ function enterApp(session) {
   document.getElementById('userName').textContent = session.nombre || session.usuario;
   loadObjetivosPat();      // pisa el cache local con la verdad de la planilla
   loadObjetivosCompras();  // idem para objetivos de compras
+  loadIndustria();         // idem para data de industria (TGA vs mercado)
   setTab('resumen');
   startAutoRefresh();
 }
@@ -1467,6 +1541,7 @@ function startAutoRefresh() {
     // hechos por otros usuarios (fngonzalez/fgonzalez comparten la planilla).
     loadObjetivosPat();
     loadObjetivosCompras();
+    loadIndustria();
     if (activo === 'resumen') {
       if (!calcOpen) _fetchStockSilent();
       _fetchVentasSilent();
@@ -1481,6 +1556,8 @@ function startAutoRefresh() {
       _fetchPatentSilent();
     } else if (activo === 'incentivos') {
       _fetchIncentivosSilent();
+    } else if (activo === 'industria') {
+      _fetchPatentSilent();  // TGA patentadas se cuenta del lado patent
     }
   }, AUTO_REFRESH_MS);
 }
@@ -1503,6 +1580,7 @@ function setTab(tab) {
     patentamientos: 'panelPatentamientos',
     trimestre:      'panelTrimestre',
     incentivos:     'panelIncentivos',
+    industria:      'panelIndustria',
   };
   const el = document.getElementById(map[tab]);
   if (el) el.classList.add('active');
@@ -1516,6 +1594,11 @@ function setTab(tab) {
     else             renderTrimestre();
   }
   if (tab === 'incentivos'     && !incentivosData) loadIncentivos(false);
+  if (tab === 'industria') {
+    // Industria depende de patentData para contar TGA patentadas
+    if (!patentData) loadPatentamientos(false);
+    else             renderIndustria();
+  }
 }
 
 // =======================================================================
@@ -1653,6 +1736,99 @@ function renderCompras() {
   }
 
   wrap.innerHTML = html;
+}
+
+// =======================================================================
+// INDUSTRIA · comparación TGA vs industria total y vs total VW
+// =======================================================================
+//
+// Mes a mes el usuario carga manualmente "industria total" (todas las marcas)
+// y "vw total" (solo VW). TGA patentadas se cuenta automáticamente de la
+// data de patentamientos (carpetas.patentada === true por mesKey).
+//
+// % TGA/VW = TGA / VW total · % share dentro de VW.
+// % TGA/Industria = TGA / Industria total · % share del mercado total.
+
+function renderIndustria() {
+  const wrap = document.getElementById('industriaContent');
+  if (!wrap) return;
+
+  if (!patentData || !Array.isArray(patentData.carpetas)) {
+    wrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>Cargando patentamientos...</div></div>';
+    return;
+  }
+
+  // Compilar lista de meses: los que tienen patentamientos TGA (carpetas con patentada=true)
+  // + los que el usuario ya cargó data de industria. Sort descendente.
+  const mesesSet = new Set();
+  patentData.carpetas.forEach(c => {
+    if (c.mesKey && c.patentada) mesesSet.add(c.mesKey);
+  });
+  Object.keys(industriaData || {}).forEach(k => {
+    if (/^\d{4}-\d{2}$/.test(k)) mesesSet.add(k);
+  });
+  const meses = [...mesesSet].sort((a, b) => b.localeCompare(a));
+
+  if (!meses.length) {
+    wrap.innerHTML = '<div style="padding:30px; text-align:center; color:var(--vw-grey-3)">No hay patentamientos cargados todavía.</div>';
+    return;
+  }
+
+  // Conteo TGA por mes
+  const tgaPorMes = {};
+  patentData.carpetas.forEach(c => {
+    if (c.patentada && c.mesKey) tgaPorMes[c.mesKey] = (tgaPorMes[c.mesKey] || 0) + 1;
+  });
+
+  let html = '';
+  html += '<div style="overflow-x:auto">';
+  html += '<table style="width:100%; border-collapse:collapse; font-size:14px; min-width:680px">';
+  html += '  <thead>';
+  html += '    <tr style="background:var(--vw-grey-1); text-align:left">';
+  html += '      <th style="padding:10px 12px; border-bottom:2px solid var(--vw-grey-2); font-size:12px; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px">Mes</th>';
+  html += '      <th style="padding:10px 12px; border-bottom:2px solid var(--vw-grey-2); font-size:12px; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px; text-align:right">TGA</th>';
+  html += '      <th style="padding:10px 12px; border-bottom:2px solid var(--vw-grey-2); font-size:12px; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px; text-align:right">Total VW</th>';
+  html += '      <th style="padding:10px 12px; border-bottom:2px solid var(--vw-grey-2); font-size:12px; color:var(--vw-blue); text-transform:uppercase; letter-spacing:0.5px; text-align:right">% TGA / VW</th>';
+  html += '      <th style="padding:10px 12px; border-bottom:2px solid var(--vw-grey-2); font-size:12px; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px; text-align:right">Industria total</th>';
+  html += '      <th style="padding:10px 12px; border-bottom:2px solid var(--vw-grey-2); font-size:12px; color:var(--vw-blue); text-transform:uppercase; letter-spacing:0.5px; text-align:right">% TGA / Mercado</th>';
+  html += '    </tr>';
+  html += '  </thead><tbody>';
+
+  for (const mk of meses) {
+    const tga = tgaPorMes[mk] || 0;
+    const d = industriaData[mk] || { industria_total: null, vw_total: null };
+    const ind = d.industria_total;
+    const vw = d.vw_total;
+    const pctVw  = (tga > 0 && vw  > 0) ? (tga / vw  * 100) : null;
+    const pctInd = (tga > 0 && ind > 0) ? (tga / ind * 100) : null;
+    const mesLbl = _mesLabel(mk);
+    html += '<tr>';
+    html += '  <td style="padding:10px 12px; border-bottom:1px solid var(--vw-grey-1); font-weight:600; color:var(--vw-blue)">' + escapeHtml(mesLbl) + '</td>';
+    html += '  <td style="padding:10px 12px; border-bottom:1px solid var(--vw-grey-1); text-align:right; font-family:var(--mono); font-weight:700; font-size:15px">' + tga + '</td>';
+    html += '  <td style="padding:6px 8px; border-bottom:1px solid var(--vw-grey-1); text-align:right">';
+    html += '    <input type="number" min="0" step="1" placeholder="—" value="' + (vw == null ? '' : vw) + '" data-mk="' + mk + '" data-campo="vw_total" onchange="onIndustriaInputChange(this)" style="width:90px; padding:6px 8px; text-align:right; font-family:var(--mono); font-size:13px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">';
+    html += '  </td>';
+    html += '  <td style="padding:10px 12px; border-bottom:1px solid var(--vw-grey-1); text-align:right; font-family:var(--mono); font-weight:700; font-size:14px; color:' + (pctVw === null ? 'var(--vw-grey-3)' : 'var(--vw-blue)') + '">' + (pctVw === null ? '—' : pctVw.toFixed(1) + '%') + '</td>';
+    html += '  <td style="padding:6px 8px; border-bottom:1px solid var(--vw-grey-1); text-align:right">';
+    html += '    <input type="number" min="0" step="1" placeholder="—" value="' + (ind == null ? '' : ind) + '" data-mk="' + mk + '" data-campo="industria_total" onchange="onIndustriaInputChange(this)" style="width:110px; padding:6px 8px; text-align:right; font-family:var(--mono); font-size:13px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">';
+    html += '  </td>';
+    html += '  <td style="padding:10px 12px; border-bottom:1px solid var(--vw-grey-1); text-align:right; font-family:var(--mono); font-weight:700; font-size:14px; color:' + (pctInd === null ? 'var(--vw-grey-3)' : 'var(--vw-blue)') + '">' + (pctInd === null ? '—' : pctInd.toFixed(2) + '%') + '</td>';
+    html += '</tr>';
+  }
+
+  html += '</tbody></table></div>';
+  html += '<div style="margin-top:14px; font-size:12px; color:var(--vw-grey-4); line-height:1.5">';
+  html += '  <strong>Cómo usar:</strong> los datos se guardan automáticamente al perder el foco del input. Si VW publica los números del mes siguiente, los cargás acá y queda guardado para siempre. Si dejás un campo vacío, el porcentaje correspondiente queda en —.';
+  html += '</div>';
+
+  wrap.innerHTML = html;
+}
+
+function onIndustriaInputChange(input) {
+  const mk = input.dataset.mk;
+  const campo = input.dataset.campo;
+  const valor = input.value;
+  setIndustriaCampo(mk, campo, valor);
 }
 
 // =======================================================================
@@ -2985,6 +3161,9 @@ async function loadPatentamientos(forzar) {
     renderPatentamientos();
     const upd = document.getElementById('updatedAtPatent');
     if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+    // Si la solapa Industria está visible, re-render con la data nueva
+    const panelInd = document.getElementById('panelIndustria');
+    if (panelInd && panelInd.classList.contains('active')) renderIndustria();
   } catch (e) {
     console.error(e);
     wrap.innerHTML = '<div class="errbox"><div class="ttl">⚠️ No se pudieron cargar los patentamientos</div>'
@@ -3011,6 +3190,9 @@ async function _fetchPatentSilent() {
     renderPatentamientos();
     const upd = document.getElementById('updatedAtPatent');
     if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+    // Si la solapa Industria está visible, también re-render (depende de patentData para TGA pat)
+    const panelInd = document.getElementById('panelIndustria');
+    if (panelInd && panelInd.classList.contains('active')) renderIndustria();
   } catch { /* silencioso */ }
 }
 

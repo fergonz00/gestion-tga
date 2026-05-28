@@ -68,6 +68,7 @@ function doGet(e) {
     if (tipo === 'pagosvw')         return jsonResponse(getPagosVW(params));      // sin cache
     if (tipo === 'objetivos')         return jsonResponse(getObjetivosPat());       // sin cache (es chico)
     if (tipo === 'objetivoscompras')  return jsonResponse(getObjetivosCompras());   // sin cache (es chico)
+    if (tipo === 'industria')         return jsonResponse(getIndustria());          // sin cache (es chico)
     if (tipo === 'ventasdebug')     return jsonResponse(getVentasDebug(params));  // sin cache
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
@@ -97,6 +98,7 @@ function doPost(e) {
     if (accion === 'eliminar')             return jsonResponse(deletePagoVW(body.ncNum));
     if (accion === 'setobjetivo')          return jsonResponse(setObjetivoPat(body));
     if (accion === 'setobjetivocompra')    return jsonResponse(setObjetivoCompra(body));
+    if (accion === 'setindustria')         return jsonResponse(setIndustria(body));
     if (accion === 'setbaratitosnapshot')  return jsonResponse(saveBaratitoSnapshots(body.snapshots || []));
     if (accion === 'resetbaratito')        return jsonResponse(resetBaratitoBaseline());
     if (accion === 'initbaratitobaseline') return jsonResponse(initBaratitoBaselineIfEmpty());
@@ -1223,6 +1225,101 @@ function setObjetivoCompra(body) {
   }
   sh.appendRow(["'" + mesKey, valor, ahora]);  // ' fuerza texto en col A
   return { ok: true, mesKey: mesKey, valor: valor, accion: 'insert' };
+}
+
+// =======================================================================
+// INDUSTRIA — comparación patentamientos TGA vs total industria y total VW
+// =======================================================================
+// Cada mes guarda los totales del mercado para poder calcular share TGA.
+// TGA patentadas viene del lado del frontend (cuenta carpetas patentadas del
+// mes en la hoja `patentamientos`). Acá solo guardamos lo que el usuario
+// carga: total industria y total VW.
+//
+// Hoja "industria" (autocreada). Columnas:
+//   A mesKey ('YYYY-MM')   B industria_total (int)   C vw_total (int)   D actualizado_at (ISO)
+// Upsert por mesKey. Si setIndustria recibe solo uno de los dos campos, el
+// otro se preserva (no se pisa a null).
+
+const INDUSTRIA_HEADERS = ['mesKey', 'industria_total', 'vw_total', 'actualizado_at'];
+
+function _getIndustriaSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName('industria');
+  if (!sh) {
+    sh = ss.insertSheet('industria');
+    sh.getRange(1, 1, 1, INDUSTRIA_HEADERS.length).setValues([INDUSTRIA_HEADERS]);
+    sh.setFrozenRows(1);
+    sh.getRange('A:A').setNumberFormat('@');  // '2026-04' como texto
+  }
+  return sh;
+}
+
+function getIndustria() {
+  const sh = _getIndustriaSheet();
+  const lastRow = sh.getLastRow();
+  const datos = {};
+  if (lastRow >= 2) {
+    const data = sh.getRange(2, 1, lastRow - 1, INDUSTRIA_HEADERS.length).getValues();
+    for (const r of data) {
+      const mesKey = String(r[0] || '').trim();
+      if (!/^\d{4}-\d{2}$/.test(mesKey)) continue;
+      const ind = Number(r[1]);
+      const vw = Number(r[2]);
+      datos[mesKey] = {
+        industria_total: (isNaN(ind) || ind < 0) ? null : ind,
+        vw_total:        (isNaN(vw)  || vw  < 0) ? null : vw,
+      };
+    }
+  }
+  return { datos: datos, updatedAt: new Date().toISOString() };
+}
+
+function setIndustria(body) {
+  const mesKey = String(body.mesKey || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(mesKey)) return { error: 'mesKey inválido: ' + mesKey };
+
+  // Si el campo no viene, lo dejamos como undefined para preservar el valor previo
+  const hasInd = Object.prototype.hasOwnProperty.call(body, 'industria_total');
+  const hasVw  = Object.prototype.hasOwnProperty.call(body, 'vw_total');
+  let ind = hasInd ? body.industria_total : undefined;
+  let vw  = hasVw  ? body.vw_total        : undefined;
+
+  function _parseNum(v) {
+    if (v === '' || v === null || v === undefined) return null;
+    const n = Number(v);
+    if (isNaN(n) || n < 0) return undefined; // inválido
+    return n;
+  }
+  if (hasInd) {
+    ind = _parseNum(ind);
+    if (ind === undefined) return { error: 'industria_total inválido: ' + body.industria_total };
+  }
+  if (hasVw) {
+    vw = _parseNum(vw);
+    if (vw === undefined) return { error: 'vw_total inválido: ' + body.vw_total };
+  }
+
+  const sh = _getIndustriaSheet();
+  const lastRow = sh.getLastRow();
+  const ahora = new Date().toISOString();
+
+  if (lastRow >= 2) {
+    const keys = sh.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (let i = 0; i < keys.length; i++) {
+      if (String(keys[i][0] || '').trim() === mesKey) {
+        const row = i + 2;
+        const cur = sh.getRange(row, 1, 1, INDUSTRIA_HEADERS.length).getValues()[0];
+        const curInd = (isNaN(Number(cur[1])) ? null : Number(cur[1]));
+        const curVw  = (isNaN(Number(cur[2])) ? null : Number(cur[2]));
+        const newInd = hasInd ? ind : curInd;
+        const newVw  = hasVw  ? vw  : curVw;
+        sh.getRange(row, 1, 1, INDUSTRIA_HEADERS.length).setValues([[mesKey, newInd, newVw, ahora]]);
+        return { ok: true, mesKey: mesKey, industria_total: newInd, vw_total: newVw, accion: 'update' };
+      }
+    }
+  }
+  sh.appendRow(["'" + mesKey, hasInd ? ind : null, hasVw ? vw : null, ahora]);
+  return { ok: true, mesKey: mesKey, industria_total: (hasInd ? ind : null), vw_total: (hasVw ? vw : null), accion: 'insert' };
 }
 
 // =======================================================================
