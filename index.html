@@ -1739,89 +1739,284 @@ function renderCompras() {
 }
 
 // =======================================================================
-// INDUSTRIA · comparación TGA vs industria total y vs total VW
+// INDUSTRIA · TGA vs industria y vs VW · vistas Mensual / Trimestral / Anual
 // =======================================================================
 //
-// Mes a mes el usuario carga manualmente "industria total" (todas las marcas)
-// y "vw total" (solo VW). TGA patentadas se cuenta automáticamente de la
-// data de patentamientos (carpetas.patentada === true por mesKey).
+// 3 fuentes de data por mes:
+//   - TGA patentadas: industriaData[mk].tga_total (override manual, prioridad) ó
+//     count(patentData.carpetas con patentada=true y mesKey=mk) si no hay override.
+//     El override es útil para meses ya cerrados donde no hay carpetas vivas
+//     (enero/febrero/marzo, etc.).
+//   - Total VW del mes (industriaData[mk].vw_total) — input editable.
+//   - Total industria del mes (industriaData[mk].industria_total) — input editable.
 //
-// % TGA/VW = TGA / VW total · % share dentro de VW.
-// % TGA/Industria = TGA / Industria total · % share del mercado total.
+// % TGA/VW = TGA / VW total · share dentro de VW.
+// % TGA/Industria = TGA / Industria total · share del mercado total.
+//
+// 3 vistas: Mensual (tabla mes a mes), Trimestral (suma por trimestre del año
+// seleccionado) y Anual (suma por año).
+
+// Estado UI de la solapa
+let industriaVista = 'mensual'; // 'mensual' | 'trimestral' | 'anual'
+let industriaAnio  = '';        // año seleccionado para mensual/trimestral; '' = todos
+
+function _industriaMesesSet() {
+  // Meses derivados de patentamientos + meses cargados manualmente en industria
+  const s = new Set();
+  if (patentData && Array.isArray(patentData.carpetas)) {
+    patentData.carpetas.forEach(c => { if (c.mesKey && c.patentada) s.add(c.mesKey); });
+  }
+  Object.keys(industriaData || {}).forEach(k => {
+    if (/^\d{4}-\d{2}$/.test(k)) s.add(k);
+  });
+  return s;
+}
+
+function _industriaTgaPorMes() {
+  const tgaPorMes = {};
+  if (patentData && Array.isArray(patentData.carpetas)) {
+    patentData.carpetas.forEach(c => {
+      if (c.patentada && c.mesKey) tgaPorMes[c.mesKey] = (tgaPorMes[c.mesKey] || 0) + 1;
+    });
+  }
+  return tgaPorMes;
+}
+
+// Devuelve la cuenta TGA efectiva para un mes: override del Sheet si existe, sino conteo vivo de carpetas
+function _industriaTgaEfectiva(mk, tgaPorMes) {
+  const d = industriaData[mk];
+  if (d && d.tga_total != null) return Number(d.tga_total);
+  return tgaPorMes[mk] || 0;
+}
 
 function renderIndustria() {
   const wrap = document.getElementById('industriaContent');
   if (!wrap) return;
 
+  // Necesitamos patentData (aunque sea cache local) para el conteo automático
   if (!patentData || !Array.isArray(patentData.carpetas)) {
     wrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>Cargando patentamientos...</div></div>';
     return;
   }
 
-  // Compilar lista de meses: los que tienen patentamientos TGA (carpetas con patentada=true)
-  // + los que el usuario ya cargó data de industria. Sort descendente.
-  const mesesSet = new Set();
-  patentData.carpetas.forEach(c => {
-    if (c.mesKey && c.patentada) mesesSet.add(c.mesKey);
-  });
-  Object.keys(industriaData || {}).forEach(k => {
-    if (/^\d{4}-\d{2}$/.test(k)) mesesSet.add(k);
-  });
-  const meses = [...mesesSet].sort((a, b) => b.localeCompare(a));
+  // Universo de años disponibles: derivado de los mesKeys que tenemos
+  const meses = [..._industriaMesesSet()];
+  const anios = [...new Set(meses.map(mk => mk.split('-')[0]))].sort().reverse();
 
-  if (!meses.length) {
-    wrap.innerHTML = '<div style="padding:30px; text-align:center; color:var(--vw-grey-3)">No hay patentamientos cargados todavía.</div>';
-    return;
+  // Render barra superior (vista + filtro año)
+  let head = '<div style="display:flex; flex-wrap:wrap; gap:14px; align-items:center; margin-bottom:14px; padding:12px 14px; background:var(--vw-grey-1); border-radius:8px">';
+  head += '  <div style="display:flex; gap:6px">';
+  ['mensual','trimestral','anual'].forEach(v => {
+    const sel = (industriaVista === v);
+    head += '    <button onclick="setIndustriaVista(\'' + v + '\')" style="padding:7px 14px; border:none; border-radius:6px; cursor:pointer; font-size:13px; font-weight:600; ' + (sel ? 'background:var(--vw-blue); color:#fff' : 'background:white; color:var(--vw-grey-4); border:1px solid var(--vw-grey-2)') + '">' + (v === 'mensual' ? 'Mensual' : v === 'trimestral' ? 'Trimestral' : 'Anual') + '</button>';
+  });
+  head += '  </div>';
+  // Selector de año (solo aplica a mensual/trimestral)
+  if (industriaVista !== 'anual' && anios.length) {
+    head += '  <div style="display:flex; gap:6px; align-items:center">';
+    head += '    <span style="font-size:12px; color:var(--vw-grey-4); font-weight:600">Año:</span>';
+    head += '    <select onchange="setIndustriaAnio(this.value)" style="padding:7px 10px; border:1px solid var(--vw-grey-2); border-radius:6px; font-size:13px; background:white; cursor:pointer">';
+    head += '      <option value="">Todos</option>';
+    anios.forEach(a => {
+      head += '      <option value="' + a + '"' + (industriaAnio === a ? ' selected' : '') + '>' + a + '</option>';
+    });
+    head += '    </select>';
+    head += '  </div>';
+  }
+  head += '</div>';
+
+  let body = '';
+  if (industriaVista === 'mensual')        body = _renderIndustriaMensual(meses);
+  else if (industriaVista === 'trimestral') body = _renderIndustriaTrimestral(meses);
+  else                                      body = _renderIndustriaAnual(meses);
+
+  wrap.innerHTML = head + body;
+}
+
+function setIndustriaVista(v) {
+  industriaVista = v;
+  renderIndustria();
+}
+function setIndustriaAnio(a) {
+  industriaAnio = a || '';
+  renderIndustria();
+}
+
+function _renderIndustriaMensual(mesesAll) {
+  let mesesArr = [...mesesAll];
+  if (industriaAnio) mesesArr = mesesArr.filter(mk => mk.startsWith(industriaAnio));
+  mesesArr.sort((a, b) => b.localeCompare(a));
+
+  if (!mesesArr.length) {
+    return '<div style="padding:30px; text-align:center; color:var(--vw-grey-3)">No hay datos para el período seleccionado.</div>';
   }
 
-  // Conteo TGA por mes
-  const tgaPorMes = {};
-  patentData.carpetas.forEach(c => {
-    if (c.patentada && c.mesKey) tgaPorMes[c.mesKey] = (tgaPorMes[c.mesKey] || 0) + 1;
-  });
+  const tgaPorMes = _industriaTgaPorMes();
 
-  let html = '';
-  html += '<div style="overflow-x:auto">';
-  html += '<table style="width:100%; border-collapse:collapse; font-size:14px; min-width:680px">';
-  html += '  <thead>';
-  html += '    <tr style="background:var(--vw-grey-1); text-align:left">';
-  html += '      <th style="padding:10px 12px; border-bottom:2px solid var(--vw-grey-2); font-size:12px; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px">Mes</th>';
-  html += '      <th style="padding:10px 12px; border-bottom:2px solid var(--vw-grey-2); font-size:12px; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px; text-align:right">TGA</th>';
-  html += '      <th style="padding:10px 12px; border-bottom:2px solid var(--vw-grey-2); font-size:12px; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px; text-align:right">Total VW</th>';
-  html += '      <th style="padding:10px 12px; border-bottom:2px solid var(--vw-grey-2); font-size:12px; color:var(--vw-blue); text-transform:uppercase; letter-spacing:0.5px; text-align:right">% TGA / VW</th>';
-  html += '      <th style="padding:10px 12px; border-bottom:2px solid var(--vw-grey-2); font-size:12px; color:var(--vw-grey-4); text-transform:uppercase; letter-spacing:0.5px; text-align:right">Industria total</th>';
-  html += '      <th style="padding:10px 12px; border-bottom:2px solid var(--vw-grey-2); font-size:12px; color:var(--vw-blue); text-transform:uppercase; letter-spacing:0.5px; text-align:right">% TGA / Mercado</th>';
-  html += '    </tr>';
-  html += '  </thead><tbody>';
+  let h = '<div style="overflow-x:auto">';
+  h += '<table style="width:100%; border-collapse:collapse; font-size:14px; min-width:780px">';
+  h += '  <thead><tr style="background:var(--vw-grey-1); text-align:left">';
+  h += _industriaTh('Mes', 'left');
+  h += _industriaTh('TGA', 'right', false, true);
+  h += _industriaTh('Total VW', 'right');
+  h += _industriaTh('% TGA / VW', 'right', true);
+  h += _industriaTh('Industria total', 'right');
+  h += _industriaTh('% TGA / Mercado', 'right', true);
+  h += '  </tr></thead><tbody>';
 
-  for (const mk of meses) {
-    const tga = tgaPorMes[mk] || 0;
-    const d = industriaData[mk] || { industria_total: null, vw_total: null };
+  for (const mk of mesesArr) {
+    const d = industriaData[mk] || {};
+    const tgaOverride = (d.tga_total != null) ? Number(d.tga_total) : null;
+    const tgaLive = tgaPorMes[mk] || 0;
+    const tga = tgaOverride != null ? tgaOverride : tgaLive;
+    const vw  = d.vw_total;
     const ind = d.industria_total;
-    const vw = d.vw_total;
     const pctVw  = (tga > 0 && vw  > 0) ? (tga / vw  * 100) : null;
     const pctInd = (tga > 0 && ind > 0) ? (tga / ind * 100) : null;
-    const mesLbl = _mesLabel(mk);
-    html += '<tr>';
-    html += '  <td style="padding:10px 12px; border-bottom:1px solid var(--vw-grey-1); font-weight:600; color:var(--vw-blue)">' + escapeHtml(mesLbl) + '</td>';
-    html += '  <td style="padding:10px 12px; border-bottom:1px solid var(--vw-grey-1); text-align:right; font-family:var(--mono); font-weight:700; font-size:15px">' + tga + '</td>';
-    html += '  <td style="padding:6px 8px; border-bottom:1px solid var(--vw-grey-1); text-align:right">';
-    html += '    <input type="number" min="0" step="1" placeholder="—" value="' + (vw == null ? '' : vw) + '" data-mk="' + mk + '" data-campo="vw_total" onchange="onIndustriaInputChange(this)" style="width:90px; padding:6px 8px; text-align:right; font-family:var(--mono); font-size:13px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">';
-    html += '  </td>';
-    html += '  <td style="padding:10px 12px; border-bottom:1px solid var(--vw-grey-1); text-align:right; font-family:var(--mono); font-weight:700; font-size:14px; color:' + (pctVw === null ? 'var(--vw-grey-3)' : 'var(--vw-blue)') + '">' + (pctVw === null ? '—' : pctVw.toFixed(1) + '%') + '</td>';
-    html += '  <td style="padding:6px 8px; border-bottom:1px solid var(--vw-grey-1); text-align:right">';
-    html += '    <input type="number" min="0" step="1" placeholder="—" value="' + (ind == null ? '' : ind) + '" data-mk="' + mk + '" data-campo="industria_total" onchange="onIndustriaInputChange(this)" style="width:110px; padding:6px 8px; text-align:right; font-family:var(--mono); font-size:13px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">';
-    html += '  </td>';
-    html += '  <td style="padding:10px 12px; border-bottom:1px solid var(--vw-grey-1); text-align:right; font-family:var(--mono); font-weight:700; font-size:14px; color:' + (pctInd === null ? 'var(--vw-grey-3)' : 'var(--vw-blue)') + '">' + (pctInd === null ? '—' : pctInd.toFixed(2) + '%') + '</td>';
-    html += '</tr>';
+    h += '<tr>';
+    h += '  <td style="padding:10px 12px; border-bottom:1px solid var(--vw-grey-1); font-weight:600; color:var(--vw-blue); white-space:nowrap">' + escapeHtml(_mesLabel(mk)) + '</td>';
+    // TGA editable: si override → muestra el override; placeholder es el conteo vivo
+    h += '  <td style="padding:6px 8px; border-bottom:1px solid var(--vw-grey-1); text-align:right">';
+    h += '    <input type="number" min="0" step="1" placeholder="' + (tgaLive || '—') + '" value="' + (tgaOverride == null ? '' : tgaOverride) + '" data-mk="' + mk + '" data-campo="tga_total" onchange="onIndustriaInputChange(this)" title="' + (tgaOverride != null ? 'Manual' : ('Auto: ' + tgaLive)) + '" style="width:80px; padding:6px 8px; text-align:right; font-family:var(--mono); font-size:13px; font-weight:700; border:1px solid ' + (tgaOverride != null ? 'var(--vw-blue)' : 'var(--vw-grey-2)') + '; border-radius:6px; box-sizing:border-box; background:' + (tgaOverride != null ? '#EFF6FF' : 'white') + '">';
+    h += '  </td>';
+    h += _industriaInputCell(mk, 'vw_total', vw, 90);
+    h += _industriaPctCell(pctVw, 1);
+    h += _industriaInputCell(mk, 'industria_total', ind, 110);
+    h += _industriaPctCell(pctInd, 2);
+    h += '</tr>';
   }
 
-  html += '</tbody></table></div>';
-  html += '<div style="margin-top:14px; font-size:12px; color:var(--vw-grey-4); line-height:1.5">';
-  html += '  <strong>Cómo usar:</strong> los datos se guardan automáticamente al perder el foco del input. Si VW publica los números del mes siguiente, los cargás acá y queda guardado para siempre. Si dejás un campo vacío, el porcentaje correspondiente queda en —.';
-  html += '</div>';
+  h += '</tbody></table></div>';
+  h += '<div style="margin-top:14px; font-size:12px; color:var(--vw-grey-4); line-height:1.5">';
+  h += '  <strong>Cómo usar:</strong> los inputs guardan al perder el foco. ';
+  h += '  TGA: si lo dejás vacío, usa el conteo automático de carpetas patentadas (placeholder gris). ';
+  h += '  Si escribís un número (queda en azul), prevalece sobre el conteo — útil para meses cerrados (ene/feb/mar).';
+  h += '</div>';
+  return h;
+}
 
-  wrap.innerHTML = html;
+function _renderIndustriaTrimestral(mesesAll) {
+  let mesesArr = [...mesesAll];
+  if (industriaAnio) mesesArr = mesesArr.filter(mk => mk.startsWith(industriaAnio));
+  if (!mesesArr.length) {
+    return '<div style="padding:30px; text-align:center; color:var(--vw-grey-3)">No hay datos para el período seleccionado.</div>';
+  }
+  const tgaPorMes = _industriaTgaPorMes();
+  // Agrupar por (año, trimestre)
+  const grupos = {}; // key 'YYYY-Qn' -> { meses:[], tga, vw, ind, tieneVw, tieneInd }
+  function _qDe(m) { return Math.ceil(parseInt(m, 10) / 3); }
+  for (const mk of mesesArr) {
+    const [y, m] = mk.split('-');
+    const q = _qDe(m);
+    const key = y + '-Q' + q;
+    if (!grupos[key]) grupos[key] = { anio: y, trim: q, meses: [], tga: 0, vw: 0, ind: 0, tieneVw: false, tieneInd: false };
+    const d = industriaData[mk] || {};
+    const tga = _industriaTgaEfectiva(mk, tgaPorMes);
+    grupos[key].meses.push(mk);
+    grupos[key].tga += tga;
+    if (d.vw_total  != null) { grupos[key].vw  += Number(d.vw_total);  grupos[key].tieneVw  = true; }
+    if (d.industria_total != null) { grupos[key].ind += Number(d.industria_total); grupos[key].tieneInd = true; }
+  }
+  const keys = Object.keys(grupos).sort((a, b) => b.localeCompare(a));
+
+  let h = '<div style="overflow-x:auto">';
+  h += '<table style="width:100%; border-collapse:collapse; font-size:14px; min-width:680px">';
+  h += '  <thead><tr style="background:var(--vw-grey-1); text-align:left">';
+  h += _industriaTh('Trimestre', 'left');
+  h += _industriaTh('TGA', 'right', false, true);
+  h += _industriaTh('Total VW', 'right');
+  h += _industriaTh('% TGA / VW', 'right', true);
+  h += _industriaTh('Industria total', 'right');
+  h += _industriaTh('% TGA / Mercado', 'right', true);
+  h += '  </tr></thead><tbody>';
+
+  for (const k of keys) {
+    const g = grupos[k];
+    const pctVw  = (g.tga > 0 && g.vw  > 0) ? (g.tga / g.vw  * 100) : null;
+    const pctInd = (g.tga > 0 && g.ind > 0) ? (g.tga / g.ind * 100) : null;
+    const label = g.anio + ' · ' + ['Q1','Q2','Q3','Q4'][g.trim - 1] + ' (' + g.meses.length + ' meses)';
+    h += '<tr>';
+    h += '  <td style="padding:12px 12px; border-bottom:1px solid var(--vw-grey-1); font-weight:700; color:var(--vw-blue)">' + escapeHtml(label) + '</td>';
+    h += _industriaNumCell(g.tga);
+    h += _industriaNumCell(g.tieneVw ? g.vw : null);
+    h += _industriaPctCell(pctVw, 1);
+    h += _industriaNumCell(g.tieneInd ? g.ind : null);
+    h += _industriaPctCell(pctInd, 2);
+    h += '</tr>';
+  }
+
+  h += '</tbody></table></div>';
+  h += '<div style="margin-top:14px; font-size:12px; color:var(--vw-grey-4); line-height:1.5">';
+  h += '  <strong>Trimestral:</strong> los totales son la suma de los meses cargados del trimestre. ';
+  h += '  Si falta data de algún mes (ej. VW sin cargar), el total puede estar incompleto.';
+  h += '</div>';
+  return h;
+}
+
+function _renderIndustriaAnual(mesesAll) {
+  const tgaPorMes = _industriaTgaPorMes();
+  const grupos = {}; // 'YYYY' -> totales
+  for (const mk of mesesAll) {
+    const y = mk.split('-')[0];
+    if (!grupos[y]) grupos[y] = { anio: y, meses: [], tga: 0, vw: 0, ind: 0, tieneVw: false, tieneInd: false };
+    const d = industriaData[mk] || {};
+    const tga = _industriaTgaEfectiva(mk, tgaPorMes);
+    grupos[y].meses.push(mk);
+    grupos[y].tga += tga;
+    if (d.vw_total  != null) { grupos[y].vw  += Number(d.vw_total);  grupos[y].tieneVw  = true; }
+    if (d.industria_total != null) { grupos[y].ind += Number(d.industria_total); grupos[y].tieneInd = true; }
+  }
+  const keys = Object.keys(grupos).sort().reverse();
+  if (!keys.length) {
+    return '<div style="padding:30px; text-align:center; color:var(--vw-grey-3)">No hay datos para mostrar.</div>';
+  }
+
+  let h = '<div style="overflow-x:auto">';
+  h += '<table style="width:100%; border-collapse:collapse; font-size:14px; min-width:680px">';
+  h += '  <thead><tr style="background:var(--vw-grey-1); text-align:left">';
+  h += _industriaTh('Año', 'left');
+  h += _industriaTh('TGA', 'right', false, true);
+  h += _industriaTh('Total VW', 'right');
+  h += _industriaTh('% TGA / VW', 'right', true);
+  h += _industriaTh('Industria total', 'right');
+  h += _industriaTh('% TGA / Mercado', 'right', true);
+  h += '  </tr></thead><tbody>';
+  for (const y of keys) {
+    const g = grupos[y];
+    const pctVw  = (g.tga > 0 && g.vw  > 0) ? (g.tga / g.vw  * 100) : null;
+    const pctInd = (g.tga > 0 && g.ind > 0) ? (g.tga / g.ind * 100) : null;
+    h += '<tr>';
+    h += '  <td style="padding:12px 12px; border-bottom:1px solid var(--vw-grey-1); font-weight:700; color:var(--vw-blue); font-size:16px">' + escapeHtml(g.anio) + ' <span style="font-size:11px; font-weight:400; color:var(--vw-grey-3)">(' + g.meses.length + ' meses)</span></td>';
+    h += _industriaNumCell(g.tga);
+    h += _industriaNumCell(g.tieneVw ? g.vw : null);
+    h += _industriaPctCell(pctVw, 1);
+    h += _industriaNumCell(g.tieneInd ? g.ind : null);
+    h += _industriaPctCell(pctInd, 2);
+    h += '</tr>';
+  }
+  h += '</tbody></table></div>';
+  return h;
+}
+
+// Helpers de celdas para renderIndustria
+function _industriaTh(label, align, esPct, esTGA) {
+  const color = esPct ? 'var(--vw-blue)' : 'var(--vw-grey-4)';
+  return '<th style="padding:10px 12px; border-bottom:2px solid var(--vw-grey-2); font-size:12px; color:' + color + '; text-transform:uppercase; letter-spacing:0.5px; text-align:' + align + '">' + label + '</th>';
+}
+function _industriaInputCell(mk, campo, valor, width) {
+  return '<td style="padding:6px 8px; border-bottom:1px solid var(--vw-grey-1); text-align:right">' +
+    '<input type="number" min="0" step="1" placeholder="—" value="' + (valor == null ? '' : valor) + '" data-mk="' + mk + '" data-campo="' + campo + '" onchange="onIndustriaInputChange(this)" style="width:' + width + 'px; padding:6px 8px; text-align:right; font-family:var(--mono); font-size:13px; border:1px solid var(--vw-grey-2); border-radius:6px; box-sizing:border-box">' +
+    '</td>';
+}
+function _industriaPctCell(pct, decimales) {
+  const txt = (pct == null) ? '—' : pct.toFixed(decimales) + '%';
+  const color = (pct == null) ? 'var(--vw-grey-3)' : 'var(--vw-blue)';
+  return '<td style="padding:10px 12px; border-bottom:1px solid var(--vw-grey-1); text-align:right; font-family:var(--mono); font-weight:700; font-size:14px; color:' + color + '">' + txt + '</td>';
+}
+function _industriaNumCell(n) {
+  const txt = (n == null) ? '—' : n.toLocaleString('es-AR');
+  const color = (n == null) ? 'var(--vw-grey-3)' : 'inherit';
+  return '<td style="padding:10px 12px; border-bottom:1px solid var(--vw-grey-1); text-align:right; font-family:var(--mono); font-weight:700; font-size:15px; color:' + color + '">' + txt + '</td>';
 }
 
 function onIndustriaInputChange(input) {

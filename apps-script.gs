@@ -1236,11 +1236,19 @@ function setObjetivoCompra(body) {
 // carga: total industria y total VW.
 //
 // Hoja "industria" (autocreada). Columnas:
-//   A mesKey ('YYYY-MM')   B industria_total (int)   C vw_total (int)   D actualizado_at (ISO)
-// Upsert por mesKey. Si setIndustria recibe solo uno de los dos campos, el
-// otro se preserva (no se pisa a null).
+//   A mesKey ('YYYY-MM')   B industria_total (int)   C vw_total (int)   D tga_total (int)   E actualizado_at (ISO)
+// Upsert por mesKey. Si setIndustria recibe solo uno de los campos, los otros
+// se preservan (no se pisan a null).
+//
+// tga_total es opcional: cuando se carga manualmente, queda como "override"
+// de la cuenta automática del front (que cuenta carpetas patentada=true de
+// patentData). Sirve para meses cerrados sin carpetas vivas (ene/feb/mar).
+//
+// Migración: si la hoja existe con el header viejo (B/C/D = ind/vw/actualizado),
+// _getIndustriaSheet detecta y corrige insertando tga_total como col D y
+// moviendo actualizado_at a col E.
 
-const INDUSTRIA_HEADERS = ['mesKey', 'industria_total', 'vw_total', 'actualizado_at'];
+const INDUSTRIA_HEADERS = ['mesKey', 'industria_total', 'vw_total', 'tga_total', 'actualizado_at'];
 
 function _getIndustriaSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -1250,6 +1258,20 @@ function _getIndustriaSheet() {
     sh.getRange(1, 1, 1, INDUSTRIA_HEADERS.length).setValues([INDUSTRIA_HEADERS]);
     sh.setFrozenRows(1);
     sh.getRange('A:A').setNumberFormat('@');  // '2026-04' como texto
+    return sh;
+  }
+  // Migración: si la hoja existía con el header viejo de 4 columnas, insertar
+  // tga_total entre vw_total y actualizado_at. Idempotente.
+  const headerRange = sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), 1));
+  const header = headerRange.getValues()[0].map(v => String(v || '').trim());
+  const dCol = header[3];
+  if (dCol === 'actualizado_at' || dCol === '') {
+    // Falta tga_total: insertar columna D vacía y reescribir headers
+    sh.insertColumnAfter(3);
+    sh.getRange(1, 1, 1, INDUSTRIA_HEADERS.length).setValues([INDUSTRIA_HEADERS]);
+  } else if (dCol !== 'tga_total') {
+    // Header inesperado, lo reescribimos por las dudas
+    sh.getRange(1, 1, 1, INDUSTRIA_HEADERS.length).setValues([INDUSTRIA_HEADERS]);
   }
   return sh;
 }
@@ -1264,10 +1286,12 @@ function getIndustria() {
       const mesKey = String(r[0] || '').trim();
       if (!/^\d{4}-\d{2}$/.test(mesKey)) continue;
       const ind = Number(r[1]);
-      const vw = Number(r[2]);
+      const vw  = Number(r[2]);
+      const tga = Number(r[3]);
       datos[mesKey] = {
         industria_total: (isNaN(ind) || ind < 0) ? null : ind,
         vw_total:        (isNaN(vw)  || vw  < 0) ? null : vw,
+        tga_total:       (isNaN(tga) || tga < 0) ? null : tga,
       };
     }
   }
@@ -1278,11 +1302,13 @@ function setIndustria(body) {
   const mesKey = String(body.mesKey || '').trim();
   if (!/^\d{4}-\d{2}$/.test(mesKey)) return { error: 'mesKey inválido: ' + mesKey };
 
-  // Si el campo no viene, lo dejamos como undefined para preservar el valor previo
+  // Si el campo no viene en el body, lo dejamos como undefined → se preserva el valor previo
   const hasInd = Object.prototype.hasOwnProperty.call(body, 'industria_total');
   const hasVw  = Object.prototype.hasOwnProperty.call(body, 'vw_total');
+  const hasTga = Object.prototype.hasOwnProperty.call(body, 'tga_total');
   let ind = hasInd ? body.industria_total : undefined;
   let vw  = hasVw  ? body.vw_total        : undefined;
+  let tga = hasTga ? body.tga_total       : undefined;
 
   function _parseNum(v) {
     if (v === '' || v === null || v === undefined) return null;
@@ -1290,14 +1316,9 @@ function setIndustria(body) {
     if (isNaN(n) || n < 0) return undefined; // inválido
     return n;
   }
-  if (hasInd) {
-    ind = _parseNum(ind);
-    if (ind === undefined) return { error: 'industria_total inválido: ' + body.industria_total };
-  }
-  if (hasVw) {
-    vw = _parseNum(vw);
-    if (vw === undefined) return { error: 'vw_total inválido: ' + body.vw_total };
-  }
+  if (hasInd) { ind = _parseNum(ind); if (ind === undefined) return { error: 'industria_total inválido: ' + body.industria_total }; }
+  if (hasVw)  { vw  = _parseNum(vw);  if (vw  === undefined) return { error: 'vw_total inválido: '        + body.vw_total }; }
+  if (hasTga) { tga = _parseNum(tga); if (tga === undefined) return { error: 'tga_total inválido: '       + body.tga_total }; }
 
   const sh = _getIndustriaSheet();
   const lastRow = sh.getLastRow();
@@ -1311,15 +1332,17 @@ function setIndustria(body) {
         const cur = sh.getRange(row, 1, 1, INDUSTRIA_HEADERS.length).getValues()[0];
         const curInd = (isNaN(Number(cur[1])) ? null : Number(cur[1]));
         const curVw  = (isNaN(Number(cur[2])) ? null : Number(cur[2]));
+        const curTga = (isNaN(Number(cur[3])) ? null : Number(cur[3]));
         const newInd = hasInd ? ind : curInd;
         const newVw  = hasVw  ? vw  : curVw;
-        sh.getRange(row, 1, 1, INDUSTRIA_HEADERS.length).setValues([[mesKey, newInd, newVw, ahora]]);
-        return { ok: true, mesKey: mesKey, industria_total: newInd, vw_total: newVw, accion: 'update' };
+        const newTga = hasTga ? tga : curTga;
+        sh.getRange(row, 1, 1, INDUSTRIA_HEADERS.length).setValues([[mesKey, newInd, newVw, newTga, ahora]]);
+        return { ok: true, mesKey: mesKey, industria_total: newInd, vw_total: newVw, tga_total: newTga, accion: 'update' };
       }
     }
   }
-  sh.appendRow(["'" + mesKey, hasInd ? ind : null, hasVw ? vw : null, ahora]);
-  return { ok: true, mesKey: mesKey, industria_total: (hasInd ? ind : null), vw_total: (hasVw ? vw : null), accion: 'insert' };
+  sh.appendRow(["'" + mesKey, hasInd ? ind : null, hasVw ? vw : null, hasTga ? tga : null, ahora]);
+  return { ok: true, mesKey: mesKey, industria_total: (hasInd ? ind : null), vw_total: (hasVw ? vw : null), tga_total: (hasTga ? tga : null), accion: 'insert' };
 }
 
 // =======================================================================
