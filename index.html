@@ -1786,10 +1786,12 @@ function _industriaTgaPorMes() {
   return tgaPorMes;
 }
 
-// Devuelve la cuenta TGA efectiva para un mes: override del Sheet si existe, sino conteo vivo de carpetas
+// Devuelve la cuenta TGA efectiva para un mes: override del Sheet si existe y > 0,
+// sino conteo vivo de carpetas. Tratamos 0 como "sin override" (no rompe nada
+// porque si el live count fuera 0 también, el resultado es el mismo).
 function _industriaTgaEfectiva(mk, tgaPorMes) {
   const d = industriaData[mk];
-  if (d && d.tga_total != null) return Number(d.tga_total);
+  if (d && d.tga_total != null && d.tga_total > 0) return Number(d.tga_total);
   return tgaPorMes[mk] || 0;
 }
 
@@ -1872,7 +1874,8 @@ function _renderIndustriaMensual(mesesAll) {
 
   for (const mk of mesesArr) {
     const d = industriaData[mk] || {};
-    const tgaOverride = (d.tga_total != null) ? Number(d.tga_total) : null;
+    // 0 lo tratamos como "sin override" — ver _industriaTgaEfectiva
+    const tgaOverride = (d.tga_total != null && d.tga_total > 0) ? Number(d.tga_total) : null;
     const tgaLive = tgaPorMes[mk] || 0;
     const tga = tgaOverride != null ? tgaOverride : tgaLive;
     const vw  = d.vw_total;
