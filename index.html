@@ -1769,6 +1769,10 @@ function _industriaMesesSet() {
   Object.keys(industriaData || {}).forEach(k => {
     if (/^\d{4}-\d{2}$/.test(k)) s.add(k);
   });
+  // El mes actual siempre aparece, aunque todavía no haya patentamientos ni
+  // data cargada — así se puede empezar a cargar VW/Industria del mes en curso
+  // apenas VW publique los números (típicamente arranca de mes sin carpetas).
+  s.add(_mesKeyHoy());
   return s;
 }
 
