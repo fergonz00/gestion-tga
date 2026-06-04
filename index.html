@@ -1062,6 +1062,21 @@ table.patent-tbl.resumida .col-extra { display: none; }
   color: var(--vw-grey-4); font-size: 13px;
 }
 .q-empty b { color: var(--vw-blue); }
+
+/* Oversoft (panel interno de prueba) */
+.ovs-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.ovs-out { background: white; border: 1px solid var(--vw-grey-2); border-radius: 12px; padding: 16px; }
+.ovs-hint { color: var(--vw-grey-4); font-size: 13px; }
+.ovs-err { color: #b00020; font-size: 13px; }
+.ovs-big { font-size: 40px; font-weight: 800; color: var(--vw-blue); line-height: 1.1; }
+.ovs-cap { color: var(--vw-grey-4); font-size: 13px; margin-top: 2px; }
+.ovs-q { margin-top: 12px; font-family: ui-monospace, monospace; font-size: 11px;
+  color: var(--vw-grey-4); background: var(--vw-grey-1); padding: 6px 8px; border-radius: 6px;
+  overflow-x: auto; white-space: nowrap; }
+.ovs-tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ovs-tbl th { text-align: left; color: var(--vw-grey-4); font-weight: 600;
+  border-bottom: 1px solid var(--vw-grey-2); padding: 6px 8px; }
+.ovs-tbl td { border-bottom: 1px solid var(--vw-grey-1); padding: 6px 8px; }
 </style>
 
 <!-- pdf.js para parsing client-side de los NCs -->
@@ -1106,6 +1121,8 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <button class="tab" data-tab="trimestre" onclick="setTab('trimestre')">Trimestre</button>
       <button class="tab" data-tab="incentivos" onclick="setTab('incentivos')">Incentivos</button>
       <button class="tab" data-tab="industria" onclick="setTab('industria')">Industria</button>
+      <!-- Tab discreta: solo aparece entrando con #oversoft en la URL (revealOversoftTab) -->
+      <button class="tab hidden" id="tabOversoft" data-tab="oversoft" onclick="setTab('oversoft')">⚙ Oversoft</button>
     </div>
 
     <!-- =================== RESUMEN =================== -->
@@ -1212,6 +1229,23 @@ table.patent-tbl.resumida .col-extra { display: none; }
       </div>
       <div id="industriaContent"></div>
     </section>
+
+    <!-- =================== OVERSOFT (admin / prueba de conexión) =================== -->
+    <section class="panel" id="panelOversoft">
+      <div class="toolbar">
+        <div class="updated">
+          Prueba de conexión a la réplica de SOLO LECTURA de Tito González (Oversoft).
+          Pasa por el Apps Script (la key vive en el server). Vista interna.
+        </div>
+      </div>
+      <div class="ovs-actions">
+        <button class="refresh" onclick="ovsOrdenesAbiertas()">Órdenes de taller abiertas</button>
+        <button class="refresh" onclick="ovsUltimosPagos()">Últimos 10 pagos</button>
+      </div>
+      <div id="oversoftContent" class="ovs-out">
+        <div class="ovs-hint">Tocá un botón para correr la consulta contra Supabase.</div>
+      </div>
+    </section>
   </main>
 </div>
 
@@ -1227,6 +1261,37 @@ const USUARIOS_PERMITIDOS = ['fngonzalez', 'fgonzalez'];
 // Pendiente: pegar acá la URL que devuelve "Deploy → Web app" en el editor de Apps Script.
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby13NRmtve2ojB0IMZgFPnKh3HsLSBLDca4kOduRenO97KLH3W3ILbiJfDzGYVLAUpwpQ/exec';
 const APPS_SCRIPT_TOKEN = 'tga-gestion-R7nQ4xK8jL';
+
+// ── Oversoft: consultas a la réplica de SOLO LECTURA de Tito González ──────
+// Pasa por el Apps Script (tipo=oversoft), que es quien tiene la anon key.
+// El navegador nunca ve la key. Tablas: 'detcash', 'servicios_ordenes'.
+//
+//   tabla : nombre de la tabla (whitelist en el backend).
+//   qs    : querystring PostgREST tal cual, ej:
+//             'select=fecha,importe,motivo,referencia&order=fecha.desc&limit=10'
+//           %-encodeá los valores con espacios (ej. 'referencia=eq.PV%2008015/1').
+//   opts.count === true → devuelve { count, rows } (total exacto); si no, el array.
+//
+// Ejemplos:
+//   const pagos = await oversoft('detcash', 'select=fecha,importe,motivo,referencia&order=fecha.desc&limit=10');
+//   const { count } = await oversoft('servicios_ordenes', 'select=ordenid&cierre=is.null', { count: true });
+//   const pv = await oversoft('detcash', 'select=fecha,importe,motivo&referencia=eq.PV%2008015/1&order=fecha.asc');
+async function oversoft(tabla, qs, opts) {
+  opts = opts || {};
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) {
+    throw new Error('Falta publicar el Apps Script (APPS_SCRIPT_URL).');
+  }
+  let url = APPS_SCRIPT_URL
+    + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN)
+    + '&tipo=oversoft'
+    + '&tabla=' + encodeURIComponent(tabla)
+    + '&qs=' + encodeURIComponent(qs || '');
+  if (opts.count) url += '&count=1';
+  const res  = await fetch(url);
+  const data = await res.json();
+  if (data && data.error) throw new Error('oversoft: ' + data.error);
+  return data;
+}
 
 // CSV público del Google Sheet de ofertas (la misma fuente que sincroniza
 // portal-precios hacia su Supabase). No requiere auth y no está afectado por
@@ -1527,7 +1592,19 @@ function enterApp(session) {
   loadIndustria();         // idem para data de industria (TGA vs mercado)
   setTab('resumen');
   startAutoRefresh();
+  revealOversoftFromHash();
 }
+
+// La tab "Oversoft" es interna: queda oculta salvo que la URL tenga #oversoft
+// (ej. gestion.titogonzalez.online/#oversoft). Así no la ve cualquiera, pero
+// vos la abrís sin tocar código. Se re-evalúa ante cambios de hash.
+function revealOversoftFromHash() {
+  if ((location.hash || '').toLowerCase() === '#oversoft') {
+    const tab = document.getElementById('tabOversoft');
+    if (tab) { tab.classList.remove('hidden'); setTab('oversoft'); }
+  }
+}
+window.addEventListener('hashchange', revealOversoftFromHash);
 
 // Auto-refresh cada 10 minutos. Refresca solo la tab activa, en background
 // (sin spinner ni pantalla en blanco). Si la calc está abierta no toco stock.
@@ -1581,6 +1658,7 @@ function setTab(tab) {
     trimestre:      'panelTrimestre',
     incentivos:     'panelIncentivos',
     industria:      'panelIndustria',
+    oversoft:       'panelOversoft',
   };
   const el = document.getElementById(map[tab]);
   if (el) el.classList.add('active');
@@ -1599,6 +1677,50 @@ function setTab(tab) {
     if (!patentData) loadPatentamientos(false);
     else             renderIndustria();
   }
+}
+
+// =======================================================================
+// OVERSOFT — prueba de conexión (usa el helper oversoft(), ver más abajo)
+// =======================================================================
+function _ovsOut(html) { document.getElementById('oversoftContent').innerHTML = html; }
+function _ovsLoading(qLabel) { _ovsOut('<div class="ovs-hint">Consultando ' + escapeHtml(qLabel) + '…</div>'); }
+function _ovsError(qLabel, err) {
+  _ovsOut('<div class="ovs-err"><b>Error</b> en ' + escapeHtml(qLabel) + ': '
+    + escapeHtml(String(err && err.message || err)) + '</div>');
+}
+
+async function ovsOrdenesAbiertas() {
+  _ovsLoading('órdenes de taller abiertas');
+  try {
+    const { count } = await oversoft('servicios_ordenes',
+      'select=ordenid&cierre=is.null', { count: true });
+    _ovsOut(''
+      + '<div class="ovs-big">' + Number(count).toLocaleString('es-AR') + '</div>'
+      + '<div class="ovs-cap">órdenes de taller abiertas (cierre vacío)</div>'
+      + '<div class="ovs-q">servicios_ordenes?select=ordenid&amp;cierre=is.null · count=exact</div>');
+  } catch (err) { _ovsError('órdenes de taller abiertas', err); }
+}
+
+async function ovsUltimosPagos() {
+  _ovsLoading('últimos pagos');
+  try {
+    const rows = await oversoft('detcash',
+      'select=fecha,importe,motivo,referencia&order=fecha.desc&limit=10');
+    if (!Array.isArray(rows) || !rows.length) { _ovsOut('<div class="ovs-hint">Sin filas.</div>'); return; }
+    let h = '<table class="ovs-tbl"><thead><tr>'
+      + '<th>Fecha</th><th>Importe</th><th>Motivo</th><th>Referencia</th></tr></thead><tbody>';
+    rows.forEach(r => {
+      const imp = (r.importe == null) ? '' : Number(r.importe).toLocaleString('es-AR',
+        { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+      h += '<tr><td>' + escapeHtml(r.fecha || '') + '</td>'
+        + '<td style="text-align:right">' + escapeHtml(imp) + '</td>'
+        + '<td>' + escapeHtml(r.motivo || '') + '</td>'
+        + '<td>' + escapeHtml(r.referencia || '') + '</td></tr>';
+    });
+    h += '</tbody></table>'
+      + '<div class="ovs-q">detcash?select=fecha,importe,motivo,referencia&amp;order=fecha.desc&amp;limit=10</div>';
+    _ovsOut(h);
+  } catch (err) { _ovsError('últimos pagos', err); }
 }
 
 // =======================================================================

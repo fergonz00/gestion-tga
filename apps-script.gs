@@ -70,6 +70,7 @@ function doGet(e) {
     if (tipo === 'objetivoscompras')  return jsonResponse(getObjetivosCompras());   // sin cache (es chico)
     if (tipo === 'industria')         return jsonResponse(getIndustria());          // sin cache (es chico)
     if (tipo === 'ventasdebug')     return jsonResponse(getVentasDebug(params));  // sin cache
+    if (tipo === 'oversoft')        return jsonResponse(getOversoft(params));     // proxy a la réplica Supabase
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
@@ -181,6 +182,59 @@ function jsonResponse(obj) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// =======================================================================
+// OVERSOFT — proxy server-side a la réplica de SOLO LECTURA de Tito González
+// (Supabase project "Oversoft"). La anon key vive acá en el backend; el
+// navegador nunca la ve (recomendación de seguridad del doc ACCESO-GESTION).
+//
+// Uso desde el front (ver helper oversoft() en index.html):
+//   ?tipo=oversoft&tabla=detcash&qs=<querystring PostgREST URL-encoded>[&count=1]
+//
+//   - tabla: solo las de la whitelist (OVERSOFT_TABLAS).
+//   - qs:    todo lo que va después del "?" de PostgREST, ej:
+//              select=fecha,importe,motivo,referencia&order=fecha.desc&limit=10
+//            El front debe %-encodear los valores con espacios/caracteres raros
+//            (ej. referencia=eq.PV%2008015/1) y mandar el qs entero como param.
+//   - count=1: pide el total (header Prefer: count=exact) y devuelve
+//              { count: <total>, rows: [...] } en vez del array pelado.
+//
+// Devuelve el array de filas tal cual PostgREST (o {count, rows} si count=1).
+// =======================================================================
+const OVERSOFT_URL = 'https://lezxwesdsqgracawcwcy.supabase.co/rest/v1';
+const OVERSOFT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxlenh3ZXNkc3FncmFjYXdjd2N5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2MDE3ODcsImV4cCI6MjA5NjE3Nzc4N30.RU9P3pFpJSamsXQrinwWQpvmktBdYarUC3ksaqgw-JQ';
+// Whitelist de tablas que el proxy deja consultar (sumá acá cuando agreguen más).
+const OVERSOFT_TABLAS = ['detcash', 'servicios_ordenes'];
+
+function getOversoft(params) {
+  const tabla = String(params.tabla || '').trim().toLowerCase();
+  if (OVERSOFT_TABLAS.indexOf(tabla) === -1) {
+    return { error: 'tabla no permitida: ' + tabla, permitidas: OVERSOFT_TABLAS };
+  }
+
+  const qs        = String(params.qs || '').trim();
+  const wantCount = String(params.count || '') === '1';
+  const url = OVERSOFT_URL + '/' + tabla + (qs ? '?' + qs : '');
+
+  const headers = { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY };
+  if (wantCount) headers.Prefer = 'count=exact';
+
+  const res  = UrlFetchApp.fetch(url, { headers: headers, muteHttpExceptions: true });
+  const code = res.getResponseCode();
+  const text = res.getContentText();
+
+  if (code < 200 || code >= 300) {
+    return { error: 'oversoft ' + code, detalle: text, url: url };
+  }
+
+  const rows = JSON.parse(text);
+  if (!wantCount) return rows;
+
+  // Content-Range viene como "0-9/123" → total = lo de después de la barra.
+  const cr    = res.getAllHeaders()['Content-Range'] || '';
+  const total = cr.indexOf('/') > -1 ? Number(cr.split('/')[1]) : rows.length;
+  return { count: total, rows: rows };
 }
 
 // =======================================================================
