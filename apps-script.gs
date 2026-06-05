@@ -205,7 +205,7 @@ function jsonResponse(obj) {
 const OVERSOFT_URL = 'https://lezxwesdsqgracawcwcy.supabase.co/rest/v1';
 const OVERSOFT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxlenh3ZXNkc3FncmFjYXdjd2N5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2MDE3ODcsImV4cCI6MjA5NjE3Nzc4N30.RU9P3pFpJSamsXQrinwWQpvmktBdYarUC3ksaqgw-JQ';
 // Whitelist de tablas que el proxy deja consultar (sumá acá cuando agreguen más).
-const OVERSOFT_TABLAS = ['detcash', 'servicios_ordenes'];
+const OVERSOFT_TABLAS = ['detcash', 'servicios_ordenes', 'unidades'];
 
 function getOversoft(params) {
   const tabla = String(params.tabla || '').trim().toLowerCase();
@@ -235,6 +235,13 @@ function getOversoft(params) {
   const cr    = res.getAllHeaders()['Content-Range'] || '';
   const total = cr.indexOf('/') > -1 ? Number(cr.split('/')[1]) : rows.length;
   return { count: total, rows: rows };
+}
+
+// Corré esta función UNA vez desde el editor (selector de función → Ejecutar)
+// para autorizar el permiso de red (script.external_request). Mirá el resultado
+// en el Registro de ejecución. No hace falta redeployar después.
+function _testOversoft() {
+  Logger.log(getOversoft({ tabla: 'detcash', qs: 'select=fecha,importe&order=fecha.desc&limit=3' }));
 }
 
 // =======================================================================

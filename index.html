@@ -1077,6 +1077,15 @@ table.patent-tbl.resumida .col-extra { display: none; }
 .ovs-tbl th { text-align: left; color: var(--vw-grey-4); font-weight: 600;
   border-bottom: 1px solid var(--vw-grey-2); padding: 6px 8px; }
 .ovs-tbl td { border-bottom: 1px solid var(--vw-grey-1); padding: 6px 8px; }
+.ovs-cmp-sum { display: flex; gap: 18px; flex-wrap: wrap; font-size: 14px; margin-bottom: 14px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--vw-grey-2); }
+.ovs-cmp-sum b { font-size: 20px; color: var(--vw-blue); }
+.ovs-cmp-sum .ok b { color: #1a7f37; }
+.ovs-cmp-sum .warn b { color: #b00020; }
+.ovs-cmp-blk { margin-top: 16px; }
+.ovs-cmp-h { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.ovs-cmp-h.ok { color: #1a7f37; }
+.ovs-cmp-h.warn { color: #b00020; }
 </style>
 
 <!-- pdf.js para parsing client-side de los NCs -->
@@ -1241,6 +1250,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <div class="ovs-actions">
         <button class="refresh" onclick="ovsOrdenesAbiertas()">Órdenes de taller abiertas</button>
         <button class="refresh" onclick="ovsUltimosPagos()">Últimos 10 pagos</button>
+        <button class="refresh" onclick="ovsCompararStock()">Comparar stock (planilla vs Oversoft)</button>
       </div>
       <div id="oversoftContent" class="ovs-out">
         <div class="ovs-hint">Tocá un botón para correr la consulta contra Supabase.</div>
@@ -1721,6 +1731,69 @@ async function ovsUltimosPagos() {
       + '<div class="ovs-q">detcash?select=fecha,importe,motivo,referencia&amp;order=fecha.desc&amp;limit=10</div>';
     _ovsOut(h);
   } catch (err) { _ovsError('últimos pagos', err); }
+}
+
+// Comparador de stock: planilla (manual, en stock = no vendido) vs Oversoft
+// (disponible para vender = entregada=false & asignada=false, excluyendo PAR/PAH).
+// Cruce por serie. Es SOLO LECTURA y additive — no toca la planilla.
+const _OVS_norm = s => String(s == null ? '' : s).trim().toUpperCase();
+const _OVS_esParPah = modelo => {
+  const t = _OVS_norm(modelo).split(/\s+/);
+  return t.indexOf('PAR') > -1 || t.indexOf('PAH') > -1;
+};
+
+async function ovsCompararStock() {
+  _ovsLoading('comparador de stock');
+  try {
+    // 1) Stock manual de la planilla (reuso stockData si ya está; si no, lo traigo)
+    let manual = stockData;
+    if (!manual || !Array.isArray(manual.unidades)) {
+      const r = await fetch(APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=stock');
+      manual = await r.json();
+      if (manual && manual.error) throw new Error('stock planilla: ' + manual.error);
+      stockData = manual;
+    }
+    const planilla = (manual.unidades || []).filter(u => !u.vendido);          // en stock = no vendido (col G)
+    const planMap = new Map(planilla.map(u => [_OVS_norm(u.serie), u]));
+
+    // 2) Disponible para vender en Oversoft (sin asignar, sin PAR/PAH)
+    const ovsRaw = await oversoft('unidades', 'select=serie,modelo&entregada=eq.false&asignada=eq.false&limit=500');
+    const ovs = (Array.isArray(ovsRaw) ? ovsRaw : []).filter(r => !_OVS_esParPah(r.modelo));
+    const ovsMap = new Map(ovs.map(r => [_OVS_norm(r.serie), r]));
+
+    // 3) Diferencias por serie
+    const soloPlanilla = planilla.filter(u => !ovsMap.has(_OVS_norm(u.serie)));   // figura en planilla pero Oversoft no la da como disponible
+    const soloOvs      = ovs.filter(r => !planMap.has(_OVS_norm(r.serie)));        // Oversoft la da disponible pero no está en stock de la planilla
+    const coinciden    = planilla.length - soloPlanilla.length;
+
+    // 4) Render
+    const difTotal = soloPlanilla.length + soloOvs.length;
+    let h = '<div class="ovs-cmp-sum">'
+      + '<span><b>' + planilla.length + '</b> en planilla</span>'
+      + '<span><b>' + ovs.length + '</b> disponibles Oversoft</span>'
+      + '<span class="ok"><b>' + coinciden + '</b> coinciden</span>'
+      + '<span class="' + (difTotal ? 'warn' : 'ok') + '"><b>' + difTotal + '</b> diferencias</span>'
+      + '</div>';
+
+    const tabla = (titulo, filas, colSerie, colModelo, vacio) => {
+      if (!filas.length) return '<div class="ovs-cmp-blk"><div class="ovs-cmp-h ok">' + titulo + ': 0</div><div class="ovs-hint">' + vacio + '</div></div>';
+      let t = '<div class="ovs-cmp-blk"><div class="ovs-cmp-h warn">' + titulo + ': ' + filas.length + '</div>'
+        + '<table class="ovs-tbl"><thead><tr><th>Serie</th><th>Modelo / Unidad</th></tr></thead><tbody>';
+      filas.forEach(f => {
+        t += '<tr><td>' + escapeHtml(colSerie(f)) + '</td><td>' + escapeHtml(colModelo(f)) + '</td></tr>';
+      });
+      return t + '</tbody></table></div>';
+    };
+
+    h += tabla('⚠️ En tu planilla pero NO disponible en Oversoft (¿vendida/asignada, o no actualizada?)',
+      soloPlanilla, u => u.serie, u => u.unidad || '', 'Todo lo de tu planilla figura disponible en Oversoft.');
+    h += tabla('⚠️ Disponible en Oversoft pero NO en tu planilla (¿falta cargar, o marcada vendida?)',
+      soloOvs, r => r.serie, r => r.modelo || '', 'Todo lo disponible en Oversoft está en tu planilla.');
+
+    h += '<div class="ovs-q">unidades?select=serie,modelo&amp;entregada=eq.false&amp;asignada=eq.false (excl. PAR/PAH) · cruce por serie vs planilla (no vendido)</div>'
+      + '<div class="ovs-hint" style="margin-top:6px">⏱️ Consultado: ' + new Date().toLocaleString('es-AR') + ' — la hora de sync de Oversoft queda pendiente del sello sync_status.</div>';
+    _ovsOut(h);
+  } catch (err) { _ovsError('comparador de stock', err); }
 }
 
 // =======================================================================
