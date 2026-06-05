@@ -1734,13 +1734,9 @@ async function ovsUltimosPagos() {
 }
 
 // Comparador de stock: planilla (manual, en stock = no vendido) vs Oversoft
-// (disponible para vender = entregada=false & asignada=false, excluyendo PAR/PAH).
+// (disponible para vender = entregada=false & asignada=false).
 // Cruce por serie. Es SOLO LECTURA y additive — no toca la planilla.
 const _OVS_norm = s => String(s == null ? '' : s).trim().toUpperCase();
-const _OVS_esParPah = modelo => {
-  const t = _OVS_norm(modelo).split(/\s+/);
-  return t.indexOf('PAR') > -1 || t.indexOf('PAH') > -1;
-};
 
 async function ovsCompararStock() {
   _ovsLoading('comparador de stock');
@@ -1756,9 +1752,9 @@ async function ovsCompararStock() {
     const planilla = (manual.unidades || []).filter(u => !u.vendido);          // en stock = no vendido (col G)
     const planMap = new Map(planilla.map(u => [_OVS_norm(u.serie), u]));
 
-    // 2) Disponible para vender en Oversoft (sin asignar, sin PAR/PAH)
+    // 2) Disponible para vender en Oversoft (sin asignar)
     const ovsRaw = await oversoft('unidades', 'select=serie,modelo&entregada=eq.false&asignada=eq.false&limit=500');
-    const ovs = (Array.isArray(ovsRaw) ? ovsRaw : []).filter(r => !_OVS_esParPah(r.modelo));
+    const ovs = (Array.isArray(ovsRaw) ? ovsRaw : []);
     const ovsMap = new Map(ovs.map(r => [_OVS_norm(r.serie), r]));
 
     // 3) Diferencias por serie
@@ -1790,7 +1786,7 @@ async function ovsCompararStock() {
     h += tabla('⚠️ Disponible en Oversoft pero NO en tu planilla (¿falta cargar, o marcada vendida?)',
       soloOvs, r => r.serie, r => r.modelo || '', 'Todo lo disponible en Oversoft está en tu planilla.');
 
-    h += '<div class="ovs-q">unidades?select=serie,modelo&amp;entregada=eq.false&amp;asignada=eq.false (excl. PAR/PAH) · cruce por serie vs planilla (no vendido)</div>'
+    h += '<div class="ovs-q">unidades?select=serie,modelo&amp;entregada=eq.false&amp;asignada=eq.false · cruce por serie vs planilla (no vendido)</div>'
       + '<div class="ovs-hint" style="margin-top:6px">⏱️ Consultado: ' + new Date().toLocaleString('es-AR') + ' — la hora de sync de Oversoft queda pendiente del sello sync_status.</div>';
     _ovsOut(h);
   } catch (err) { _ovsError('comparador de stock', err); }
