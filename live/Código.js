@@ -206,7 +206,7 @@ function jsonResponse(obj) {
 const OVERSOFT_URL = 'https://lezxwesdsqgracawcwcy.supabase.co/rest/v1';
 const OVERSOFT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxlenh3ZXNkc3FncmFjYXdjd2N5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2MDE3ODcsImV4cCI6MjA5NjE3Nzc4N30.RU9P3pFpJSamsXQrinwWQpvmktBdYarUC3ksaqgw-JQ';
 // Whitelist de tablas que el proxy deja consultar (sumá acá cuando agreguen más).
-const OVERSOFT_TABLAS = ['detcash', 'servicios_ordenes', 'unidades'];
+const OVERSOFT_TABLAS = ['detcash', 'servicios_ordenes', 'unidades', 'modelos'];
 
 function getOversoft(params) {
   const tabla = String(params.tabla || '').trim().toLowerCase();

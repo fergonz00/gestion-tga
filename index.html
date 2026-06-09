@@ -2693,18 +2693,28 @@ async function loadOversoftStock(forzar) {
     // Oversoft: unidades NO asignadas (físico libre + a recibir), sin PV.
     const qs = 'select=serie,modelo,color,recibida,entregada,asignada,preventa,fechadepedido,fechaderecepcion'
              + '&entregada=eq.false&asignada=eq.false&preventa=eq.&limit=2000';
+    const ovs = await oversoft('unidades', qs);
 
-    // planilla (para monto + fecha que cargó Fer) y saldos (para venc.) en paralelo.
-    // saldos es best-effort: si falla, igual mostramos con el pago de la planilla.
-    const [ovs, planilla, saldos] = await Promise.all([
-      oversoft('unidades', qs),
+    // Nombre comercial DESDE Oversoft (catálogo `modelos`), filtrado por los
+    // códigos base del stock (or=like.<base>*; sin espacios para no romper
+    // UrlFetchApp). El match fino (incluye el MY) se hace por código completo.
+    const bases = new Set((Array.isArray(ovs) ? ovs : [])
+      .map(r => String(r.modelo || '').trim().split(/\s+/)[0]).filter(Boolean));
+    const orFiltro = [...bases].map(b => 'modelo.like.' + b + '*').join(',');
+
+    // planilla (monto + fecha que cargó Fer), saldos (venc.) y catálogo en paralelo.
+    // saldos/catálogo best-effort: si fallan, caemos al nombre/pago de la planilla.
+    const [planilla, saldos, catalogo] = await Promise.all([
       (stockData ? Promise.resolve(stockData) : _fetchJson('stock', forzar)),
       _fetchJson('saldoscompras', forzar).catch(e => { console.warn('saldos:', e); return { unidades: [], _error: String(e.message || e) }; }),
+      (orFiltro ? oversoft('modelos', 'select=modelo,descripcionoperativa&or=(' + orFiltro + ')&limit=500') : Promise.resolve([]))
+        .catch(e => { console.warn('modelos:', e); return []; }),
     ]);
     if (!stockData && planilla) { stockData = planilla; lsCacheSet('stock', planilla); }
 
     const planMap  = new Map((stockData.unidades || []).map(u => [_OVS_norm(u.serie), u]));
     const saldoMap = new Map((saldos.unidades   || []).map(s => [_OVS_norm(s.serie), s]));
+    const catMap   = new Map((Array.isArray(catalogo) ? catalogo : []).map(m => [_OVS_norm(m.modelo), m.descripcionoperativa]));
 
     const unidades = (Array.isArray(ovs) ? ovs : []).map(r => {
       const k = _OVS_norm(r.serie);
@@ -2716,8 +2726,10 @@ async function loadOversoftStock(forzar) {
       let pago = 'sindato', vence = '';
       if (s) { pago = s.impaga ? 'impaga' : 'paga'; vence = s.vence || ''; }
       else if (p && p.pagoEstado) { pago = p.pagoEstado === 'impaga' ? 'impaga' : (p.pagoEstado === 'pagada' ? 'paga' : 'sindato'); }
-      // Nombre comercial: planilla (col "unidad") → saldos (modelo) → código Oversoft.
-      const nombre = (p && p.unidad) ? p.unidad : ((s && s.modelo) ? s.modelo : r.modelo);
+      // Nombre comercial DE OVERSOFT (catálogo modelos, por código completo) →
+      // fallback planilla → saldos → código crudo.
+      const nombre = catMap.get(_OVS_norm(r.modelo))
+                   || (p && p.unidad ? p.unidad : (s && s.modelo ? s.modelo : r.modelo));
       return {
         serie: r.serie, modelo: nombre, codigo: r.modelo,
         color: (p && p.color) ? p.color : (r.color != null ? String(r.color) : ''),
@@ -2771,6 +2783,7 @@ function renderOversoftStock() {
     html += '<div class="aviso-reemplazar"><span class="ico">⚠️</span>'
           + '<span>No se pudo leer saldos (paga/impaga + vencimiento). Se muestra el pago de la planilla cuando existe. Detalle: ' + escapeHtml(oversoftStockData.saldosError) + '</span></div>';
   }
+
 
   // Opciones de los menús (de todo el set, no del filtrado).
   const optsUnidad = [...new Set(todas.map(u => u.modelo).filter(Boolean))]
