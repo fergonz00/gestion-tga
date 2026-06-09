@@ -267,6 +267,12 @@ h2 { font-size: 22px; font-weight: 700; color: var(--vw-blue); margin-bottom: 4p
 }
 .chip:hover { border-color: var(--vw-grey-3); }
 .chip.active { background: var(--vw-blue); color: white; border-color: var(--vw-blue); }
+.ovs-sel {
+  padding: 6px 10px; background: white; color: var(--vw-grey-4);
+  border: 1px solid var(--vw-grey-2); border-radius: 8px;
+  font-size: 12px; font-weight: 500; max-width: 260px;
+}
+.ovs-sel:focus { outline: none; border-color: var(--vw-blue); }
 
 .search {
   display: flex; align-items: center; gap: 6px;
@@ -1334,6 +1340,8 @@ let stockData = null;          // { unidades, updatedAt }
 // saldos (paga/impaga + vencimiento). { unidades, updatedAt, saldosUpdatedAt }
 let oversoftStockData = null;
 let ovsStockFiltro = 'todas';  // 'todas' | 'fisico' | 'arecibir' | 'impagas'
+let ovsStockUnidad = '';       // '' = todas las unidades (nombre comercial exacto)
+let ovsStockMes    = '';       // '' = todos los meses ('YYYY-MM' de la fecha de compra)
 
 // Calculadora (sección aparte, no inline en la tabla)
 let calcOpen = false;          // si la sección de la calculadora está visible
@@ -2616,6 +2624,8 @@ function _fmtFechaDMY(iso) {
   return m[3] + '/' + m[2] + '/' + m[1];
 }
 function setOvsStockFiltro(f) { ovsStockFiltro = f; renderOversoftStock(); }
+function setOvsStockUnidad(v) { ovsStockUnidad = v; renderOversoftStock(); }
+function setOvsStockMes(v)    { ovsStockMes = v;    renderOversoftStock(); }
 
 async function _fetchJson(tipo, forzar) {
   const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN)
@@ -2717,19 +2727,36 @@ function renderOversoftStock() {
           + '<span>No se pudo leer saldos (paga/impaga + vencimiento). Se muestra el pago de la planilla cuando existe. Detalle: ' + escapeHtml(oversoftStockData.saldosError) + '</span></div>';
   }
 
+  // Opciones de los desplegables (de todo el set, no del filtrado).
+  const unidadesDistintas = [...new Set(todas.map(u => u.modelo).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+  const mesesDistintos = [...new Set(todas.map(u => u.fechaCompraIso ? u.fechaCompraIso.slice(0, 7) : '').filter(Boolean))].sort().reverse();
+
+  let selUnidad = '<select class="ovs-sel" onchange="setOvsStockUnidad(this.value)"><option value="">Todas las unidades</option>';
+  unidadesDistintas.forEach(n => { selUnidad += '<option value="' + escapeHtml(n) + '"' + (ovsStockUnidad === n ? ' selected' : '') + '>' + escapeHtml(n) + '</option>'; });
+  selUnidad += '</select>';
+
+  let selMes = '<select class="ovs-sel" onchange="setOvsStockMes(this.value)"><option value="">Todos los meses de compra</option>';
+  mesesDistintos.forEach(mk => { selMes += '<option value="' + mk + '"' + (ovsStockMes === mk ? ' selected' : '') + '>' + _mesLabel(mk) + '</option>'; });
+  selMes += '</select>';
+
   // Filtros
   const chip = (v, l) => '<button class="chip' + (ovsStockFiltro === v ? ' active' : '') + '" onclick="setOvsStockFiltro(\'' + v + '\')">' + l + '</button>';
-  html += '<div class="filter-row" style="gap:6px">'
+  html += '<div class="filter-row" style="gap:6px;flex-wrap:wrap;align-items:center">'
         + chip('todas', 'Todas (' + todas.length + ')')
         + chip('fisico', 'Físico (' + fisico.length + ')')
         + chip('arecibir', 'A recibir (' + arecibir.length + ')')
         + chip('impagas', 'Impagas (' + impagas.length + ')')
+        + selUnidad + selMes
+        + ((ovsStockUnidad || ovsStockMes || ovsStockFiltro !== 'todas')
+            ? '<button class="chip" onclick="setOvsStockFiltro(\'todas\');setOvsStockUnidad(\'\');setOvsStockMes(\'\')">✕ Limpiar</button>' : '')
         + '</div>';
 
   let lista = todas;
-  if (ovsStockFiltro === 'fisico')   lista = fisico;
-  if (ovsStockFiltro === 'arecibir') lista = arecibir;
-  if (ovsStockFiltro === 'impagas')  lista = impagas;
+  if (ovsStockFiltro === 'fisico')   lista = lista.filter(u => u.tipo === 'fisico');
+  if (ovsStockFiltro === 'arecibir') lista = lista.filter(u => u.tipo === 'arecibir');
+  if (ovsStockFiltro === 'impagas')  lista = lista.filter(u => u.pago === 'impaga');
+  if (ovsStockUnidad) lista = lista.filter(u => u.modelo === ovsStockUnidad);
+  if (ovsStockMes)    lista = lista.filter(u => u.fechaCompraIso && u.fechaCompraIso.slice(0, 7) === ovsStockMes);
 
   // Orden: físico por antigüedad desc (más viejo arriba); a recibir al final.
   lista = lista.slice().sort((a, b) => {
