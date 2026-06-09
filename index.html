@@ -1149,6 +1149,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
     <section class="panel" id="panelStock">
       <div class="subtabs">
         <button class="subtab active" data-subtab="stock"     onclick="setStockSubtab('stock')">Stock</button>
+        <button class="subtab"        data-subtab="oversoft"  onclick="setStockSubtab('oversoft')">Stock Oversoft</button>
         <button class="subtab"        data-subtab="compras"   onclick="setStockSubtab('compras')">Compras</button>
         <button class="subtab"        data-subtab="evolucion" onclick="setStockSubtab('evolucion')">Evolución</button>
       </div>
@@ -1161,6 +1162,16 @@ table.patent-tbl.resumida .col-extra { display: none; }
           </div>
         </div>
         <div id="stockContent"></div>
+      </div>
+
+      <div class="subpanel" id="subpanelOversoft">
+        <div class="toolbar">
+          <div class="updated" id="updatedAtOvsStock">Stock en vivo desde Oversoft, cruzado con compras (paga/impaga + vencimiento). En paralelo a la solapa Stock para validar.</div>
+          <div class="actions">
+            <button class="refresh" id="btnRefreshOvsStock" onclick="loadOversoftStock(true)">Actualizar</button>
+          </div>
+        </div>
+        <div id="oversoftStockContent"></div>
       </div>
 
       <div class="subpanel" id="subpanelCompras">
@@ -1317,6 +1328,12 @@ const BARATITO_TOLERANCIA = 10_000;
 // ESTADO
 // =======================================================================
 let stockData = null;          // { unidades, updatedAt }
+
+// Stock Oversoft (solapa nueva, en paralelo a Stock): unidades en vivo desde la
+// réplica Oversoft, cruzadas con la planilla stock (fecha compra + monto) y con
+// saldos (paga/impaga + vencimiento). { unidades, updatedAt, saldosUpdatedAt }
+let oversoftStockData = null;
+let ovsStockFiltro = 'todas';  // 'todas' | 'fisico' | 'arecibir' | 'impagas'
 
 // Calculadora (sección aparte, no inline en la tabla)
 let calcOpen = false;          // si la sección de la calculadora está visible
@@ -1798,8 +1815,13 @@ async function ovsCompararStock() {
 function setStockSubtab(name) {
   document.querySelectorAll('.subtab').forEach(b => b.classList.toggle('active', b.dataset.subtab === name));
   document.getElementById('subpanelStock').classList.toggle('active',     name === 'stock');
+  document.getElementById('subpanelOversoft').classList.toggle('active',  name === 'oversoft');
   document.getElementById('subpanelCompras').classList.toggle('active',   name === 'compras');
   document.getElementById('subpanelEvolucion').classList.toggle('active', name === 'evolucion');
+  if (name === 'oversoft') {
+    if (!oversoftStockData) loadOversoftStock(false);
+    else                    renderOversoftStock();
+  }
   if (name === 'compras') {
     if (!stockData) loadStock(false);
     else            renderCompras();
@@ -2559,6 +2581,212 @@ async function _fetchStockSilent() {
     const upd = document.getElementById('updatedAtStock');
     if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
   } catch { /* silencioso */ }
+}
+
+// =======================================================================
+// STOCK OVERSOFT · solapa nueva (en paralelo a Stock)
+// =======================================================================
+//
+// Fuente: réplica Oversoft en vivo (unidades NO asignadas = físico libre +
+// a recibir, sin PV). Para cada serie cruza:
+//   - planilla stock  → fecha de compra a VW (fechaFcIso) + monto histórico
+//                        (montoFc, lo que cargó Fer en el Sheet).
+//   - saldos (compras) → paga/impaga + VENCIMIENTO del pago (única fuente que
+//                        tiene el vencimiento).
+// Orden: por antigüedad (compra más vieja arriba). El físico va primero;
+// las "a recibir" (sin factura todavía) van al final.
+
+const _MESES_ABBR = { ene:0, feb:1, mar:2, abr:3, may:4, jun:5, jul:6, ago:7, sep:8, oct:9, nov:10, dic:11 };
+
+function _parseVence(str) {
+  if (!str) return null;
+  const m = String(str).toLowerCase().trim().match(/^(\d{1,2})[-\/\s]+([a-z]{3})/);
+  if (!m) return null;
+  const d = parseInt(m[1], 10);
+  const mo = _MESES_ABBR[m[2]];
+  if (mo == null) return null;
+  const dt = new Date(new Date().getFullYear(), mo, d);
+  dt.setHours(0, 0, 0, 0);
+  return dt;
+}
+function _fmtFechaDMY(iso) {
+  if (!iso) return '—';
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return iso;
+  return m[3] + '/' + m[2] + '/' + m[1];
+}
+function setOvsStockFiltro(f) { ovsStockFiltro = f; renderOversoftStock(); }
+
+async function _fetchJson(tipo, forzar) {
+  const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN)
+            + '&tipo=' + tipo + (forzar ? '&fresh=1' : '');
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  if (data && data.error) throw new Error(data.error);
+  return data;
+}
+
+async function loadOversoftStock(forzar) {
+  if (oversoftStockData && !forzar) { renderOversoftStock(); return; }
+  const btn  = document.getElementById('btnRefreshOvsStock');
+  const wrap = document.getElementById('oversoftStockContent');
+  if (btn) { btn.disabled = true; btn.textContent = 'Cargando...'; }
+  wrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>Cargando stock Oversoft...</div></div>';
+
+  try {
+    // Oversoft: unidades NO asignadas (físico libre + a recibir), sin PV.
+    const qs = 'select=serie,modelo,color,recibida,entregada,asignada,preventa,fechadepedido,fechaderecepcion'
+             + '&entregada=eq.false&asignada=eq.false&preventa=eq.&limit=2000';
+
+    // planilla (para monto + fecha que cargó Fer) y saldos (para venc.) en paralelo.
+    // saldos es best-effort: si falla, igual mostramos con el pago de la planilla.
+    const [ovs, planilla, saldos] = await Promise.all([
+      oversoft('unidades', qs),
+      (stockData ? Promise.resolve(stockData) : _fetchJson('stock', forzar)),
+      _fetchJson('saldoscompras', forzar).catch(e => { console.warn('saldos:', e); return { unidades: [], _error: String(e.message || e) }; }),
+    ]);
+    if (!stockData && planilla) { stockData = planilla; lsCacheSet('stock', planilla); }
+
+    const planMap  = new Map((stockData.unidades || []).map(u => [_OVS_norm(u.serie), u]));
+    const saldoMap = new Map((saldos.unidades   || []).map(s => [_OVS_norm(s.serie), s]));
+
+    const unidades = (Array.isArray(ovs) ? ovs : []).map(r => {
+      const k = _OVS_norm(r.serie);
+      const p = planMap.get(k);
+      const s = saldoMap.get(k);
+      const fechaCompraIso = (p && p.fechaFcIso) ? p.fechaFcIso
+                           : (r.fechaderecepcion ? String(r.fechaderecepcion).slice(0, 10) : '');
+      const monto = (p && p.montoFc) ? p.montoFc : (s ? (s.total || 0) : 0);
+      let pago = 'sindato', vence = '';
+      if (s) { pago = s.impaga ? 'impaga' : 'paga'; vence = s.vence || ''; }
+      else if (p && p.pagoEstado) { pago = p.pagoEstado === 'impaga' ? 'impaga' : (p.pagoEstado === 'pagada' ? 'paga' : 'sindato'); }
+      return {
+        serie: r.serie, modelo: r.modelo,
+        color: (p && p.color) ? p.color : (r.color != null ? String(r.color) : ''),
+        recibida: !!r.recibida,
+        tipo: r.recibida ? 'fisico' : 'arecibir',
+        fechaCompraIso, monto, pago, vence,
+        antigDias: fechaCompraIso ? Math.floor((Date.now() - new Date(fechaCompraIso)) / 86400000) : null,
+        enPlanilla: !!p, enSaldos: !!s,
+      };
+    });
+
+    oversoftStockData = {
+      unidades,
+      updatedAt: new Date().toISOString(),
+      saldosUpdatedAt: saldos.updatedAt || null,
+      saldosError: saldos._error || null,
+    };
+    renderOversoftStock();
+  } catch (e) {
+    console.error(e);
+    wrap.innerHTML = '<div class="errbox"><div class="ttl">⚠️ No se pudo cargar el stock Oversoft</div>'
+      + '<div>' + escapeHtml(e.message || String(e)) + '</div></div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Actualizar'; }
+  }
+}
+
+function renderOversoftStock() {
+  const wrap = document.getElementById('oversoftStockContent');
+  if (!oversoftStockData || !Array.isArray(oversoftStockData.unidades)) {
+    wrap.innerHTML = '<div class="empty">Sin datos.</div>'; return;
+  }
+  const todas = oversoftStockData.unidades;
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+
+  const fisico   = todas.filter(u => u.tipo === 'fisico');
+  const arecibir = todas.filter(u => u.tipo === 'arecibir');
+  const impagas  = todas.filter(u => u.pago === 'impaga');
+  const vencidas = impagas.filter(u => { const d = _parseVence(u.vence); return d && d < hoy; });
+  const montoTotal = todas.reduce((a, u) => a + (u.monto || 0), 0);
+
+  let html = '';
+  html += '<div class="cards">';
+  html += kpi('Total no asignado', todas.length, fisico.length + ' físico · ' + arecibir.length + ' a recibir', 'good');
+  html += kpi('Impagas', impagas.length, vencidas.length ? (vencidas.length + ' vencida' + (vencidas.length === 1 ? '' : 's')) : 'a pagar', impagas.length ? 'bad' : '');
+  html += kpi('Monto compra', fmtPesos(montoTotal), 'histórico s/Sheet', '');
+  html += kpi('A recibir', arecibir.length, 'sin factura aún', '');
+  html += '</div>';
+
+  if (oversoftStockData.saldosError) {
+    html += '<div class="aviso-reemplazar"><span class="ico">⚠️</span>'
+          + '<span>No se pudo leer saldos (paga/impaga + vencimiento). Se muestra el pago de la planilla cuando existe. Detalle: ' + escapeHtml(oversoftStockData.saldosError) + '</span></div>';
+  }
+
+  // Filtros
+  const chip = (v, l) => '<button class="chip' + (ovsStockFiltro === v ? ' active' : '') + '" onclick="setOvsStockFiltro(\'' + v + '\')">' + l + '</button>';
+  html += '<div class="filter-row" style="gap:6px">'
+        + chip('todas', 'Todas (' + todas.length + ')')
+        + chip('fisico', 'Físico (' + fisico.length + ')')
+        + chip('arecibir', 'A recibir (' + arecibir.length + ')')
+        + chip('impagas', 'Impagas (' + impagas.length + ')')
+        + '</div>';
+
+  let lista = todas;
+  if (ovsStockFiltro === 'fisico')   lista = fisico;
+  if (ovsStockFiltro === 'arecibir') lista = arecibir;
+  if (ovsStockFiltro === 'impagas')  lista = impagas;
+
+  // Orden: físico por antigüedad desc (más viejo arriba); a recibir al final.
+  lista = lista.slice().sort((a, b) => {
+    if (a.tipo !== b.tipo) return a.tipo === 'fisico' ? -1 : 1;
+    return (b.antigDias || -1) - (a.antigDias || -1);
+  });
+
+  html += '<div class="table-wrap"><div class="table-head"><h3>Unidades (Oversoft)</h3>'
+        + '<div class="count">' + lista.length + ' unidades</div></div>'
+        + '<div class="table-scroll"><table class="stock-tbl responsive-cards">'
+        + '<thead><tr>'
+        + '<th>Serie</th><th>Unidad</th><th>Color</th>'
+        + '<th>Compra a VW</th><th class="num">Monto compra</th>'
+        + '<th class="ctr">Pago</th><th>Vencimiento</th>'
+        + '</tr></thead><tbody>';
+
+  if (!lista.length) {
+    html += '<tr><td colspan="7" class="empty">No hay unidades.</td></tr>';
+  } else {
+    for (const u of lista) {
+      const esRec = u.tipo === 'fisico';
+      const fechaTxt = esRec
+        ? '<b>' + _fmtFechaDMY(u.fechaCompraIso) + '</b>' + (u.antigDias != null ? ' <span style="color:var(--vw-grey-3);font-size:11px">· ' + u.antigDias + ' d</span>' : '')
+        : '<span style="color:var(--vw-grey-3)">a recibir</span>';
+
+      let pagoBadge;
+      if (u.pago === 'paga')        pagoBadge = '<span class="badge" style="background:var(--green-soft);color:var(--green-dark)">Paga</span>';
+      else if (u.pago === 'impaga') pagoBadge = '<span class="badge" style="background:#fdecec;color:#c0392b">Impaga</span>';
+      else                          pagoBadge = '<span class="badge" style="background:var(--vw-grey-2);color:var(--vw-grey-4)">—</span>';
+
+      let venceTxt = '—';
+      if (u.pago === 'impaga' && u.vence) {
+        const d = _parseVence(u.vence);
+        const vencida = d && d < hoy;
+        venceTxt = '<span style="' + (vencida ? 'color:#c0392b;font-weight:600' : '') + '">' + escapeHtml(u.vence) + (vencida ? ' ⚠️' : '') + '</span>';
+      }
+
+      html += '<tr>'
+            + '<td>' + escapeHtml(u.serie || '') + (!u.enPlanilla ? ' <span title="No está en la planilla stock" style="color:var(--vw-grey-3)">◦</span>' : '') + '</td>'
+            + '<td>' + escapeHtml(u.modelo || '') + '</td>'
+            + '<td>' + escapeHtml(u.color || '') + '</td>'
+            + '<td>' + fechaTxt + '</td>'
+            + '<td class="num">' + (u.monto ? fmtPesos(u.monto) : '—') + '</td>'
+            + '<td class="ctr">' + pagoBadge + '</td>'
+            + '<td>' + venceTxt + '</td>'
+            + '</tr>';
+    }
+  }
+  html += '</tbody></table></div></div>';
+
+  // Sello de actualización
+  const upd = document.getElementById('updatedAtOvsStock');
+  if (upd) {
+    let txt = 'Oversoft en vivo';
+    if (oversoftStockData.saldosUpdatedAt) txt += ' · saldos: ' + new Date(oversoftStockData.saldosUpdatedAt).toLocaleString('es-AR');
+    upd.textContent = txt;
+  }
+
+  wrap.innerHTML = html;
 }
 
 // =======================================================================

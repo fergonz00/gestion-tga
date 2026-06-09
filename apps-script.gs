@@ -71,6 +71,7 @@ function doGet(e) {
     if (tipo === 'industria')         return jsonResponse(getIndustria());          // sin cache (es chico)
     if (tipo === 'ventasdebug')     return jsonResponse(getVentasDebug(params));  // sin cache
     if (tipo === 'oversoft')        return jsonResponse(getOversoft(params));     // proxy a la réplica Supabase
+    if (tipo === 'saldoscompras')   return jsonResponse(_cached('saldoscompras', CACHE_TTL_SEC, fresh, getSaldosCompras)); // proxy a saldos-tga (paga/impaga + vencimiento)
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
@@ -242,6 +243,48 @@ function getOversoft(params) {
 // en el Registro de ejecución. No hace falta redeployar después.
 function _testOversoft() {
   Logger.log(getOversoft({ tabla: 'detcash', qs: 'select=fecha,importe&order=fecha.desc&limit=3' }));
+}
+
+// =======================================================================
+// SALDOS — proxy a saldos-tga (tipo=compras) para el cruce paga/impaga + venc.
+// =======================================================================
+// La solapa "Stock Oversoft" cruza por serie las unidades con la planilla de
+// compras de saldos-tga, que es la única fuente que tiene el VENCIMIENTO del
+// pago a VW. Pasa por acá (server-side) para evitar CORS y cachear el response.
+// Devolvemos solo lo necesario (response chico para que entre en el cache).
+const SALDOS_URL   = 'https://script.google.com/macros/s/AKfycbyRTqqpQMjKDL82Z5Cjd9IJWPQnINF0LAEvji8FizfXMBO8Cz0IVbTSnQnNmH_rRxz9yg/exec';
+const SALDOS_TOKEN = 'tga-saldos-K9Mx2P7vQ';
+
+function getSaldosCompras() {
+  const url = SALDOS_URL + '?token=' + encodeURIComponent(SALDOS_TOKEN) + '&tipo=compras';
+  const res  = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true });
+  const code = res.getResponseCode();
+  if (code < 200 || code >= 300) {
+    return { error: 'saldos ' + code, unidades: [] };
+  }
+  let data;
+  try { data = JSON.parse(res.getContentText()); }
+  catch (e) { return { error: 'saldos json invalido', unidades: [] }; }
+  if (data && data.error) return { error: 'saldos: ' + data.error, unidades: [] };
+
+  const slim = (data.unidades || []).map(function (u) {
+    return {
+      serie:     String(u.serie || '').trim(),
+      modelo:    String(u.modelo || '').trim(),
+      fechaFc:   String(u.fechaFc || '').trim(),
+      vence:     String(u.vence || '').trim(),
+      fechaPago: String(u.fechaPago || '').trim(),
+      total:     Number(u.total || 0),
+      importe:   Number(u.importe || 0),
+      impaga:    !!u.impaga,
+    };
+  });
+  return { unidades: slim, updatedAt: data.updatedAt || new Date().toISOString() };
+}
+
+function _testSaldosCompras() {
+  const r = getSaldosCompras();
+  Logger.log('unidades: ' + (r.unidades || []).length + ' · impagas: ' + (r.unidades || []).filter(function (u) { return u.impaga; }).length);
 }
 
 // =======================================================================
