@@ -72,10 +72,43 @@ function doGet(e) {
     if (tipo === 'ventasdebug')     return jsonResponse(getVentasDebug(params));  // sin cache
     if (tipo === 'oversoft')        return jsonResponse(getOversoft(params));     // proxy a la réplica Supabase
     if (tipo === 'saldoscompras')   return jsonResponse(_cached('saldoscompras', CACHE_TTL_SEC, fresh, getSaldosCompras)); // proxy a saldos-tga (paga/impaga + vencimiento)
+    if (tipo === 'madre')           return jsonResponse(getMadreSheet(params));   // lectura cruda de una pestaña de la planilla madre
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
   }
+}
+
+// Lectura cruda de una pestaña de la planilla MADRE (1Kvu...). La espejo tiene
+// acceso de lectura a la madre (por los IMPORTRANGE), así que openById funciona
+// corriendo "as Me". Sirve para auditar/migrar pestañas que no están espejadas
+// (ej. "cc", "Actual BT"). Uso: ?tipo=madre&sheet=cc[&max=200]
+const MADRE_ID = '1KvuRZzHuVpWSppZqT8xDf8WSrplR-vYzeY0gQPftlpQ';
+// Whitelist: SOLO pestañas de incentivos/BT. El token va en el frontend público,
+// así que NO exponemos haberes, clientes, financiaciones, etc.
+const MADRE_SHEETS_OK = [
+  'cc', 'Actual BT', 'BT anteriores', 'Mayo 2026 BT', 'Marzo 26 BT',
+  'Febrero 26 BT', 'chequeo incentivos', 'cupos', 'listas de precios', 'aumentos vw',
+];
+function getMadreSheet(params) {
+  const nombre = String(params.sheet || '').trim();
+  if (!nombre) return { hojasPermitidas: MADRE_SHEETS_OK };  // sin sheet → lista la whitelist
+  if (MADRE_SHEETS_OK.indexOf(nombre) === -1) {
+    return { error: 'pestaña no permitida', hojasPermitidas: MADRE_SHEETS_OK };
+  }
+  const ss = SpreadsheetApp.openById(MADRE_ID);
+  const sh = ss.getSheetByName(nombre);
+  if (!sh) return { error: 'no existe la pestaña "' + nombre + '"', hojas: ss.getSheets().map(s => s.getName()) };
+  const maxFilas = Math.min(Number(params.max) || 300, 1000);
+  const lastRow = Math.min(sh.getLastRow(), maxFilas);
+  const lastCol = sh.getLastColumn();
+  if (lastRow < 1 || lastCol < 1) return { sheet: nombre, filas: 0, valores: [] };
+  const rng = sh.getRange(1, 1, lastRow, lastCol);
+  // formulas=1 → devuelve las fórmulas (celda vacía = constante, no fórmula)
+  if (String(params.formulas || '') === '1') {
+    return { sheet: nombre, filas: lastRow, cols: lastCol, formulas: rng.getFormulas() };
+  }
+  return { sheet: nombre, filas: lastRow, cols: lastCol, valores: rng.getValues() };
 }
 
 // POST endpoint para guardar pagos parseados de los PDFs de VW.

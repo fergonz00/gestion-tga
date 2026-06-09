@@ -2,6 +2,9 @@
 # Los PDFs NO deben publicarse: circulares VW internas y, sobre todo, las
 # notas de crédito (datos financieros). Se mantienen solo en local.
 *.pdf
+*.xlsx
+*.xls
+*.csv
 /5- Nc Incentivos/
 Circulares/entrada/
 Circulares/procesados/
