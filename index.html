@@ -2661,8 +2661,10 @@ async function loadOversoftStock(forzar) {
       let pago = 'sindato', vence = '';
       if (s) { pago = s.impaga ? 'impaga' : 'paga'; vence = s.vence || ''; }
       else if (p && p.pagoEstado) { pago = p.pagoEstado === 'impaga' ? 'impaga' : (p.pagoEstado === 'pagada' ? 'paga' : 'sindato'); }
+      // Nombre comercial: planilla (col "unidad") → saldos (modelo) → código Oversoft.
+      const nombre = (p && p.unidad) ? p.unidad : ((s && s.modelo) ? s.modelo : r.modelo);
       return {
-        serie: r.serie, modelo: r.modelo,
+        serie: r.serie, modelo: nombre, codigo: r.modelo,
         color: (p && p.color) ? p.color : (r.color != null ? String(r.color) : ''),
         recibida: !!r.recibida,
         tipo: r.recibida ? 'fisico' : 'arecibir',
