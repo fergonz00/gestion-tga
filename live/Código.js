@@ -73,6 +73,7 @@ function doGet(e) {
     if (tipo === 'oversoft')        return jsonResponse(getOversoft(params));     // proxy a la réplica Supabase
     if (tipo === 'saldoscompras')   return jsonResponse(_cached('saldoscompras', CACHE_TTL_SEC, fresh, getSaldosCompras)); // proxy a saldos-tga (paga/impaga + vencimiento)
     if (tipo === 'madre')           return jsonResponse(getMadreSheet(params));   // lectura cruda de una pestaña de la planilla madre
+    if (tipo === 'precios')         return jsonResponse(_cached('precios', CACHE_TTL_SEC, fresh, getPreciosActualBT)); // espejo de precios/ganancia de "Actual BT"
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
@@ -99,16 +100,61 @@ function getMadreSheet(params) {
   const ss = SpreadsheetApp.openById(MADRE_ID);
   const sh = ss.getSheetByName(nombre);
   if (!sh) return { error: 'no existe la pestaña "' + nombre + '"', hojas: ss.getSheets().map(s => s.getName()) };
-  const maxFilas = Math.min(Number(params.max) || 300, 1000);
-  const lastRow = Math.min(sh.getLastRow(), maxFilas);
+  const desde = Math.max(1, Number(params.from) || 1);          // fila inicial (1-based)
+  const cuantas = Math.min(Number(params.max) || 300, 2000);     // cantidad de filas
+  const totalRows = sh.getLastRow();
+  if (desde > totalRows) return { sheet: nombre, totalFilas: totalRows, from: desde, filas: 0, valores: [] };
   const lastCol = sh.getLastColumn();
-  if (lastRow < 1 || lastCol < 1) return { sheet: nombre, filas: 0, valores: [] };
-  const rng = sh.getRange(1, 1, lastRow, lastCol);
+  const nFilas = Math.min(cuantas, totalRows - desde + 1);
+  if (nFilas < 1 || lastCol < 1) return { sheet: nombre, totalFilas: totalRows, filas: 0, valores: [] };
+  const rng = sh.getRange(desde, 1, nFilas, lastCol);
   // formulas=1 → devuelve las fórmulas (celda vacía = constante, no fórmula)
   if (String(params.formulas || '') === '1') {
-    return { sheet: nombre, filas: lastRow, cols: lastCol, formulas: rng.getFormulas() };
+    return { sheet: nombre, totalFilas: totalRows, from: desde, filas: nFilas, cols: lastCol, formulas: rng.getFormulas() };
   }
-  return { sheet: nombre, filas: lastRow, cols: lastCol, valores: rng.getValues() };
+  return { sheet: nombre, totalFilas: totalRows, from: desde, filas: nFilas, cols: lastCol, valores: rng.getValues() };
+}
+
+// Espejo de los precios calculados en "Actual BT" de la madre. Devuelve, por
+// modelo, el precio de oferta (AH) y la ganancia (AO) tal cual los calcula Fer,
+// más el desglose (lista, dto, costo, incentivos). NO recalcula nada: es la
+// salida real de la planilla, así no puede diferir. Cols 0-based de "Actual BT":
+//   B=1 modelo · C=2 lista · D=3 dtoTG · U=20 cc90 · V=21 cc_c/iva · Y=24 táctico
+//   Z=25 whosale · AA=26 adic1 · AB=27 adic2 · X=23 cupo · AL=37 costoRep
+//   AH=33 precioOferta(con fyf) · AM=38 gcia s/lista · AN=39 gcia neta $ · AO=40 gcia/lista
+function getPreciosActualBT() {
+  const ss = SpreadsheetApp.openById(MADRE_ID);
+  const sh = ss.getSheetByName('Actual BT');
+  if (!sh) return { error: 'no existe "Actual BT"' };
+  const lastRow = sh.getLastRow();
+  if (lastRow < 3) return { modelos: [] };
+  const v = sh.getRange(1, 1, lastRow, 41).getValues();   // hasta col AO
+  const n = x => Number(x) || 0;
+  const out = [];
+  for (let r = 2; r < v.length; r++) {           // datos desde fila 3
+    const modelo = String(v[r][1] || '').trim();
+    if (!/^VW\s/i.test(modelo)) continue;        // solo modelos VW (descarta filas basura)
+    const lista = n(v[r][2]);
+    if (lista <= 0) continue;
+    out.push({
+      modelo:        modelo,
+      lista:         lista,
+      dtoTG:         n(v[r][3]),                 // % (ej 0.33)
+      precioOferta:  n(v[r][33]),                // AH — con fyf, lo que pasa Fer
+      costoRep:      n(v[r][37]),                // AL
+      gananciaPct:   n(v[r][40]),                // AO — gcia / precio de lista
+      gananciaPesos: n(v[r][39]),                // AN
+      incentivos: {
+        cc90:       n(v[r][20]),
+        tactico:    n(v[r][24]),
+        whosale:    n(v[r][25]),
+        adicional1: n(v[r][26]),
+        adicional2: n(v[r][27]),
+        cupo:       n(v[r][23]),
+      },
+    });
+  }
+  return { modelos: out, total: out.length, fuente: 'Actual BT (madre)', updatedAt: new Date().toISOString() };
 }
 
 // POST endpoint para guardar pagos parseados de los PDFs de VW.

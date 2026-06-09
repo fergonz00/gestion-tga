@@ -1150,6 +1150,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <button class="tab" data-tab="patentamientos" onclick="setTab('patentamientos')">Patentamientos</button>
       <button class="tab" data-tab="trimestre" onclick="setTab('trimestre')">Trimestre</button>
       <button class="tab" data-tab="incentivos" onclick="setTab('incentivos')">Incentivos</button>
+      <button class="tab" data-tab="precios" onclick="setTab('precios')">Precios</button>
       <button class="tab" data-tab="industria" onclick="setTab('industria')">Industria</button>
       <!-- Tab discreta: solo aparece entrando con #oversoft en la URL (revealOversoftTab) -->
       <button class="tab hidden" id="tabOversoft" data-tab="oversoft" onclick="setTab('oversoft')">⚙ Oversoft</button>
@@ -1258,6 +1259,17 @@ table.patent-tbl.resumida .col-extra { display: none; }
         </div>
       </div>
       <div id="incentivosContent"></div>
+    </section>
+
+    <!-- =================== PRECIOS (espejo de "Actual BT") =================== -->
+    <section class="panel" id="panelPrecios">
+      <div class="toolbar">
+        <div class="updated" id="updatedAtPrecios">Espejo en vivo de "Actual BT" — precio de oferta y ganancia tal como los calculás en la planilla.</div>
+        <div class="actions">
+          <button class="refresh" onclick="loadPrecios(true)">Actualizar</button>
+        </div>
+      </div>
+      <div id="preciosContent"></div>
     </section>
 
     <!-- =================== INDUSTRIA =================== -->
@@ -1392,6 +1404,7 @@ let objetivoIncen = (() => {
 })();
 let vistaResumidaInc = false;     // ocultar cols extra
 let incentivosDataByMes = {};     // cache de BT data por mes para matching multi-mes
+let preciosData = null;           // espejo de "Actual BT": { modelos:[{modelo,lista,dtoTG,precioOferta,costoRep,gananciaPct,...}] }
 let pagosParseados = [];          // pagos parseados pero NO guardados aún (preview)
 let parseStatus = '';             // texto de progreso del upload
 let totalPagosGuardados = null;   // total persistido en la hoja pagos_vw (null = no contado todavía)
@@ -1526,6 +1539,68 @@ async function loadIndustria() {
     }
   } catch (e) { console.error('loadIndustria:', e); }
 }
+// =======================================================================
+// PRECIOS — espejo de "Actual BT" (precio de oferta + ganancia de la planilla)
+// =======================================================================
+let preciosFiltro = '';
+async function loadPrecios(forzar) {
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return;
+  const cont = document.getElementById('preciosContent');
+  if (cont && !preciosData) cont.innerHTML = '<div class="empty">Cargando precios…</div>';
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=precios' + (forzar ? '&fresh=1' : '');
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.error) { if (cont) cont.innerHTML = '<div class="errbox"><div class="ttl">⚠️ ' + escapeHtml(data.error) + '</div></div>'; return; }
+    preciosData = data;
+    const up = document.getElementById('updatedAtPrecios');
+    if (up && data.updatedAt) up.textContent = 'Espejo de "Actual BT" · ' + data.total + ' modelos · actualizado ' + new Date(data.updatedAt).toLocaleString('es-AR');
+    renderPrecios();
+  } catch (e) { console.error('loadPrecios:', e); }
+}
+
+function renderPrecios() {
+  const cont = document.getElementById('preciosContent');
+  if (!cont) return;
+  if (!preciosData || !Array.isArray(preciosData.modelos)) { cont.innerHTML = '<div class="empty">Sin datos.</div>'; return; }
+  const f = preciosFiltro.trim().toLowerCase();
+  const rows = preciosData.modelos.filter(m => !f || m.modelo.toLowerCase().includes(f));
+
+  let h = '';
+  h += '<div class="mes-row" style="margin-bottom:10px">';
+  h += '  <input type="text" placeholder="🔍 Filtrar modelo…" value="' + escapeHtml(preciosFiltro) + '" oninput="preciosFiltro=this.value;renderPrecios()" '
+     + '         style="padding:8px 12px;border:1px solid var(--vw-grey-2);border-radius:8px;min-width:240px;font-size:14px">';
+  h += '  <span style="font-size:12px;color:var(--vw-grey-3)">' + rows.length + ' modelos · precio de oferta y ganancia tal cual la planilla</span>';
+  h += '</div>';
+
+  h += '<div class="table-wrap"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:760px">';
+  h += '<thead><tr>'
+     + '<th style="text-align:left">Modelo</th>'
+     + '<th class="num">Lista</th>'
+     + '<th class="num">Dto TG</th>'
+     + '<th class="num">Precio oferta<br><small>(con FYF)</small></th>'
+     + '<th class="num">Costo rep</th>'
+     + '<th class="num">Ganancia</th>'
+     + '</tr></thead><tbody>';
+  for (const m of rows) {
+    const g = Number(m.gananciaPct) || 0;
+    const gCls = g < 0 ? 'color:#c00' : (g < 0.02 ? 'color:#cc6600' : 'color:#0a7a30');
+    h += '<tr>'
+       + '<td data-label="Modelo">' + escapeHtml(m.modelo.replace(/^VW /, '')) + '</td>'
+       + '<td class="num" data-label="Lista">' + fmtPesos(m.lista) + '</td>'
+       + '<td class="num" data-label="Dto TG">' + (Number(m.dtoTG) * 100).toFixed(0) + '%</td>'
+       + '<td class="num" data-label="Precio oferta"><b>' + fmtPesos(m.precioOferta) + '</b></td>'
+       + '<td class="num" data-label="Costo rep">' + fmtPesos(m.costoRep) + '</td>'
+       + '<td class="num" data-label="Ganancia" style="font-weight:700;' + gCls + '">' + (g * 100).toFixed(2) + '%</td>'
+       + '</tr>';
+  }
+  if (!rows.length) h += '<tr><td colspan="6" class="empty">Sin modelos para ese filtro.</td></tr>';
+  h += '</tbody></table></div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Fuente: pestaña "Actual BT" de la planilla (lectura directa). El precio de oferta = lista − dto + FYF; la ganancia ya contempla los incentivos VW, IIBB, comisión e impuesto al cheque.</div>';
+  cont.innerHTML = h;
+}
+
 // POST optimista: el front ya está pintado con el valor nuevo, esto lo persiste atrás.
 async function saveIndustriaRemote(mesKey, campo, valor) {
   if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return false;
@@ -1708,6 +1783,7 @@ function setTab(tab) {
     patentamientos: 'panelPatentamientos',
     trimestre:      'panelTrimestre',
     incentivos:     'panelIncentivos',
+    precios:        'panelPrecios',
     industria:      'panelIndustria',
     oversoft:       'panelOversoft',
   };
@@ -1723,6 +1799,7 @@ function setTab(tab) {
     else             renderTrimestre();
   }
   if (tab === 'incentivos'     && !incentivosData) loadIncentivos(false);
+  if (tab === 'precios'        && !preciosData)    loadPrecios(false);
   if (tab === 'industria') {
     // Industria depende de patentData para contar TGA patentadas
     if (!patentData) loadPatentamientos(false);
