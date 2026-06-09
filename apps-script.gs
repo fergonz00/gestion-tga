@@ -799,8 +799,10 @@ function toNumber(v) {
 // INCENTIVOS — condiciones comerciales VW por unidad
 // =======================================================================
 // Cruza BT del mes × patentamientos × stock (compras) para calcular cuánto
-// debería cobrar TGA a fábrica. La regla del "100%" (CC 90 / 0.9) se aplica
-// en el frontend (server siempre devuelve la base 90).
+// debería cobrar TGA a fábrica. El CC al "100%" sale del valor real de la col AC
+// si está cargado; si no, el frontend lo estima como CC90 / 0.9 (OJO: el
+// Performance Bonus no siempre escala ÷0,9 — hay modelos planos donde 90%=100%,
+// y cambia mes a mes según la circular; por eso conviene cargar AC con el real).
 //
 // Hojas en la espejo (las crea Fer manualmente con IMPORTRANGE):
 //   actual_bt      → IMPORTRANGE de "Actual BT"     (mes vigente)
@@ -808,8 +810,8 @@ function toNumber(v) {
 //                    apilados, con col A = mes (fecha tipo 1/4/2026 = abril 26)
 //
 // Layout (madre y espejo idem):
-//   bt_anteriores: A=mes(fecha) · B=modelo · U=CC 90 · Y=táctico · Z=whosale · AA=adic 1 · AB=adic 2
-//   actual_bt:                    B=modelo · U=CC 90 · Y=táctico · Z=whosale · AA=adic 1 · AB=adic 2
+//   bt_anteriores: A=mes(fecha) · B=modelo · U=CC 90 · Y=táctico · Z=whosale · AA=adic 1 · AB=adic 2 · AC=CC 100 (real, opcional)
+//   actual_bt:                    B=modelo · U=CC 90 · Y=táctico · Z=whosale · AA=adic 1 · AB=adic 2 · AC=CC 100 (real, opcional)
 //                                 (no tiene col A "mes" porque toda la hoja es del mes vigente)
 
 function getIncentivos(params) {
@@ -855,8 +857,9 @@ function getIncentivos(params) {
       admin:     c.admin,
       vendedor:  c.vendedor,
       fechaPat:  c.fechaPatStr || c.fechaPatIso,
-      // valores BASE (90%). El frontend aplica /0.9 al cc90 cuando toggle 100%.
+      // valores BASE (90%). El frontend usa cc100Base si existe; si no, /0.9 al cc90.
       cc90Base:    cc ? cc.cc90 : 0,
+      cc100Base:   cc ? (cc.cc100 || 0) : 0,  // Performance Bonus @100% real (0 = estimar ÷0,9)
       tactico:     cc ? cc.tactico : 0,
       adicional1:  cc ? cc.adicional1 : 0,
       adicional2:  cc ? cc.adicional2 : 0,
@@ -947,19 +950,20 @@ function _readBT(ss, mesKey) {
   const lastRow = sh.getLastRow();
   if (lastRow < 2) return { encontrado: true, nombreUsado: 'actual_bt', porModelo: {} };
 
-  // IMPORTRANGE A2:AB60 → fila 1 espejo = header "modelos"; data desde fila 2.
-  const data = sh.getRange(2, 1, lastRow - 1, 28).getValues();
+  // IMPORTRANGE A2:AC60 → fila 1 espejo = header "modelos"; data desde fila 2.
+  const data = sh.getRange(2, 1, lastRow - 1, 29).getValues();
   const porModelo = {};
   for (const r of data) {
     const modelo = String(r[1] || '').trim();  // B
     if (!modelo) continue;
     porModelo[_normModeloKey(modelo)] = {
       modelo:      modelo,
-      cc90:        toNumber(r[20]),  // U
+      cc90:        toNumber(r[20]),  // U  Performance Bonus @90%
       tactico:     toNumber(r[24]),  // Y
       whosale:     toNumber(r[25]),  // Z
       adicional1:  toNumber(r[26]),  // AA
       adicional2:  toNumber(r[27]),  // AB
+      cc100:       toNumber(r[28]),  // AC  Performance Bonus @100% real (0 si no cargado → frontend estima ÷0,9)
     };
   }
   return { encontrado: true, nombreUsado: 'actual_bt', porModelo };
@@ -971,7 +975,7 @@ function _readBT(ss, mesKey) {
 function _readBTAnteriores(sh, mesKey) {
   const lastRow = sh.getLastRow();
   if (lastRow < 1) return { porModelo: {} };
-  const data = sh.getRange(1, 1, lastRow, 28).getValues();
+  const data = sh.getRange(1, 1, lastRow, 29).getValues();
   const porModelo = {};
   for (const r of data) {
     const mesCelda = _parseFecha(r[0], '');
@@ -981,11 +985,12 @@ function _readBTAnteriores(sh, mesKey) {
     if (!modelo) continue;
     porModelo[_normModeloKey(modelo)] = {
       modelo:      modelo,
-      cc90:        toNumber(r[20]),  // U
+      cc90:        toNumber(r[20]),  // U  Performance Bonus @90%
       tactico:     toNumber(r[24]),  // Y
       whosale:     toNumber(r[25]),  // Z
       adicional1:  toNumber(r[26]),  // AA
       adicional2:  toNumber(r[27]),  // AB
+      cc100:       toNumber(r[28]),  // AC  Performance Bonus @100% real (0 si no cargado → frontend estima ÷0,9)
     };
   }
   return { porModelo };

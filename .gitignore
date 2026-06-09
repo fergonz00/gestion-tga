@@ -1,0 +1,10 @@
+# Este repo se publica como GitHub Pages (gestion.titogonzalez.online).
+# Los PDFs NO deben publicarse: circulares VW internas y, sobre todo, las
+# notas de crédito (datos financieros). Se mantienen solo en local.
+*.pdf
+/5- Nc Incentivos/
+Circulares/entrada/
+Circulares/procesados/
+
+# scratch
+.__check.js

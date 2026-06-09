@@ -3704,12 +3704,6 @@ function setMesInc(mesKey) {
   loadIncentivos(true);
 }
 function _objetivoIncMes(mesKey) { return objetivoIncen[mesKey] || ''; }
-function _factorCC90(mesKey) {
-  const o = _objetivoIncMes(mesKey);
-  if (o === '100')     return 1 / 0.9;
-  if (o === 'ninguno') return 0;
-  return 1;  // '90' o no marcado → cobra base
-}
 function setObjetivoIncMes(val) {
   const mes = (incentivosData && incentivosData.mesKey) || mesSelInc;
   if (!mes) return;
@@ -3740,13 +3734,27 @@ function renderIncentivos() {
   const compUnits = incentivosData.porUnidadComprada || [];
 
   // Objetivo CC 90 alcanzado en este mes (persistido).
-  // factor = 0 (ninguno) · 1 (90%) · 1/0.9 (100%) · default 1 si no marcado.
+  // ninguno → 0 · 90/no marcado → base · 100 → cc100 real (o base/0.9 si no está).
   const mesKeyInc      = incentivosData.mesKey;
   const objetivoMarc   = _objetivoIncMes(mesKeyInc);
-  const factorCC90     = _factorCC90(mesKeyInc);
   const isAl100        = objetivoMarc === '100';
-  const sufijoCC90     = isAl100 ? ' (100%)' : (objetivoMarc === 'ninguno' ? ' (sin objetivo)' : '');
-  const ajuste = (u) => (Number(u.cc90Base) || 0) * factorCC90;
+  // CC al 100%: el Performance Bonus NO siempre escala ÷0,9 — hay modelos "planos"
+  // (90% = 100%) y cambian mes a mes según la circular. Por eso, si la BT trae el
+  // valor real del 100% (u.cc100Base) lo usamos exacto; si no, caemos a la
+  // estimación ÷0,9 (marcada como tal en el sufijo).
+  const usaCC100Real   = isAl100 && (incentivosData.porUnidadPatentada || []).some(u => Number(u.cc100Base) > 0);
+  const sufijoCC90     = isAl100
+        ? (usaCC100Real ? ' (100%)' : ' (100% est. ÷0,9)')
+        : (objetivoMarc === 'ninguno' ? ' (sin objetivo)' : '');
+  const ajuste = (u) => {
+    if (objetivoMarc === 'ninguno') return 0;
+    const base = Number(u.cc90Base) || 0;
+    if (isAl100) {
+      const real = Number(u.cc100Base) || 0;   // valor real del 100% si la BT lo trae
+      return real > 0 ? real : base / 0.9;      // si no, estimación ÷0,9
+    }
+    return base;  // '90' o no marcado → base
+  };
   const _hoy           = new Date();
   const mesActualSys   = _hoy.getFullYear() + '-' + String(_hoy.getMonth() + 1).padStart(2, '0');
   const esMesVencido   = mesKeyInc && mesKeyInc < mesActualSys;
@@ -3784,7 +3792,7 @@ function renderIncentivos() {
         + '      <option value=""'        + (objetivoMarc === ''        ? ' selected' : '') + '>— sin marcar</option>'
         + '      <option value="ninguno"' + (objetivoMarc === 'ninguno' ? ' selected' : '') + '>Ninguno (no cobra)</option>'
         + '      <option value="90"'      + (objetivoMarc === '90'      ? ' selected' : '') + '>90% (cobra base)</option>'
-        + '      <option value="100"'     + (objetivoMarc === '100'     ? ' selected' : '') + '>100% (cobra base/0.9)</option>'
+        + '      <option value="100"'     + (objetivoMarc === '100'     ? ' selected' : '') + '>100% (cobra el 100% real, o estimado ÷0,9)</option>'
         + '    </select>'
         + '  </label>';
   html += '  <label class="toggle-resumida">'
@@ -4265,7 +4273,7 @@ function _matchearPago(p) {
   const tipos = [
     { tipo: 'whosale',    label: 'Whosale',     esperado: cc.whosale    },
     { tipo: 'cc90',       label: 'CC 90%',      esperado: cc.cc90       },
-    { tipo: 'cc90',       label: 'CC 100% (90/0.9)', esperado: cc.cc90 ? cc.cc90 / 0.9 : 0, esVariante: true },
+    { tipo: 'cc90',       label: (cc.cc100 > 0 ? 'CC 100%' : 'CC 100% (est. ÷0,9)'), esperado: cc.cc100 > 0 ? cc.cc100 : (cc.cc90 ? cc.cc90 / 0.9 : 0), esVariante: true },
     { tipo: 'tactico',    label: 'Táctico',     esperado: cc.tactico    },
     { tipo: 'adicional1', label: 'Adicional 1', esperado: cc.adicional1 },
     { tipo: 'adicional2', label: 'Adicional 2', esperado: cc.adicional2 },
@@ -4475,7 +4483,8 @@ function setObjetivoPat(val) {
 // =======================================================================
 // Esquema oficial VW de recupero por trimestre calendario.
 //   Criterio A: alcance trimestral >= 100%
-//   Criterio B: bimestre (mes1+mes2) >= 95% Y cada uno >= 90%
+//   Criterio B: bimestre (mes1+mes2) >= 80%  (Circular N°69 Fe de Erratas 04/06/26;
+//               antes era >=95% y cada mes >=90% — relajado a 80% sin piso mensual)
 //   Criterio C: mes 3 >= 100%
 // Si A+B+C se cumplen al cierre del mes 3 → meses 1 y 2 se "recuperan" al nivel
 // trimestral (no necesariamente al 100%, al % real del trimestre).
@@ -4570,13 +4579,12 @@ function _evalCriteriosTrimestre(rt) {
     A = rt.alcTri >= 1.0 ? 'ok' : 'fail';
   }
 
-  // B: bimestre + cada mes >= 90%. Se puede afirmar al cierre del mes 2.
+  // B: bimestre (mes1+mes2) >= 80%. Se puede afirmar al cierre del mes 2.
+  // Regla vigente: Circular N°69 Fe de Erratas (04/06/26) relajó el criterio a
+  // bimestre >= 80% SIN piso individual por mes (antes era >=95% y cada uno >=90%).
   let B = 'pending';
   if (rt.meses[0].obj > 0 && rt.meses[1].obj > 0 && m2Estado === 'past') {
-    const bimOk = rt.alcBi >= 0.95;
-    const m1Ok  = rt.meses[0].alc >= 0.90;
-    const m2Ok  = rt.meses[1].alc >= 0.90;
-    B = (bimOk && m1Ok && m2Ok) ? 'ok' : 'fail';
+    B = rt.alcBi >= 0.80 ? 'ok' : 'fail';
   }
 
   // C: mes 3 >= 100%. Solo al cierre del mes 3.
@@ -4604,15 +4612,16 @@ function _minimoPatRecupero(mesKey) {
   const p1 = _patentadasMes(meses[0]);
   const p2 = _patentadasMes(meses[1]);
 
+  // Regla vigente (Fe de Erratas 04/06/26): bimestre >= 80%, sin piso individual.
   if (idx === 0) {
-    // Mes 1: piso = 90% del propio (criterio B individual).
-    return Math.ceil(o[0] * 0.9);
+    // Mes 1: lo mínimo para que el bimestre aún pueda llegar a 80% si el mes 2
+    // alcanza su objetivo. Sin piso propio del 90%.
+    return Math.max(0, Math.ceil((o[0] + o[1]) * 0.80) - o[1]);
   }
   if (idx === 1) {
-    // Mes 2: max(piso propio 90%, mínimo bimestral 95% - p1).
-    const minPropio = Math.ceil(o[1] * 0.9);
-    const minBi     = Math.max(0, Math.ceil((o[0] + o[1]) * 0.95) - p1);
-    return Math.max(minPropio, minBi);
+    // Mes 2: lo que falte para que el bimestre llegue al 80% dado lo ya patentado
+    // en el mes 1.
+    return Math.max(0, Math.ceil((o[0] + o[1]) * 0.80) - p1);
   }
   // Mes 3: max(100% propio para criterio C, faltante trimestral para criterio A).
   const minC = Math.ceil(o[2] * 1.0);
@@ -4741,13 +4750,13 @@ function renderTrimestre() {
   // Totales bimestral y trimestral
   const alcBiPct = rt.alcBi != null ? (rt.alcBi * 100) : null;
   const alcTriPct = rt.alcTri != null ? (rt.alcTri * 100) : null;
-  const biCls  = alcBiPct == null ? '' : (alcBiPct >= 95 ? 'good' : (alcBiPct >= 90 ? 'warn' : 'bad'));
+  const biCls  = alcBiPct == null ? '' : (alcBiPct >= 80 ? 'good' : (alcBiPct >= 75 ? 'warn' : 'bad'));
   const triCls = alcTriPct == null ? '' : (alcTriPct >= 100 ? 'good' : (alcTriPct >= 95 ? 'warn' : 'bad'));
   html += '<div class="q-totales">';
   html += '  <div class="q-tot ' + biCls + '">'
        +  '    <div class="lab">Bimestre (Mes 1 + Mes 2)</div>'
        +  '    <div class="val">' + (alcBiPct != null ? alcBiPct.toLocaleString('es-AR', { maximumFractionDigits: 1 }) + '%' : '—') + '</div>'
-       +  '    <div class="sub">' + rt.sumPatBi + ' / ' + rt.sumObjBi + ' patentadas · piso 95%</div>'
+       +  '    <div class="sub">' + rt.sumPatBi + ' / ' + rt.sumObjBi + ' patentadas · piso 80%</div>'
        +  '  </div>';
   html += '  <div class="q-tot ' + triCls + '">'
        +  '    <div class="lab">Trimestre completo</div>'
@@ -4761,7 +4770,7 @@ function renderTrimestre() {
   html += '  <h3>Criterios de recupero VW</h3>';
   const critRows = [
     { id: 'A', state: cri.A, desc: 'Alcance del <b>trimestre</b> ≥ 100%' },
-    { id: 'B', state: cri.B, desc: 'Alcance del <b>bimestre</b> ≥ 95% <b>y</b> cada uno de los meses 1 y 2 ≥ 90%' },
+    { id: 'B', state: cri.B, desc: 'Alcance del <b>bimestre</b> (mes 1 + mes 2) ≥ 80%' },
     { id: 'C', state: cri.C, desc: 'Alcance del <b>mes 3</b> ≥ 100%' },
   ];
   for (const r of critRows) {
@@ -4907,13 +4916,11 @@ function renderPatentamientos() {
   //   - Pendientes de patentar = cargadas - patentadas (cargadas con fecha pendiente)
   //   - Faltan al objetivo    = objetivo - cargadas (carpetas que falta CARGAR)
   const faltanCargar = objetivo > 0 ? Math.max(0, objetivo - total) : 0;
-  const objetivo90   = objetivo > 0 ? Math.ceil(objetivo * 0.9) : 0;
-  const faltan90     = objetivo > 0 ? Math.max(0, objetivo90 - total) : 0;
   // Objetivo efectivo del mes considerando el sobrante/déficit del mes 1.
-  // Compensación SOLO se aplica al mes 2 del trimestre (criterio B bimestral
-  // de VW). El mes 3 no compensa: tiene piso propio del 100% (criterio C).
+  // Compensación SOLO se aplica al mes 2 del trimestre: la regla vigente
+  // (bimestre >= 80%, sin piso individual por mes) permite que el mes 2 compense
+  // al mes 1. El mes 3 no compensa: tiene piso propio del 100% (criterio C).
   let objEfect = objetivo;       // por defecto = objetivo propio
-  let obj90Efect = objetivo90;
   let sobranteAnt = 0;           // +N sobró del mes 1 / -N faltó
   let labelAnt = '';
   if (objetivo > 0 && _mesEstado(mesSelPat) === 'current') {
@@ -4928,14 +4935,12 @@ function renderPatentamientos() {
         if (o1 > 0) {
           sobranteAnt = p1 - o1;
           objEfect = Math.max(0, (o1 + objetivo) - p1);
-          obj90Efect = Math.ceil(objEfect * 0.9);
           labelAnt = _mesLabelLargo(mk1);
         }
       }
     }
   }
   const faltanCargarEfect = Math.max(0, objEfect - total);
-  const faltan90Efect     = Math.max(0, obj90Efect - total);
 
   html += '<div class="cards">';
   html += kpi('Carpetas del mes', total, '', total ? 'good' : '');
@@ -4956,12 +4961,9 @@ function renderPatentamientos() {
       ? 'incluye +' + sobranteAnt + ' de ' + labelAnt
       : (sobranteAnt < 0 ? 'incluye ' + sobranteAnt + ' (déficit ' + labelAnt + ')' : '');
 
-    // 90% NO compensa: el criterio B exige que CADA mes alcance ≥90% por su
-    // cuenta para habilitar el bimestral. Por eso el KPI siempre va contra el
-    // 90% propio del mes, aunque haya sobrante del mes 1.
-    const sub90 = 'p/ llegar a ' + objetivo90 + ' (90% de ' + objetivo + ')';
-    html += kpi('Faltan p/ 90%', faltan90, sub90, faltan90 > 0 ? 'warn' : 'good');
-
+    // Nota: ya no existe piso individual del 90% por mes (Fe de Erratas 04/06/26).
+    // El seguimiento del piso de recupero por mes vive en la solapa de recupero
+    // trimestral (criterios A/B/C + mínimo por mes). Acá solo el objetivo de carga.
     const subObj = compTxt
       ? 'p/ llegar a obj efect ' + objEfect + ' · ' + compTxt
       : 'carpetas a cargar (obj ' + objetivo + ')';
