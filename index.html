@@ -267,12 +267,27 @@ h2 { font-size: 22px; font-weight: 700; color: var(--vw-blue); margin-bottom: 4p
 }
 .chip:hover { border-color: var(--vw-grey-3); }
 .chip.active { background: var(--vw-blue); color: white; border-color: var(--vw-blue); }
-.ovs-sel {
-  padding: 6px 10px; background: white; color: var(--vw-grey-4);
-  border: 1px solid var(--vw-grey-2); border-radius: 8px;
-  font-size: 12px; font-weight: 500; max-width: 260px;
+.ovs-multi { position: relative; display: inline-block; }
+.ovs-multi-btn {
+  padding: 6px 12px; background: white; color: var(--vw-grey-4);
+  border: 1px solid var(--vw-grey-2); border-radius: 100px;
+  font-size: 12px; font-weight: 500; cursor: pointer;
 }
-.ovs-sel:focus { outline: none; border-color: var(--vw-blue); }
+.ovs-multi-btn:hover { border-color: var(--vw-grey-3); }
+.ovs-multi-btn.has { background: var(--vw-blue); color: white; border-color: var(--vw-blue); }
+.ovs-multi-panel {
+  position: absolute; z-index: 40; top: calc(100% + 4px); left: 0;
+  min-width: 230px; max-height: 300px; overflow: auto;
+  background: white; border: 1px solid var(--vw-grey-2); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.14); padding: 6px;
+}
+.ovs-multi-opt {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  font-size: 12px; color: var(--vw-grey-4); border-radius: 6px; cursor: pointer;
+}
+.ovs-multi-opt:hover { background: #f3f4f6; }
+.ovs-multi-opt input { cursor: pointer; }
+.ovs-multi-empty { padding: 8px; font-size: 12px; color: var(--vw-grey-3); }
 
 .search {
   display: flex; align-items: center; gap: 6px;
@@ -1340,8 +1355,9 @@ let stockData = null;          // { unidades, updatedAt }
 // saldos (paga/impaga + vencimiento). { unidades, updatedAt, saldosUpdatedAt }
 let oversoftStockData = null;
 let ovsStockFiltro = 'todas';  // 'todas' | 'fisico' | 'arecibir' | 'impagas'
-let ovsStockUnidad = '';       // '' = todas las unidades (nombre comercial exacto)
-let ovsStockMes    = '';       // '' = todos los meses ('YYYY-MM' de la fecha de compra)
+let ovsStockUnidades = [];     // [] = todas (nombres comerciales tildados)
+let ovsStockMeses    = [];     // [] = todos ('YYYY-MM' de la fecha de compra tildados)
+let ovsDropOpen      = '';     // qué menú de checkboxes está abierto: '' | 'unidad' | 'mes'
 
 // Calculadora (sección aparte, no inline en la tabla)
 let calcOpen = false;          // si la sección de la calculadora está visible
@@ -2624,8 +2640,37 @@ function _fmtFechaDMY(iso) {
   return m[3] + '/' + m[2] + '/' + m[1];
 }
 function setOvsStockFiltro(f) { ovsStockFiltro = f; renderOversoftStock(); }
-function setOvsStockUnidad(v) { ovsStockUnidad = v; renderOversoftStock(); }
-function setOvsStockMes(v)    { ovsStockMes = v;    renderOversoftStock(); }
+function toggleOvsDrop(which) { ovsDropOpen = (ovsDropOpen === which) ? '' : which; renderOversoftStock(); }
+function _ovsToggleIn(arr, v) { const i = arr.indexOf(v); if (i >= 0) arr.splice(i, 1); else arr.push(v); renderOversoftStock(); }
+function toggleOvsUnidad(v) { _ovsToggleIn(ovsStockUnidades, v); }
+function toggleOvsMes(v)    { _ovsToggleIn(ovsStockMeses, v); }
+function clearOvsFiltros()  { ovsStockFiltro = 'todas'; ovsStockUnidades = []; ovsStockMeses = []; ovsDropOpen = ''; renderOversoftStock(); }
+const _jsEsc = s => String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+// Menú desplegable de checkboxes (multi-selección). `selected` es el array de
+// estado; `fnName` es el nombre de la función toggle que recibe el valor.
+function _ovsMulti(which, label, options, selected, fnName) {
+  const open = ovsDropOpen === which;
+  const n = selected.length;
+  let h = '<div class="ovs-multi">';
+  h += '<button class="ovs-multi-btn' + (n ? ' has' : '') + '" onclick="toggleOvsDrop(\'' + which + '\')">'
+     + escapeHtml(label) + (n ? ' (' + n + ')' : '') + ' <span style="opacity:.55">▾</span></button>';
+  if (open) {
+    h += '<div class="ovs-multi-panel">';
+    if (!options.length) {
+      h += '<div class="ovs-multi-empty">Sin opciones</div>';
+    } else {
+      options.forEach(o => {
+        const checked = selected.indexOf(o.v) >= 0;
+        h += '<label class="ovs-multi-opt"><input type="checkbox" ' + (checked ? 'checked' : '')
+           + ' onchange="' + fnName + '(\'' + _jsEsc(o.v) + '\')"> ' + escapeHtml(o.l) + '</label>';
+      });
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+  return h;
+}
 
 async function _fetchJson(tipo, forzar) {
   const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN)
@@ -2727,36 +2772,31 @@ function renderOversoftStock() {
           + '<span>No se pudo leer saldos (paga/impaga + vencimiento). Se muestra el pago de la planilla cuando existe. Detalle: ' + escapeHtml(oversoftStockData.saldosError) + '</span></div>';
   }
 
-  // Opciones de los desplegables (de todo el set, no del filtrado).
-  const unidadesDistintas = [...new Set(todas.map(u => u.modelo).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
-  const mesesDistintos = [...new Set(todas.map(u => u.fechaCompraIso ? u.fechaCompraIso.slice(0, 7) : '').filter(Boolean))].sort().reverse();
-
-  let selUnidad = '<select class="ovs-sel" onchange="setOvsStockUnidad(this.value)"><option value="">Todas las unidades</option>';
-  unidadesDistintas.forEach(n => { selUnidad += '<option value="' + escapeHtml(n) + '"' + (ovsStockUnidad === n ? ' selected' : '') + '>' + escapeHtml(n) + '</option>'; });
-  selUnidad += '</select>';
-
-  let selMes = '<select class="ovs-sel" onchange="setOvsStockMes(this.value)"><option value="">Todos los meses de compra</option>';
-  mesesDistintos.forEach(mk => { selMes += '<option value="' + mk + '"' + (ovsStockMes === mk ? ' selected' : '') + '>' + _mesLabel(mk) + '</option>'; });
-  selMes += '</select>';
+  // Opciones de los menús (de todo el set, no del filtrado).
+  const optsUnidad = [...new Set(todas.map(u => u.modelo).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'es')).map(n => ({ v: n, l: n }));
+  const optsMes = [...new Set(todas.map(u => u.fechaCompraIso ? u.fechaCompraIso.slice(0, 7) : '').filter(Boolean))]
+    .sort().reverse().map(mk => ({ v: mk, l: _mesLabel(mk) }));
 
   // Filtros
   const chip = (v, l) => '<button class="chip' + (ovsStockFiltro === v ? ' active' : '') + '" onclick="setOvsStockFiltro(\'' + v + '\')">' + l + '</button>';
+  const hayFiltro = ovsStockUnidades.length || ovsStockMeses.length || ovsStockFiltro !== 'todas';
   html += '<div class="filter-row" style="gap:6px;flex-wrap:wrap;align-items:center">'
         + chip('todas', 'Todas (' + todas.length + ')')
         + chip('fisico', 'Físico (' + fisico.length + ')')
         + chip('arecibir', 'A recibir (' + arecibir.length + ')')
         + chip('impagas', 'Impagas (' + impagas.length + ')')
-        + selUnidad + selMes
-        + ((ovsStockUnidad || ovsStockMes || ovsStockFiltro !== 'todas')
-            ? '<button class="chip" onclick="setOvsStockFiltro(\'todas\');setOvsStockUnidad(\'\');setOvsStockMes(\'\')">✕ Limpiar</button>' : '')
+        + _ovsMulti('unidad', 'Unidades', optsUnidad, ovsStockUnidades, 'toggleOvsUnidad')
+        + _ovsMulti('mes', 'Meses de compra', optsMes, ovsStockMeses, 'toggleOvsMes')
+        + (hayFiltro ? '<button class="chip" onclick="clearOvsFiltros()">✕ Limpiar</button>' : '')
         + '</div>';
 
   let lista = todas;
   if (ovsStockFiltro === 'fisico')   lista = lista.filter(u => u.tipo === 'fisico');
   if (ovsStockFiltro === 'arecibir') lista = lista.filter(u => u.tipo === 'arecibir');
   if (ovsStockFiltro === 'impagas')  lista = lista.filter(u => u.pago === 'impaga');
-  if (ovsStockUnidad) lista = lista.filter(u => u.modelo === ovsStockUnidad);
-  if (ovsStockMes)    lista = lista.filter(u => u.fechaCompraIso && u.fechaCompraIso.slice(0, 7) === ovsStockMes);
+  if (ovsStockUnidades.length) lista = lista.filter(u => ovsStockUnidades.indexOf(u.modelo) >= 0);
+  if (ovsStockMeses.length)    lista = lista.filter(u => u.fechaCompraIso && ovsStockMeses.indexOf(u.fechaCompraIso.slice(0, 7)) >= 0);
 
   // Orden: físico por antigüedad desc (más viejo arriba); a recibir al final.
   lista = lista.slice().sort((a, b) => {
