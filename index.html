@@ -1605,7 +1605,7 @@ function renderPrecios() {
     const key = _precioKey(m.modelo);
     const abierto = preciosExpand.has(key);
     const g = Number(m.gananciaPct) || 0;
-    h += '<tr style="cursor:pointer" onclick="togglePrecioRow(\'' + key + '\')">'
+    h += '<tr style="cursor:pointer" onclick="togglePrecioRow(\'' + key + '\', event)">'
        + '<td data-label="Modelo">' + escapeHtml(m.modelo.replace(/^VW /, '')) + '</td>'
        + '<td class="num" data-label="Lista">' + fmtPesos(m.lista) + '</td>'
        + '<td class="num" data-label="Dto VW">' + (Number(m.dtoVw) * 100).toFixed(1) + '%</td>'
@@ -1633,7 +1633,7 @@ function _precioDetalle(m, key) {
   const li = (lbl, val, extra) => '<div style="display:flex;justify-content:space-between;gap:10px;padding:2px 0' + (extra||'') + '"><span style="color:var(--vw-grey-3)">' + lbl + '</span><span style="font-variant-numeric:tabular-nums">' + val + '</span></div>';
   const dtoActual = Number(m.dtoTG) || 0;
 
-  let h = '<div style="display:flex;flex-wrap:wrap;gap:18px;padding:14px 16px">';
+  let h = '<div class="precio-detalle" style="display:flex;flex-wrap:wrap;gap:18px;padding:14px 16px">';
 
   // --- Incentivos VW ---
   h += '<div style="flex:1;min-width:230px">';
@@ -1682,9 +1682,23 @@ function _precioDetalle(m, key) {
   return h;
 }
 
-function togglePrecioRow(key) {
+function togglePrecioRow(key, ev) {
+  if (ev) ev.stopPropagation();   // que el click en la fila no dispare el cierre por click-afuera
   if (preciosExpand.has(key)) preciosExpand.delete(key); else preciosExpand.add(key);
   renderPrecios();
+}
+
+// Click afuera del cuadro desplegado → lo minimiza. Si el click no cae dentro de
+// un .precio-detalle (ni en una fila, que ya frena la propagación), cierra todo.
+function _preciosClickAfuera(e) {
+  if (!preciosExpand.size) return;
+  if (e.target.closest && e.target.closest('.precio-detalle')) return;  // click dentro del cuadro: no cerrar
+  preciosExpand.clear();
+  renderPrecios();
+}
+if (!window._preciosOutsideBound) {
+  document.addEventListener('click', _preciosClickAfuera);
+  window._preciosOutsideBound = true;
 }
 
 // Recalcula en vivo la ganancia para un dto dado y pinta el resultado.
