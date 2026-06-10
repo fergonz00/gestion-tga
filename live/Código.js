@@ -237,10 +237,12 @@ function _supaGet(path) {
   return JSON.parse(res.getContentText());
 }
 
-// Stock real por código desde Oversoft (unidades NO entregadas). El código del
+// Stock real por código desde Oversoft, MISMA definición que la solapa "Stock
+// Oversoft": disponible para vender = físico libre + a recibir, SIN PV y SIN
+// asignar (entregada=false & asignada=false & preventa vacío). El código del
 // modelo en Oversoft es el 1er token de unidades.modelo (ej "AGDA43 MY26" → AGDA43).
 function _oversoftStockPorCodigo() {
-  const res = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo&entregada=eq.False&limit=3000',
+  const res = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo&entregada=eq.false&asignada=eq.false&preventa=eq.&limit=3000',
     { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true });
   if (res.getResponseCode() >= 300) return {};
   const out = {};
