@@ -248,14 +248,16 @@ function _ntrim(s) {
   return s.replace(/[^a-z0-9]/g, '');
 }
 
-// Stock por TRIM EXACTO desde Oversoft. Definición: disponible para vender =
-// físico libre + a recibir, SIN PV y SIN asignar. Clave: los 6 dígitos del
-// código NO distinguen High/Outfit, Highline/Bitono, Extreme/Hero/Black Style
-// (comparten código pero tienen distinto precio). La descripción de Oversoft
-// (por código COMPLETO, ej "CH24K3 PAR MY26" → Nivus Outfit) sí los distingue,
-// así que contamos por descripción y la matcheamos al catálogo por nombre.
-// Devuelve { stockPorTrim: {nombre_corto: n}, total, sinMatch }.
-function _oversoftStockPorTrim(catByNorm) {
+// Stock Y VENTAS por TRIM EXACTO desde Oversoft (todo genuino, sin la planilla).
+// Clave: los 6 dígitos del código NO distinguen High/Outfit, Highline/Bitono,
+// Extreme/Hero/Black Style (comparten código, distinto precio). La descripción
+// de Oversoft (por código COMPLETO, ej "CH24K3 PAR MY26" → Nivus Outfit) sí los
+// distingue → contamos por descripción y matcheamos al catálogo por nombre.
+//   STOCK  = disponible para vender: físico libre + a recibir, SIN PV, SIN asignar.
+//   VENTAS = preventas por FECHA de creación, no anuladas, 0km (tipopv 'O', sin
+//            usados). Verificado: coincide al palo con la hoja PVs.
+// Devuelve { stockPorTrim:{nc:n}, stockTotal, ventasPorTrim:{nc:{mes:n}} }.
+function _oversoftMotorData(catByNorm) {
   const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
   // 1) descripción por código completo (paginado)
   const desc = {};
@@ -268,18 +270,29 @@ function _oversoftStockPorTrim(catByNorm) {
     if (ch.length < 1000) break;
     off += 1000;
   }
-  // 2) unidades en stock → matchear al trim del catálogo
+  const ncDe = (codFull) => { const d = desc[String(codFull || '').trim()]; return d ? (catByNorm[_ntrim(d)] || null) : null; };
+
+  // 2) STOCK
   const res2 = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo&entregada=eq.false&asignada=eq.false&preventa=eq.&limit=3000', h);
   const us = (res2.getResponseCode() < 300) ? JSON.parse(res2.getContentText()) : [];
-  const stockPorTrim = {}; let total = 0, sinMatch = 0;
-  for (const u of us) {
-    total++;
-    const d = desc[String(u.modelo || '').trim()];
-    const nc = d ? catByNorm[_ntrim(d)] : null;
-    if (nc) stockPorTrim[nc] = (stockPorTrim[nc] || 0) + 1;
-    else sinMatch++;
+  const stockPorTrim = {}; let stockTotal = 0;
+  for (const u of us) { stockTotal++; const nc = ncDe(u.modelo); if (nc) stockPorTrim[nc] = (stockPorTrim[nc] || 0) + 1; }
+
+  // 3) VENTAS (preventas no anuladas, 0km, por fecha) — últimos ~6 meses
+  const hoy = new Date();
+  const d6 = new Date(hoy.getFullYear(), hoy.getMonth() - 5, 1);
+  const desdeStr = d6.getFullYear() + '-' + String(d6.getMonth() + 1).padStart(2, '0') + '-01';
+  const res3 = UrlFetchApp.fetch(OVERSOFT_URL + '/preventas?select=modelo,fecha&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + desdeStr + '&limit=5000', h);
+  const pvs = (res3.getResponseCode() < 300) ? JSON.parse(res3.getContentText()) : [];
+  const ventasPorTrim = {};
+  for (const pv of pvs) {
+    const nc = ncDe(pv.modelo);
+    if (!nc || !pv.fecha) continue;
+    const mk = String(pv.fecha).slice(0, 7);
+    if (!ventasPorTrim[nc]) ventasPorTrim[nc] = {};
+    ventasPorTrim[nc][mk] = (ventasPorTrim[nc][mk] || 0) + 1;
   }
-  return { stockPorTrim: stockPorTrim, total: total, sinMatch: sinMatch };
+  return { stockPorTrim: stockPorTrim, stockTotal: stockTotal, ventasPorTrim: ventasPorTrim };
 }
 
 function getBaratitoMotor() {
@@ -311,24 +324,13 @@ function getBaratitoMotor() {
     if (c.nombre_corto) catByNorm[_ntrim(c.nombre_corto)] = c.nombre_corto;
     if (c.nombre_bt)    catByNorm[_ntrim(c.nombre_bt)]    = c.nombre_corto;
   }
-  let stockPorTrim = {}, stockTotalOversoft = 0;
+  // Stock Y ventas, ambos genuinos desde Oversoft (por trim exacto).
+  let stockPorTrim = {}, stockTotalOversoft = 0, ventasNc = {};
   try {
-    const st = _oversoftStockPorTrim(catByNorm);
-    stockPorTrim = st.stockPorTrim;
-    stockTotalOversoft = st.total;
-  } catch (e) {}
-
-  // 6) ventas por mes (PVs) → mapeadas a nombre_corto vía catálogo (nombre_bt)
-  const ventasNc = {};
-  try {
-    const bt2nc = {};
-    for (const c of cat) if (c.nombre_bt) bt2nc[_normModeloKey(c.nombre_bt)] = c.nombre_corto;
-    for (const venta of (getVentas().ventas || [])) {
-      const nc = bt2nc[_normModeloKey(venta.modelo)];
-      if (!nc || !venta.mesKey) continue;
-      if (!ventasNc[nc]) ventasNc[nc] = {};
-      ventasNc[nc][venta.mesKey] = (ventasNc[nc][venta.mesKey] || 0) + 1;
-    }
+    const od = _oversoftMotorData(catByNorm);
+    stockPorTrim = od.stockPorTrim;
+    stockTotalOversoft = od.stockTotal;
+    ventasNc = od.ventasPorTrim;
   } catch (e) {}
 
   const out = [];
