@@ -117,11 +117,26 @@ function getMadreSheet(params) {
 
 // Espejo de los precios calculados en "Actual BT" de la madre. Devuelve, por
 // modelo, el precio de oferta (AH) y la ganancia (AO) tal cual los calcula Fer,
-// más el desglose (lista, dto, costo, incentivos). NO recalcula nada: es la
-// salida real de la planilla, así no puede diferir. Cols 0-based de "Actual BT":
-//   B=1 modelo · C=2 lista · D=3 dtoTG · U=20 cc90 · V=21 cc_c/iva · Y=24 táctico
-//   Z=25 whosale · AA=26 adic1 · AB=27 adic2 · X=23 cupo · AL=37 costoRep
+// más TODO el desglose para la solapa "Baratito": dto vw, stock, vendidos,
+// prom gcia, incentivos, costos (IIBB/comisión/cheque) y los insumos del
+// SIMULADOR de dto TG. NO recalcula la salida (la espejo no puede diferir);
+// los costos/simulador se derivan replicando las fórmulas exactas del Sheet
+// (verificadas: reproducen AO al peso). Cols 0-based de "Actual BT":
+//   B=1 modelo · C=2 lista · D=3 dtoTG · E=4 dto vw · F=5 stock ini · G=6 vendidos
+//   H=7 stock · M=12 vendidos 60d · N=13 prom gcia · U=20 cc90 · V=21 cc_c/iva
+//   X=23 cupo · Y=24 táctico · Z=25 whosale · AA=26 adic1 · AB=27 adic2
+//   AC=28 "otros" (ratio de incentivos s/lista, lo usa AM) · AL=37 costoRep
 //   AH=33 precioOferta(con fyf) · AM=38 gcia s/lista · AN=39 gcia neta $ · AO=40 gcia/lista
+//
+// Fórmulas del Sheet (ventaNeta = lista*(1-dtoTG)):
+//   AH = ventaNeta + FYF(1.110.000)
+//   AM = (ventaNeta - costoRep + cc90Iva + otros*lista) / lista
+//   AN = AM*lista - 0,0135*(ventaNeta/1,21) - 0,014*(ventaNeta/1,21) - 0,0085*ventaNeta
+//   AO = AN / lista        (IIBB 1,35% y comisión 1,40% sobre neto de IVA; cheque 0,85% s/ventaNeta)
+const PRECIOS_FYF      = 1110000;   // flete y formularios, sumado en AH
+const PRECIOS_IIBB     = 0.0135;    // 1,35% sobre ventaNeta/1,21
+const PRECIOS_COMISION = 0.014;     // 1,40% sobre ventaNeta/1,21
+const PRECIOS_CHEQUE   = 0.0085;    // 0,85% sobre ventaNeta (con IVA)
 function getPreciosActualBT() {
   const ss = SpreadsheetApp.openById(MADRE_ID);
   const sh = ss.getSheetByName('Actual BT');
@@ -136,25 +151,53 @@ function getPreciosActualBT() {
     if (!/^VW\s/i.test(modelo)) continue;        // solo modelos VW (descarta filas basura)
     const lista = n(v[r][2]);
     if (lista <= 0) continue;
+    const dtoTG    = n(v[r][3]);
+    const costoRep = n(v[r][37]);
+    const cc90Iva  = n(v[r][21]);
+    const otros    = n(v[r][28]);                // AC — ratio de incentivos s/lista
+    const ventaNeta = lista * (1 - dtoTG);
+    // Costos que descuenta AN (en $), para mostrarlos desglosados
+    const iibb     = PRECIOS_IIBB    * (ventaNeta / 1.21);
+    const comision = PRECIOS_COMISION * (ventaNeta / 1.21);
+    const cheque   = PRECIOS_CHEQUE  * ventaNeta;
     out.push({
       modelo:        modelo,
       lista:         lista,
-      dtoTG:         n(v[r][3]),                 // % (ej 0.33)
+      dtoTG:         dtoTG,                       // % (ej 0.33)
+      dtoVw:         n(v[r][4]),                  // E — descuento VW
       precioOferta:  n(v[r][33]),                // AH — con fyf, lo que pasa Fer
-      costoRep:      n(v[r][37]),                // AL
+      costoRep:      costoRep,                    // AL
       gananciaPct:   n(v[r][40]),                // AO — gcia / precio de lista
       gananciaPesos: n(v[r][39]),                // AN
+      stock:         n(v[r][7]),                 // H — stock actual
+      stockInicial:  n(v[r][5]),                 // F
+      vendidos:      n(v[r][6]),                 // G — vendidos (ventana del mes)
+      vendidos60:    n(v[r][12]),                // M — vendidos 60 días
+      promGcia:      n(v[r][13]),                // N — prom gcia/lista por venta (ratio real PVs)
+      costos: {                                  // lo que descuenta AN (gcia neta)
+        iibb:     iibb,
+        comision: comision,
+        cheque:   cheque,
+        fyf:      PRECIOS_FYF,
+      },
       incentivos: {
         cc90:       n(v[r][20]),
+        cc90Iva:    cc90Iva,
         tactico:    n(v[r][24]),
         whosale:    n(v[r][25]),
         adicional1: n(v[r][26]),
         adicional2: n(v[r][27]),
         cupo:       n(v[r][23]),
       },
+      // Insumos del simulador de dto TG (constantes al variar el dto):
+      sim: { lista: lista, costoRep: costoRep, cc90Iva: cc90Iva, otros: otros },
     });
   }
-  return { modelos: out, total: out.length, fuente: 'Actual BT (madre)', updatedAt: new Date().toISOString() };
+  return {
+    modelos: out, total: out.length, fuente: 'Actual BT (madre)',
+    constantes: { fyf: PRECIOS_FYF, iibb: PRECIOS_IIBB, comision: PRECIOS_COMISION, cheque: PRECIOS_CHEQUE, iva: 1.21 },
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 // POST endpoint para guardar pagos parseados de los PDFs de VW.
