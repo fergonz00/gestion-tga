@@ -4135,12 +4135,20 @@ function renderIncentivos() {
         : (objetivoMarc === 'ninguno' ? ' (sin objetivo)' : '');
   const ajuste = (u) => {
     if (objetivoMarc === 'ninguno') return 0;
-    const base = Number(u.cc90Base) || 0;
+    // Conciliamos en c/IVA (col V): las NC de VW liquidan el Performance Bonus
+    // CON iva (ratio 1,21 autos / 1,105 pickups), igual que táctico y whosale.
+    // Fallback a cc90Base (s/iva) sólo si el endpoint aún no trae cc90ConIva.
+    const baseIva = Number(u.cc90ConIva) || Number(u.cc90Base) || 0;
     if (isAl100) {
-      const real = Number(u.cc100Base) || 0;   // valor real del 100% si la BT lo trae
-      return real > 0 ? real : base / 0.9;      // si no, estimación ÷0,9
+      const realBase = Number(u.cc100Base) || 0;   // 100% real (viene SIN iva)
+      if (realBase > 0) {
+        // Lo llevamos a c/IVA con el mismo % que aplica este modelo (V/U).
+        const factor = Number(u.cc90Base) > 0 ? (Number(u.cc90ConIva) || 0) / Number(u.cc90Base) : 1.21;
+        return realBase * (factor > 0 ? factor : 1.21);
+      }
+      return baseIva / 0.9;                          // estimación ÷0,9 (ya en c/IVA)
     }
-    return base;  // '90' o no marcado → base
+    return baseIva;  // '90' o no marcado → base c/IVA
   };
   const _hoy           = new Date();
   const mesActualSys   = _hoy.getFullYear() + '-' + String(_hoy.getMonth() + 1).padStart(2, '0');
@@ -4659,8 +4667,9 @@ function _matchearPago(p) {
   // Armar las 5 opciones con su esperado y diff
   const tipos = [
     { tipo: 'whosale',    label: 'Whosale',     esperado: cc.whosale    },
-    { tipo: 'cc90',       label: 'CC 90%',      esperado: cc.cc90       },
-    { tipo: 'cc90',       label: (cc.cc100 > 0 ? 'CC 100%' : 'CC 100% (est. ÷0,9)'), esperado: cc.cc100 > 0 ? cc.cc100 : (cc.cc90 ? cc.cc90 / 0.9 : 0), esVariante: true },
+    // Esperado en c/IVA (col V) — la NC liquida con IVA. Fallback a cc90 s/iva si no vino cc90Iva.
+    { tipo: 'cc90',       label: 'CC 90%',      esperado: (cc.cc90Iva || cc.cc90)       },
+    { tipo: 'cc90',       label: 'CC 100% (est. ÷0,9)', esperado: ((cc.cc90Iva || cc.cc90) ? (cc.cc90Iva || cc.cc90) / 0.9 : 0), esVariante: true },
     { tipo: 'tactico',    label: 'Táctico',     esperado: cc.tactico    },
     { tipo: 'adicional1', label: 'Adicional 1', esperado: cc.adicional1 },
     { tipo: 'adicional2', label: 'Adicional 2', esperado: cc.adicional2 },

@@ -978,7 +978,11 @@ function getIncentivos(params) {
       vendedor:  c.vendedor,
       fechaPat:  c.fechaPatStr || c.fechaPatIso,
       // valores BASE (90%). El frontend aplica /0.9 al cc90 cuando toggle 100%.
+      // cc90Base = SIN iva (col U); cc90ConIva = CON iva (col V). La conciliación
+      // se hace en c/IVA porque las NC de VW liquidan con IVA (ratio 1,21 autos /
+      // 1,105 pickups), igual que táctico y whosale.
       cc90Base:    cc ? cc.cc90 : 0,
+      cc90ConIva:  cc ? (cc.cc90Iva || 0) : 0,
       tactico:     cc ? cc.tactico : 0,
       adicional1:  cc ? cc.adicional1 : 0,
       adicional2:  cc ? cc.adicional2 : 0,
@@ -1106,7 +1110,8 @@ function _readBT(ss, mesKey) {
     if (!modelo) continue;
     porModelo[_normModeloKey(modelo)] = {
       modelo:      modelo,
-      cc90:        toNumber(r[20]),  // U
+      cc90:        toNumber(r[20]),  // U  (CC 90% SIN iva)
+      cc90Iva:     toNumber(r[21]),  // V  (CC 90% CON iva, ya con el % correcto: autos 21% / pickups 10,5%)
       tactico:     toNumber(r[24]),  // Y
       whosale:     toNumber(r[25]),  // Z
       adicional1:  toNumber(r[26]),  // AA
@@ -1132,7 +1137,8 @@ function _readBTAnteriores(sh, mesKey) {
     if (!modelo) continue;
     porModelo[_normModeloKey(modelo)] = {
       modelo:      modelo,
-      cc90:        toNumber(r[20]),  // U
+      cc90:        toNumber(r[20]),  // U  (CC 90% SIN iva)
+      cc90Iva:     toNumber(r[21]),  // V  (CC 90% CON iva, ya con el % correcto: autos 21% / pickups 10,5%)
       tactico:     toNumber(r[24]),  // Y
       whosale:     toNumber(r[25]),  // Z
       adicional1:  toNumber(r[26]),  // AA
@@ -1180,7 +1186,8 @@ function _readBTMadre(mesKey) {
     if (!modelo) continue;
     porModelo[_normModeloKey(modelo)] = {
       modelo:      modelo,
-      cc90:        toNumber(r[20]),  // U
+      cc90:        toNumber(r[20]),  // U  (CC 90% SIN iva)
+      cc90Iva:     toNumber(r[21]),  // V  (CC 90% CON iva, ya con el % correcto: autos 21% / pickups 10,5%)
       tactico:     toNumber(r[24]),  // Y
       whosale:     toNumber(r[25]),  // Z
       adicional1:  toNumber(r[26]),  // AA
