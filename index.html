@@ -1543,7 +1543,7 @@ async function loadIndustria() {
 // PRECIOS — espejo de "Actual BT" (precio de oferta + ganancia de la planilla)
 // =======================================================================
 let preciosFiltro = '';
-let preciosFuente = 'planilla';       // 'planilla' (espejo Actual BT) | 'motor' (calcula desde Supabase)
+let preciosFuente = 'motor';          // default: 'motor' (calcula desde Supabase+Oversoft) | 'planilla' (espejo Actual BT)
 let preciosSoloStock = true;          // tilde "stock disponible" — arranca marcado
 let preciosVentasMeses = 3;           // ventana de ventas: 3 / 2 / 1 meses calendario
 let preciosExpand = new Set();        // keys de modelos con el detalle/simulador abierto
