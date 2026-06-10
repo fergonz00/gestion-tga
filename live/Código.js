@@ -1024,7 +1024,7 @@ function getIncentivos(params) {
     porUnidadComprada:  porUnidadCompra,
     modelosSinCC: { patentadas: modelosSinCCPat, compradas: modelosSinCCCom },
     modelosBT:    bt.porModelo,  // dict normKey → { modelo, cc90, tactico, whosale, adicional1, adicional2 }
-    mesesDisponibles: _readMesesBT(ss),  // todos los meses que tienen BT cargado
+    mesesDisponibles: _mesesConciliables(ss, pat),  // BT cargada ∪ meses con patentamientos
     updatedAt:    new Date().toISOString(),
   };
 }
@@ -1052,6 +1052,23 @@ function _readMesesBT(ss) {
     .sort().reverse();
 }
 
+// Meses conciliables = (meses con BT cargada) ∪ (meses con patentamientos), todo
+// desde PATENTAMIENTOS_MES_MINIMO en adelante y sin pasarse del mes vigente. Así
+// un mes con patentadas pero cuya BT vive solo en su pestaña madre (ej. mayo,
+// que no se apiló en "BT anteriores") igual aparece en el selector — el _readBT
+// ya sabe ir a buscar esa BT a la madre.
+function _mesesConciliables(ss, pat) {
+  const meses = new Set(_readMesesBT(ss));
+  const mesVigente = _yyyyMm(new Date());
+  const carpetas = (pat && pat.carpetas) || [];
+  for (const c of carpetas) {
+    if (c.mesKey && c.mesKey >= PATENTAMIENTOS_MES_MINIMO && c.mesKey <= mesVigente) {
+      meses.add(c.mesKey);
+    }
+  }
+  return Array.from(meses).sort().reverse();
+}
+
 function _readBT(ss, mesKey) {
   // 1) Primero probamos bt_anteriores filtrado por col A = mes.
   const sa = ss.getSheetByName('bt_anteriores');
@@ -1062,7 +1079,19 @@ function _readBT(ss, mesKey) {
     }
   }
 
-  // 2) Fallback: actual_bt (mes vigente).
+  // 2) Si NO es el mes vigente y bt_anteriores no lo tenía, buscamos la pestaña
+  //    propia del mes en la planilla MADRE (ej. "Mayo 2026 BT"). Esto cubre el
+  //    caso en que Fer todavía no apiló el mes en "BT anteriores": antes caía a
+  //    actual_bt (mes vigente) y conciliaba el mes pasado con los CC de hoy.
+  const mesVigente = _yyyyMm(new Date());
+  if (mesKey !== mesVigente) {
+    const m = _readBTMadre(mesKey);
+    if (m && Object.keys(m.porModelo).length > 0) {
+      return { encontrado: true, nombreUsado: m.nombreUsado, porModelo: m.porModelo };
+    }
+  }
+
+  // 3) Fallback: actual_bt (mes vigente).
   const sh = ss.getSheetByName('actual_bt');
   if (!sh) return { encontrado: false, nombreBuscado: 'actual_bt o bt_anteriores con fila para ' + mesKey };
 
@@ -1111,6 +1140,54 @@ function _readBTAnteriores(sh, mesKey) {
     };
   }
   return { porModelo };
+}
+
+// Lee la BT de un mes NO vigente desde su pestaña propia en la planilla madre
+// (ej. "Mayo 2026 BT"). La espejo puede openById la madre porque ya tiene acceso
+// por los IMPORTRANGE. En la madre la pestaña tiene fila 1 = título, fila 2 =
+// header ("Modelos"), datos desde fila 3. Columnas idénticas a Actual BT:
+//   B=1 modelo · U=20 cc90 · Y=24 táctico · Z=25 whosale · AA=26 adic1 · AB=27 adic2
+function _readBTMadre(mesKey) {
+  const [y, m] = mesKey.split('-');
+  const nombres = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const mesNom = nombres[parseInt(m, 10) - 1];
+  if (!mesNom) return null;
+  const yy = String(y).slice(-2);
+  // Probamos varios formatos de nombre porque Fer no es consistente
+  // ("Mayo 2026 BT" vs "Marzo 26 BT" vs "Febrero 26 BT").
+  const candidatos = [
+    mesNom + ' ' + y + ' BT',
+    mesNom + ' ' + yy + ' BT',
+    mesNom + ' BT',
+    mesNom + ' ' + y,
+    mesNom + ' ' + yy,
+  ];
+  let ss;
+  try { ss = SpreadsheetApp.openById(MADRE_ID); } catch (e) { return null; }
+  let sh = null, usado = '';
+  for (const nom of candidatos) {
+    sh = ss.getSheetByName(nom);
+    if (sh) { usado = nom; break; }
+  }
+  if (!sh) return null;
+  const lastRow = sh.getLastRow();
+  if (lastRow < 3) return { nombreUsado: 'madre:' + usado, porModelo: {} };
+  // Desde fila 3 (1 título + 1 header), hasta col AB (28 cols).
+  const data = sh.getRange(3, 1, lastRow - 2, 28).getValues();
+  const porModelo = {};
+  for (const r of data) {
+    const modelo = String(r[1] || '').trim();  // B
+    if (!modelo) continue;
+    porModelo[_normModeloKey(modelo)] = {
+      modelo:      modelo,
+      cc90:        toNumber(r[20]),  // U
+      tactico:     toNumber(r[24]),  // Y
+      whosale:     toNumber(r[25]),  // Z
+      adicional1:  toNumber(r[26]),  // AA
+      adicional2:  toNumber(r[27]),  // AB
+    };
+  }
+  return { nombreUsado: 'madre:' + usado, porModelo };
 }
 
 function _readComprasDelMes(ss, mesKey) {
