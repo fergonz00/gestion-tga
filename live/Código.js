@@ -145,6 +145,20 @@ function getPreciosActualBT() {
   if (lastRow < 3) return { modelos: [] };
   const v = sh.getRange(1, 1, lastRow, 41).getValues();   // hasta col AO
   const n = x => Number(x) || 0;
+
+  // Ventas por mes por modelo (para el selector "ventas últimos N meses" del front).
+  // Cuenta las PVs de la hoja ventas agrupadas por modelo canónico × mesKey.
+  const ventasModeloMes = {};
+  try {
+    const vt = getVentas();
+    for (const venta of (vt.ventas || [])) {
+      const k = _normModeloKey(venta.modelo);
+      if (!k || !venta.mesKey) continue;
+      if (!ventasModeloMes[k]) ventasModeloMes[k] = {};
+      ventasModeloMes[k][venta.mesKey] = (ventasModeloMes[k][venta.mesKey] || 0) + 1;
+    }
+  } catch (e) { /* si falla ventas, seguimos sin el desglose mensual */ }
+
   const out = [];
   for (let r = 2; r < v.length; r++) {           // datos desde fila 3
     const modelo = String(v[r][1] || '').trim();
@@ -189,6 +203,8 @@ function getPreciosActualBT() {
         adicional2: n(v[r][27]),
         cupo:       n(v[r][23]),
       },
+      // Ventas por mes (dict 'yyyy-mm' → cantidad) para el selector de N meses.
+      ventasPorMes: ventasModeloMes[_normModeloKey(modelo)] || {},
       // Insumos del simulador de dto TG (constantes al variar el dto):
       sim: { lista: lista, costoRep: costoRep, cc90Iva: cc90Iva, otros: otros },
     });

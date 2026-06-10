@@ -1543,8 +1543,24 @@ async function loadIndustria() {
 // PRECIOS — espejo de "Actual BT" (precio de oferta + ganancia de la planilla)
 // =======================================================================
 let preciosFiltro = '';
+let preciosSoloStock = true;          // tilde "stock disponible" — arranca marcado
+let preciosVentasMeses = 3;           // ventana de ventas: 3 / 2 / 1 meses calendario
 let preciosExpand = new Set();        // keys de modelos con el detalle/simulador abierto
 let preciosByKey  = {};               // key → modelo (para el simulador)
+// Devuelve los últimos n meses calendario como ['2026-06','2026-05',...] (incluye el actual)
+function _ventanaMeses(nm) {
+  const hoy = new Date(); const arr = [];
+  for (let i = 0; i < nm; i++) {
+    const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
+    arr.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
+  }
+  return arr;
+}
+// Suma de ventas del modelo en la ventana elegida
+function _ventasVentana(m) {
+  const v = m.ventasPorMes || {};
+  return _ventanaMeses(preciosVentasMeses).reduce((a, mk) => a + (Number(v[mk]) || 0), 0);
+}
 function _precioKey(modelo) { return String(modelo).replace(/[^a-zA-Z0-9]/g, '_'); }
 // Recalcula la ganancia replicando EXACTO las fórmulas del Sheet (verificado: reproduce AO al peso).
 function _simGcia(sim, dto, C) {
@@ -1578,15 +1594,27 @@ function renderPrecios() {
   if (!cont) return;
   if (!preciosData || !Array.isArray(preciosData.modelos)) { cont.innerHTML = '<div class="empty">Sin datos.</div>'; return; }
   const f = preciosFiltro.trim().toLowerCase();
-  const rows = preciosData.modelos.filter(m => !f || m.modelo.toLowerCase().includes(f));
+  const rows = preciosData.modelos.filter(m =>
+    (!f || m.modelo.toLowerCase().includes(f)) &&
+    (!preciosSoloStock || (Number(m.stock) || 0) > 0)
+  );
   preciosByKey = {};
   for (const m of preciosData.modelos) preciosByKey[_precioKey(m.modelo)] = m;
+  const lblVent = { 3: 'últ. 3 meses', 2: 'últ. 2 meses', 1: 'mes actual' };
 
   let h = '';
-  h += '<div class="mes-row" style="margin-bottom:10px">';
+  h += '<div class="mes-row" style="margin-bottom:10px;flex-wrap:wrap;gap:10px">';
   h += '  <input type="text" placeholder="🔍 Filtrar modelo…" value="' + escapeHtml(preciosFiltro) + '" oninput="preciosFiltro=this.value;renderPrecios()" '
-     + '         style="padding:8px 12px;border:1px solid var(--vw-grey-2);border-radius:8px;min-width:240px;font-size:14px">';
-  h += '  <span style="font-size:12px;color:var(--vw-grey-3)">' + rows.length + ' modelos · tocá una fila para ver incentivos, costos y simular el dto</span>';
+     + '         style="padding:8px 12px;border:1px solid var(--vw-grey-2);border-radius:8px;min-width:220px;font-size:14px">';
+  h += '  <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer">'
+     + '    <input type="checkbox" ' + (preciosSoloStock ? 'checked' : '') + ' onchange="preciosSoloStock=this.checked;renderPrecios()"> Stock disponible</label>';
+  h += '  <label style="display:flex;align-items:center;gap:6px;font-size:14px">Ventas: '
+     + '    <select onchange="preciosVentasMeses=parseInt(this.value,10);renderPrecios()" style="padding:6px 8px;border:1px solid var(--vw-grey-2);border-radius:6px">'
+     + '      <option value="3"' + (preciosVentasMeses===3?' selected':'') + '>últimos 3 meses</option>'
+     + '      <option value="2"' + (preciosVentasMeses===2?' selected':'') + '>últimos 2 meses</option>'
+     + '      <option value="1"' + (preciosVentasMeses===1?' selected':'') + '>solo mes actual</option>'
+     + '    </select></label>';
+  h += '  <span style="font-size:12px;color:var(--vw-grey-3)">' + rows.length + ' modelos · tocá una fila para ver detalle y simular</span>';
   h += '</div>';
 
   h += '<div class="table-wrap"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:820px">';
@@ -1597,7 +1625,7 @@ function renderPrecios() {
      + '<th class="num">Dto TG</th>'
      + '<th class="num">Precio oferta<br><small>(con FYF)</small></th>'
      + '<th class="num">Stock</th>'
-     + '<th class="num">Vend.</th>'
+     + '<th class="num">Vend.<br><small>(' + lblVent[preciosVentasMeses] + ')</small></th>'
      + '<th class="num">Gcia/lista</th>'
      + '<th></th>'
      + '</tr></thead><tbody>';
@@ -1612,7 +1640,7 @@ function renderPrecios() {
        + '<td class="num" data-label="Dto TG"><b>' + (Number(m.dtoTG) * 100).toFixed(0) + '%</b></td>'
        + '<td class="num" data-label="Precio oferta"><b>' + fmtPesos(m.precioOferta) + '</b></td>'
        + '<td class="num" data-label="Stock">' + (Number(m.stock) || 0) + '</td>'
-       + '<td class="num" data-label="Vend.">' + (Number(m.vendidos) || 0) + '</td>'
+       + '<td class="num" data-label="Vend.">' + _ventasVentana(m) + '</td>'
        + '<td class="num" data-label="Gcia/lista" style="font-weight:700;color:' + _gClsP(g) + '">' + (g * 100).toFixed(2) + '%</td>'
        + '<td class="num" style="color:var(--vw-grey-3)">' + (abierto ? '▾' : '▸') + '</td>'
        + '</tr>';
@@ -1656,7 +1684,8 @@ function _precioDetalle(m, key) {
   h += li('Comisión (1,40%)', fmtPesos(cos.comision));
   h += li('Imp. cheque (0,85%)', fmtPesos(cos.cheque));
   h += li('FYF (flete+form.)', fmtPesos(cos.fyf));
-  h += li('Stock / vendidos', (Number(m.stock)||0) + ' / ' + (Number(m.vendidos)||0) + ' (60d: ' + (Number(m.vendidos60)||0) + ')');
+  h += li('Stock', (Number(m.stock)||0));
+  h += li('Ventas (' + ({3:'últ. 3 meses',2:'últ. 2 meses',1:'mes actual'}[preciosVentasMeses]) + ')', _ventasVentana(m));
   h += li('Prom. gcia/venta real', (Number(m.promGcia)*100).toFixed(2) + '%');
   h += li('Ganancia actual', '<b style="color:' + _gClsP(Number(m.gananciaPct)||0) + '">' + fmtPesos(m.gananciaPesos) + ' · ' + ((Number(m.gananciaPct)||0)*100).toFixed(2) + '%</b>');
   h += '</div>';
