@@ -1543,6 +1543,7 @@ async function loadIndustria() {
 // PRECIOS — espejo de "Actual BT" (precio de oferta + ganancia de la planilla)
 // =======================================================================
 let preciosFiltro = '';
+let preciosFuente = 'planilla';       // 'planilla' (espejo Actual BT) | 'motor' (calcula desde Supabase)
 let preciosSoloStock = true;          // tilde "stock disponible" — arranca marcado
 let preciosVentasMeses = 3;           // ventana de ventas: 3 / 2 / 1 meses calendario
 let preciosExpand = new Set();        // keys de modelos con el detalle/simulador abierto
@@ -1577,14 +1578,15 @@ async function loadPrecios(forzar) {
   const cont = document.getElementById('preciosContent');
   if (cont && !preciosData) cont.innerHTML = '<div class="empty">Cargando precios…</div>';
   try {
-    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=precios' + (forzar ? '&fresh=1' : '');
+    const tipo = (preciosFuente === 'motor') ? 'motor' : 'precios';
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=' + tipo + (forzar ? '&fresh=1' : '');
     const res = await fetch(url);
     if (!res.ok) return;
     const data = await res.json();
     if (data && data.error) { if (cont) cont.innerHTML = '<div class="errbox"><div class="ttl">⚠️ ' + escapeHtml(data.error) + '</div></div>'; return; }
     preciosData = data;
     const up = document.getElementById('updatedAtPrecios');
-    if (up && data.updatedAt) up.textContent = 'Espejo de "Actual BT" · ' + data.total + ' modelos · actualizado ' + new Date(data.updatedAt).toLocaleString('es-AR');
+    if (up && data.updatedAt) up.textContent = (data.fuente || 'Precios') + ' · ' + data.total + ' modelos · actualizado ' + new Date(data.updatedAt).toLocaleString('es-AR');
     renderPrecios();
   } catch (e) { console.error('loadPrecios:', e); }
 }
@@ -1603,6 +1605,14 @@ function renderPrecios() {
   const lblVent = { 3: 'últ. 3 meses', 2: 'últ. 2 meses', 1: 'mes actual' };
 
   let h = '';
+  // Toggle de fuente: Planilla (espejo) ⇄ Motor (calculado desde Supabase)
+  h += '<div class="mes-row" style="margin-bottom:8px;gap:0">';
+  h += '  <div style="display:inline-flex;border:1px solid var(--vw-grey-2);border-radius:8px;overflow:hidden;font-size:13px">';
+  h += '    <button onclick="setPreciosFuente(\'planilla\')" style="padding:7px 14px;border:0;cursor:pointer;' + (preciosFuente==='planilla'?'background:var(--vw-blue);color:#fff;font-weight:700':'background:#fff;color:var(--vw-grey-3)') + '">Planilla</button>';
+  h += '    <button onclick="setPreciosFuente(\'motor\')" style="padding:7px 14px;border:0;cursor:pointer;' + (preciosFuente==='motor'?'background:var(--vw-blue);color:#fff;font-weight:700':'background:#fff;color:var(--vw-grey-3)') + '">⚙ Motor</button>';
+  h += '  </div>';
+  h += '  <span style="font-size:11px;color:var(--vw-grey-3);margin-left:10px">' + (preciosFuente==='motor' ? 'calculado desde tus tablas (Supabase + Oversoft)' : 'espejo de "Actual BT"') + '</span>';
+  h += '</div>';
   h += '<div class="mes-row" style="margin-bottom:10px;flex-wrap:wrap;gap:10px">';
   h += '  <input type="text" placeholder="🔍 Filtrar modelo…" value="' + escapeHtml(preciosFiltro) + '" oninput="preciosFiltro=this.value;renderPrecios()" '
      + '         style="padding:8px 12px;border:1px solid var(--vw-grey-2);border-radius:8px;min-width:220px;font-size:14px">';
@@ -1709,6 +1719,16 @@ function _precioDetalle(m, key) {
   // Pintar el resultado inicial del simulador en el próximo tick (el div ya existe en el DOM tras innerHTML)
   setTimeout(function(){ simularDto(key, (dtoActual*100).toFixed(1)); }, 0);
   return h;
+}
+
+function setPreciosFuente(f) {
+  if (preciosFuente === f) return;
+  preciosFuente = f;
+  preciosExpand.clear();
+  preciosData = null;             // fuerza "Cargando…" mientras trae la otra fuente
+  const cont = document.getElementById('preciosContent');
+  if (cont) cont.innerHTML = '<div class="empty">Cargando ' + (f === 'motor' ? 'motor (Supabase)…' : 'planilla…') + '</div>';
+  loadPrecios(true);
 }
 
 function togglePrecioRow(key, ev) {

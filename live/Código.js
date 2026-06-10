@@ -74,6 +74,7 @@ function doGet(e) {
     if (tipo === 'saldoscompras')   return jsonResponse(_cached('saldoscompras', CACHE_TTL_SEC, fresh, getSaldosCompras)); // proxy a saldos-tga (paga/impaga + vencimiento)
     if (tipo === 'madre')           return jsonResponse(getMadreSheet(params));   // lectura cruda de una pestaña de la planilla madre
     if (tipo === 'precios')         return jsonResponse(_cached('precios', CACHE_TTL_SEC, fresh, getPreciosActualBT)); // espejo de precios/ganancia de "Actual BT"
+    if (tipo === 'motor')           return jsonResponse(_cached('motor', CACHE_TTL_SEC, fresh, getBaratitoMotor));     // MOTOR: calcula desde Supabase (no la planilla)
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
@@ -211,6 +212,118 @@ function getPreciosActualBT() {
   }
   return {
     modelos: out, total: out.length, fuente: 'Actual BT (madre)',
+    constantes: { fyf: PRECIOS_FYF, iibb: PRECIOS_IIBB, comision: PRECIOS_COMISION, cheque: PRECIOS_CHEQUE, iva: 1.21 },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+// =======================================================================
+// MOTOR TGA — precio/ganancia calculados desde Supabase (NO la planilla)
+// =======================================================================
+// Misma salida que getPreciosActualBT pero computando todo desde las tablas
+// propias en Supabase (base wjfgl): precios_lista + catalogo_modelos +
+// incentivos + dto_tg, y el stock real desde Oversoft. Fórmulas verificadas:
+// reproducen el "Actual BT" al peso (47/47). La anon key es de SOLO LECTURA
+// (RLS read-only en esas 4 tablas), así el endpoint público no puede escribir.
+const SUPA_URL  = 'https://wjfglsafgaltusmbnccl.supabase.co/rest/v1';
+const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndqZmdsc2FmZ2FsdHVzbWJuY2NsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MzM2OTksImV4cCI6MjA4OTAwOTY5OX0.OOwgyKDNQsbBaGDaL0OhJfc8eOsCClvvAPW0VFBKrOA';
+
+function _supaGet(path) {
+  const res = UrlFetchApp.fetch(SUPA_URL + path, {
+    headers: { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON },
+    muteHttpExceptions: true });
+  const code = res.getResponseCode();
+  if (code < 200 || code >= 300) throw new Error('supa ' + code + ': ' + res.getContentText().slice(0, 160));
+  return JSON.parse(res.getContentText());
+}
+
+// Stock real por código desde Oversoft (unidades NO entregadas). El código del
+// modelo en Oversoft es el 1er token de unidades.modelo (ej "AGDA43 MY26" → AGDA43).
+function _oversoftStockPorCodigo() {
+  const res = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo&entregada=eq.False&limit=3000',
+    { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true });
+  if (res.getResponseCode() >= 300) return {};
+  const out = {};
+  for (const r of JSON.parse(res.getContentText())) {
+    const cod = String(r.modelo || '').trim().split(/\s+/)[0];
+    if (cod) out[cod] = (out[cod] || 0) + 1;
+  }
+  return out;
+}
+
+function getBaratitoMotor() {
+  const mesActual = _yyyyMm(new Date());
+  // 1) precios del mes (fallback al mes más reciente cargado)
+  let prec = _supaGet('/precios_lista?select=codigo,modelo,precio_lista,costo_concesionario&mes=eq.' + mesActual);
+  let mesUsado = mesActual;
+  if (!prec.length) {
+    const ult = _supaGet('/precios_lista?select=mes&order=mes.desc&limit=1');
+    if (ult.length) { mesUsado = ult[0].mes; prec = _supaGet('/precios_lista?select=codigo,modelo,precio_lista,costo_concesionario&mes=eq.' + mesUsado); }
+  }
+  const precByNc = {};
+  for (const p of prec) precByNc[p.modelo] = p;
+
+  // 2) catálogo, 3) incentivos del mes, 4) dto
+  const cat = _supaGet('/catalogo_modelos?select=codigo,nombre_corto,nombre_bt,familia&activo=eq.true');
+  const incByNc = {};
+  for (const r of _supaGet('/incentivos?select=nombre_corto,tipo,monto_civa&mes=eq.' + mesUsado)) {
+    if (!incByNc[r.nombre_corto]) incByNc[r.nombre_corto] = {};
+    incByNc[r.nombre_corto][r.tipo] = Number(r.monto_civa) || 0;
+  }
+  const dtoByNc = {};
+  for (const d of _supaGet('/dto_tg?select=nombre_corto,dto')) dtoByNc[d.nombre_corto] = Number(d.dto) || 0;
+
+  // 5) stock desde Oversoft (por código)
+  let stockByCod = {};
+  try { stockByCod = _oversoftStockPorCodigo(); } catch (e) {}
+
+  // 6) ventas por mes (PVs) → mapeadas a nombre_corto vía catálogo (nombre_bt)
+  const ventasNc = {};
+  try {
+    const bt2nc = {};
+    for (const c of cat) if (c.nombre_bt) bt2nc[_normModeloKey(c.nombre_bt)] = c.nombre_corto;
+    for (const venta of (getVentas().ventas || [])) {
+      const nc = bt2nc[_normModeloKey(venta.modelo)];
+      if (!nc || !venta.mesKey) continue;
+      if (!ventasNc[nc]) ventasNc[nc] = {};
+      ventasNc[nc][venta.mesKey] = (ventasNc[nc][venta.mesKey] || 0) + 1;
+    }
+  } catch (e) {}
+
+  const out = [];
+  for (const c of cat) {
+    const p = precByNc[c.nombre_corto];
+    if (!p) continue;
+    const lista = Number(p.precio_lista) || 0;
+    if (lista <= 0) continue;
+    const costo = Number(p.costo_concesionario) || 0;
+    const ii = incByNc[c.nombre_corto] || {};
+    const cc90Iva = Number(ii.performance) || 0;
+    const otros = (Number(ii.tactico)||0) + (Number(ii.whosale)||0) + (Number(ii.adicional1)||0) + (Number(ii.adicional2)||0) + (Number(ii.cupo)||0);
+    const dto = dtoByNc[c.nombre_corto] || 0;
+    const vn = lista * (1 - dto);
+    const iibb = PRECIOS_IIBB * (vn / 1.21), comision = PRECIOS_COMISION * (vn / 1.21), cheque = PRECIOS_CHEQUE * vn;
+    const an = ((vn - costo + cc90Iva + otros) / lista) * lista - iibb - comision - cheque;
+    out.push({
+      modelo:        c.nombre_bt || c.nombre_corto,
+      lista:         lista,
+      dtoTG:         dto,
+      dtoVw:         costo > 0 ? (cc90Iva + otros) / costo : 0,
+      precioOferta:  vn + PRECIOS_FYF,
+      costoRep:      costo,
+      gananciaPct:   an / lista,
+      gananciaPesos: an,
+      stock:         stockByCod[c.codigo] || 0,
+      vendidos:      0, vendidos60: 0, promGcia: 0,
+      costos:        { iibb: iibb, comision: comision, cheque: cheque, fyf: PRECIOS_FYF },
+      incentivos:    { cc90: 0, cc90Iva: cc90Iva, tactico: Number(ii.tactico)||0, whosale: Number(ii.whosale)||0, adicional1: Number(ii.adicional1)||0, adicional2: Number(ii.adicional2)||0, cupo: Number(ii.cupo)||0 },
+      ventasPorMes:  ventasNc[c.nombre_corto] || {},
+      sim:           { lista: lista, costoRep: costo, cc90Iva: cc90Iva, otros: lista > 0 ? otros / lista : 0 },
+      codigo:        c.codigo, familia: c.familia,
+    });
+  }
+  return {
+    modelos: out, total: out.length, fuente: 'Motor TGA · Supabase (lista ' + mesUsado + ' + incentivos + Oversoft)',
     constantes: { fyf: PRECIOS_FYF, iibb: PRECIOS_IIBB, comision: PRECIOS_COMISION, cheque: PRECIOS_CHEQUE, iva: 1.21 },
     updatedAt: new Date().toISOString(),
   };
