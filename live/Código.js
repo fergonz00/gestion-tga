@@ -237,20 +237,49 @@ function _supaGet(path) {
   return JSON.parse(res.getContentText());
 }
 
-// Stock real por código desde Oversoft, MISMA definición que la solapa "Stock
-// Oversoft": disponible para vender = físico libre + a recibir, SIN PV y SIN
-// asignar (entregada=false & asignada=false & preventa vacío). El código del
-// modelo en Oversoft es el 1er token de unidades.modelo (ej "AGDA43 MY26" → AGDA43).
-function _oversoftStockPorCodigo() {
-  const res = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo&entregada=eq.false&asignada=eq.false&preventa=eq.&limit=3000',
-    { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true });
-  if (res.getResponseCode() >= 300) return {};
-  const out = {};
-  for (const r of JSON.parse(res.getContentText())) {
-    const cod = String(r.modelo || '').trim().split(/\s+/)[0];
-    if (cod) out[cod] = (out[cod] || 0) + 1;
+// Normaliza un nombre de modelo para matchear la descripción de Oversoft contra
+// el catálogo (saca VW/Nuevo, MY, generación, packs; bi-tono→bitono).
+function _ntrim(s) {
+  s = String(s || '').toLowerCase();
+  s = s.replace(/bi[\s-]*tono/g, 'bitono');
+  s = s.replace(/\b(vw|nuevo)\b/g, '');
+  s = s.replace(/\bmy2[0-9]\b/g, '').replace(/\b20[0-9][0-9]\b/g, '').replace(/\bg[123]\b/g, '');
+  s = s.replace(/\bph[ag]\b/g, '').replace(/\b(pack|safe|i|ii|se|cd|l)\b/g, '');
+  return s.replace(/[^a-z0-9]/g, '');
+}
+
+// Stock por TRIM EXACTO desde Oversoft. Definición: disponible para vender =
+// físico libre + a recibir, SIN PV y SIN asignar. Clave: los 6 dígitos del
+// código NO distinguen High/Outfit, Highline/Bitono, Extreme/Hero/Black Style
+// (comparten código pero tienen distinto precio). La descripción de Oversoft
+// (por código COMPLETO, ej "CH24K3 PAR MY26" → Nivus Outfit) sí los distingue,
+// así que contamos por descripción y la matcheamos al catálogo por nombre.
+// Devuelve { stockPorTrim: {nombre_corto: n}, total, sinMatch }.
+function _oversoftStockPorTrim(catByNorm) {
+  const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
+  // 1) descripción por código completo (paginado)
+  const desc = {};
+  let off = 0;
+  for (let i = 0; i < 12; i++) {
+    const res = UrlFetchApp.fetch(OVERSOFT_URL + '/modelos?select=codigodecompra,descripcionoperativa&order=modeloid&limit=1000&offset=' + off, h);
+    if (res.getResponseCode() >= 300) break;
+    const ch = JSON.parse(res.getContentText());
+    for (const m of ch) if (m.codigodecompra) desc[String(m.codigodecompra).trim()] = m.descripcionoperativa;
+    if (ch.length < 1000) break;
+    off += 1000;
   }
-  return out;
+  // 2) unidades en stock → matchear al trim del catálogo
+  const res2 = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo&entregada=eq.false&asignada=eq.false&preventa=eq.&limit=3000', h);
+  const us = (res2.getResponseCode() < 300) ? JSON.parse(res2.getContentText()) : [];
+  const stockPorTrim = {}; let total = 0, sinMatch = 0;
+  for (const u of us) {
+    total++;
+    const d = desc[String(u.modelo || '').trim()];
+    const nc = d ? catByNorm[_ntrim(d)] : null;
+    if (nc) stockPorTrim[nc] = (stockPorTrim[nc] || 0) + 1;
+    else sinMatch++;
+  }
+  return { stockPorTrim: stockPorTrim, total: total, sinMatch: sinMatch };
 }
 
 function getBaratitoMotor() {
@@ -275,11 +304,19 @@ function getBaratitoMotor() {
   const dtoByNc = {};
   for (const d of _supaGet('/dto_tg?select=nombre_corto,dto')) dtoByNc[d.nombre_corto] = Number(d.dto) || 0;
 
-  // 5) stock desde Oversoft (por código) + total real (todas las no entregadas)
-  let stockByCod = {};
-  try { stockByCod = _oversoftStockPorCodigo(); } catch (e) {}
-  let stockTotalOversoft = 0;
-  for (const k in stockByCod) stockTotalOversoft += stockByCod[k];
+  // 5) stock desde Oversoft POR TRIM EXACTO (vía descripción, distingue High/Outfit,
+  //    Highline/Bitono, Extreme/Hero/Black Style aunque compartan código).
+  const catByNorm = {};
+  for (const c of cat) {
+    if (c.nombre_corto) catByNorm[_ntrim(c.nombre_corto)] = c.nombre_corto;
+    if (c.nombre_bt)    catByNorm[_ntrim(c.nombre_bt)]    = c.nombre_corto;
+  }
+  let stockPorTrim = {}, stockTotalOversoft = 0;
+  try {
+    const st = _oversoftStockPorTrim(catByNorm);
+    stockPorTrim = st.stockPorTrim;
+    stockTotalOversoft = st.total;
+  } catch (e) {}
 
   // 6) ventas por mes (PVs) → mapeadas a nombre_corto vía catálogo (nombre_bt)
   const ventasNc = {};
@@ -295,17 +332,13 @@ function getBaratitoMotor() {
   } catch (e) {}
 
   const out = [];
-  const codConStock = {};   // para no duplicar el stock de un código compartido por varios trims
   for (const c of cat) {
     const p = precByNc[c.nombre_corto];
     if (!p) continue;
     const lista = Number(p.precio_lista) || 0;
     if (lista <= 0) continue;
     const costo = Number(p.costo_concesionario) || 0;
-    // El stock es por código; si dos trims comparten código (ej DF14D3), se lo
-    // asignamos a la 1ra fila para que la suma total no lo cuente doble.
-    const stk = codConStock[c.codigo] ? 0 : (stockByCod[c.codigo] || 0);
-    codConStock[c.codigo] = true;
+    const stk = stockPorTrim[c.nombre_corto] || 0;   // stock del TRIM exacto (no del código)
     const ii = incByNc[c.nombre_corto] || {};
     const cc90Iva = Number(ii.performance) || 0;
     const otros = (Number(ii.tactico)||0) + (Number(ii.whosale)||0) + (Number(ii.adicional1)||0) + (Number(ii.adicional2)||0) + (Number(ii.cupo)||0);
