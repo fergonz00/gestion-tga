@@ -273,9 +273,11 @@ function getBaratitoMotor() {
   const dtoByNc = {};
   for (const d of _supaGet('/dto_tg?select=nombre_corto,dto')) dtoByNc[d.nombre_corto] = Number(d.dto) || 0;
 
-  // 5) stock desde Oversoft (por código)
+  // 5) stock desde Oversoft (por código) + total real (todas las no entregadas)
   let stockByCod = {};
   try { stockByCod = _oversoftStockPorCodigo(); } catch (e) {}
+  let stockTotalOversoft = 0;
+  for (const k in stockByCod) stockTotalOversoft += stockByCod[k];
 
   // 6) ventas por mes (PVs) → mapeadas a nombre_corto vía catálogo (nombre_bt)
   const ventasNc = {};
@@ -291,12 +293,17 @@ function getBaratitoMotor() {
   } catch (e) {}
 
   const out = [];
+  const codConStock = {};   // para no duplicar el stock de un código compartido por varios trims
   for (const c of cat) {
     const p = precByNc[c.nombre_corto];
     if (!p) continue;
     const lista = Number(p.precio_lista) || 0;
     if (lista <= 0) continue;
     const costo = Number(p.costo_concesionario) || 0;
+    // El stock es por código; si dos trims comparten código (ej DF14D3), se lo
+    // asignamos a la 1ra fila para que la suma total no lo cuente doble.
+    const stk = codConStock[c.codigo] ? 0 : (stockByCod[c.codigo] || 0);
+    codConStock[c.codigo] = true;
     const ii = incByNc[c.nombre_corto] || {};
     const cc90Iva = Number(ii.performance) || 0;
     const otros = (Number(ii.tactico)||0) + (Number(ii.whosale)||0) + (Number(ii.adicional1)||0) + (Number(ii.adicional2)||0) + (Number(ii.cupo)||0);
@@ -313,7 +320,7 @@ function getBaratitoMotor() {
       costoRep:      costo,
       gananciaPct:   an / lista,
       gananciaPesos: an,
-      stock:         stockByCod[c.codigo] || 0,
+      stock:         stk,
       vendidos:      0, vendidos60: 0, promGcia: 0,
       costos:        { iibb: iibb, comision: comision, cheque: cheque, fyf: PRECIOS_FYF },
       incentivos:    { cc90: 0, cc90Iva: cc90Iva, tactico: Number(ii.tactico)||0, whosale: Number(ii.whosale)||0, adicional1: Number(ii.adicional1)||0, adicional2: Number(ii.adicional2)||0, cupo: Number(ii.cupo)||0 },
@@ -322,8 +329,12 @@ function getBaratitoMotor() {
       codigo:        c.codigo, familia: c.familia,
     });
   }
+  let stockCatalogado = 0;
+  for (const m of out) stockCatalogado += (Number(m.stock) || 0);
   return {
     modelos: out, total: out.length, fuente: 'Motor TGA · Supabase (lista ' + mesUsado + ' + incentivos + Oversoft)',
+    stockTotalOversoft: stockTotalOversoft,   // todas las unidades NO entregadas en Oversoft
+    stockCatalogado: stockCatalogado,         // las que caen en un modelo del catálogo
     constantes: { fyf: PRECIOS_FYF, iibb: PRECIOS_IIBB, comision: PRECIOS_COMISION, cheque: PRECIOS_CHEQUE, iva: 1.21 },
     updatedAt: new Date().toISOString(),
   };
