@@ -1700,6 +1700,41 @@ function _gciaConPrecio(m, precioConFyf) {
   return _simGcia(m.sim, dto, C);
 }
 function _colorKey(c) { return encodeURIComponent(c).replace(/[^a-zA-Z0-9]/g, '_'); }
+// Dto implícito (vs lista) de un precio de oferta con FYF.
+function _dtoDePrecio(m, precioConFyf) {
+  const C = (preciosData && preciosData.constantes) || { fyf: 1110000 };
+  const lista = Number(m.sim && m.sim.lista) || 0;
+  if (lista <= 0) return 0;
+  return 1 - (precioConFyf - C.fyf) / lista;
+}
+// Mantiene enlazados los inputs de precio y dto de una fila de color:
+// editás uno y el otro (y la ganancia) se recalculan en vivo. No guarda.
+function syncPrecioColor(key, colorEnc, origen) {
+  const m = preciosByKey[key];
+  if (!m) return;
+  const ck = _colorKey(decodeURIComponent(colorEnc));
+  const inpP = document.getElementById('cp_' + key + '_' + ck);
+  const inpD = document.getElementById('cd_' + key + '_' + ck);
+  const out  = document.getElementById('cg_' + key + '_' + ck);
+  if (!inpP || !inpD) return;
+  const C = (preciosData && preciosData.constantes) || { fyf: 1110000 };
+  const lista = Number(m.sim && m.sim.lista) || 0;
+  let precio;
+  if (origen === 'dto') {
+    const pct = parseFloat(String(inpD.value).replace(',', '.'));
+    if (isNaN(pct) || lista <= 0) return;
+    precio = Math.round(lista * (1 - pct / 100) + C.fyf);
+    inpP.value = fmtPesos(precio).replace(/\s/g, '');
+  } else {
+    precio = parseInt(String(inpP.value).replace(/[^0-9]/g, ''), 10);
+    if (isNaN(precio)) return;
+    inpD.value = (_dtoDePrecio(m, precio) * 100).toFixed(1);
+  }
+  if (out) {
+    const r = _gciaConPrecio(m, precio);
+    out.innerHTML = r ? '<span style="font-weight:700;color:' + _gClsP(r.gananciaPct) + '">' + (r.gananciaPct * 100).toFixed(2) + '%</span>' : '';
+  }
+}
 
 // Bloque expandible: detalle de incentivos, costos, ventas y simulador de dto.
 function _precioDetalle(m, key) {
@@ -1752,18 +1787,29 @@ function _precioDetalle(m, key) {
     const r = _gciaConPrecio(m, precio);
     const gtxt = r ? '<span style="font-weight:700;color:' + _gClsP(r.gananciaPct) + '">' + (r.gananciaPct * 100).toFixed(2) + '%</span>' : '';
     const ck = _colorKey(color);
+    const colorEnc = encodeURIComponent(color);
+    const dtoImplicito = _dtoDePrecio(m, precio);   // dto vs lista que implica este precio
+    const guardar = 'guardarPrecioColor(\'' + key + '\',\'' + colorEnc + '\')';
     let f = '<div style="display:flex;align-items:center;gap:8px;padding:3px 0' + (esTodos ? ';border-bottom:1px solid var(--vw-grey-2);margin-bottom:4px;padding-bottom:7px' : '') + '">';
     f += '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
        + (esTodos ? '<b>Todos los colores</b>' : escapeHtml(color))
        + (stock != null ? ' <small style="color:var(--vw-grey-3)">(' + stock + ' u.)</small>' : '') + '</span>';
+    // Precio y dto ENLAZADOS: tocás uno y el otro se recalcula; ✓ o Enter guarda.
     f += '<input type="text" inputmode="numeric" value="' + fmtPesos(precio).replace(/\s/g, '') + '" id="cp_' + key + '_' + ck + '" '
-       + ' onkeydown="if(event.key===\'Enter\')guardarPrecioColor(\'' + key + '\',\'' + encodeURIComponent(color) + '\')" '
-       + ' style="width:118px;padding:4px 6px;border:1px solid ' + (tienePropio ? 'var(--vw-blue)' : 'var(--vw-grey-2)') + ';border-radius:6px;text-align:right;font-variant-numeric:tabular-nums">';
-    f += '<span style="width:52px;text-align:right">' + gtxt + '</span>';
-    f += '<button onclick="guardarPrecioColor(\'' + key + '\',\'' + encodeURIComponent(color) + '\')" title="Guardar" '
+       + ' oninput="syncPrecioColor(\'' + key + '\',\'' + colorEnc + '\',\'precio\')" '
+       + ' onkeydown="if(event.key===\'Enter\')' + guardar + '" '
+       + ' style="width:112px;padding:4px 6px;border:1px solid ' + (tienePropio ? 'var(--vw-blue)' : 'var(--vw-grey-2)') + ';border-radius:6px;text-align:right;font-variant-numeric:tabular-nums">';
+    f += '<input type="text" inputmode="decimal" value="' + (dtoImplicito * 100).toFixed(1) + '" id="cd_' + key + '_' + ck + '" '
+       + ' oninput="syncPrecioColor(\'' + key + '\',\'' + colorEnc + '\',\'dto\')" '
+       + ' onkeydown="if(event.key===\'Enter\')' + guardar + '" '
+       + ' title="Dto % sobre la lista" '
+       + ' style="width:48px;padding:4px 5px;border:1px solid ' + (tienePropio ? 'var(--vw-blue)' : 'var(--vw-grey-2)') + ';border-radius:6px;text-align:right;font-variant-numeric:tabular-nums">';
+    f += '<span style="color:var(--vw-grey-3);font-size:11px">%</span>';
+    f += '<span style="width:52px;text-align:right" id="cg_' + key + '_' + ck + '">' + gtxt + '</span>';
+    f += '<button onclick="' + guardar + '" title="Guardar" '
        + ' style="border:0;background:var(--vw-blue);color:#fff;border-radius:6px;padding:4px 8px;cursor:pointer">✓</button>';
     f += tienePropio
-       ? '<button onclick="resetPrecioColor(\'' + key + '\',\'' + encodeURIComponent(color) + '\')" title="Volver al precio base" '
+       ? '<button onclick="resetPrecioColor(\'' + key + '\',\'' + colorEnc + '\')" title="Volver al precio base" '
        + ' style="border:1px solid var(--vw-grey-2);background:#fff;color:var(--vw-grey-3);border-radius:6px;padding:3px 7px;cursor:pointer">✕</button>'
        : '<span style="width:26px"></span>';
     f += '</div>';
@@ -1775,7 +1821,7 @@ function _precioDetalle(m, key) {
   const cols = m.colores || [];
   if (cols.length) for (const c of cols) h += fila(c.color, c.stock);
   else h += '<div style="color:var(--vw-grey-3);font-size:12px;padding:4px 0">Sin stock físico — el precio "todos los colores" aplica igual.</div>';
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">Editá el precio y ✓ (o Enter). "Todos los colores" mueve el modelo entero; un color con precio propio (borde azul) pisa al general. ✕ vuelve al precio de planilla. Se guarda para todos.</div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">Editá el precio O el dto % (están enlazados) y ✓ o Enter. "Todos los colores" mueve el modelo entero; un color con precio propio (borde azul) pisa al general. ✕ vuelve al precio de planilla. Se guarda para todos.</div>';
   h += '</div>';
 
   h += '</div>';
