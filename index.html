@@ -1546,7 +1546,7 @@ async function loadIndustria() {
 // =======================================================================
 let preciosFiltro = '';
 let preciosSoloStock = true;          // tilde "stock disponible" — arranca marcado
-let preciosVentasMeses = 3;           // ventana de ventas: 3 / 2 / 1 meses calendario
+let preciosVentasMeses = 1;           // ventana de ventas: 3 / 2 / 1 meses calendario — default: mes actual
 let preciosExpand = new Set();        // keys de modelos con el detalle/simulador abierto
 let preciosByKey  = {};               // key → modelo (para el simulador)
 // Devuelve los últimos n meses calendario como ['2026-06','2026-05',...] (incluye el actual)
@@ -1674,11 +1674,13 @@ function renderPrecios() {
                   + (detSinCat ? ' title="Sin catalogar:\n' + escapeHtml(detSinCat) + '"' : '') + '>(' + gap + ' s/cat.)</span>';
       }
     }
-    const totVend = rows.reduce((a, m) => a + _ventasVentana(m), 0);
+    // El total de vendidos es SIEMPRE el de TODOS los modelos en la ventana
+    // elegida (no cambia por el tilde de stock disponible ni el filtro de texto).
+    const totVend = preciosData.modelos.reduce((a, m) => a + _ventasVentana(m), 0);
     h += '<tr style="font-weight:700;background:#eef3fb;border-top:2px solid var(--vw-blue)">'
        + '<td colspan="5" style="text-align:right">TOTAL · ' + rows.length + ' modelos</td>'
        + '<td class="num" data-label="Stock">' + totStock + stockNota + '</td>'
-       + '<td class="num" data-label="Vend.">' + totVend + '</td>'
+       + '<td class="num" data-label="Vend." title="Total de TODOS los modelos en la ventana elegida, incluya o no la tabla a cada uno">' + totVend + '</td>'
        + '<td colspan="2"></td></tr>';
   }
   h += '</tbody></table></div>';
