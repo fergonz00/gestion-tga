@@ -75,6 +75,7 @@ function doGet(e) {
     if (tipo === 'madre')           return jsonResponse(getMadreSheet(params));   // lectura cruda de una pestaña de la planilla madre
     if (tipo === 'precios')         return jsonResponse(_cached('precios', CACHE_TTL_SEC, fresh, getPreciosActualBT)); // espejo de precios/ganancia de "Actual BT"
     if (tipo === 'motor')           return jsonResponse(_cached('motor', CACHE_TTL_SEC, fresh, getBaratitoMotor));     // MOTOR: calcula desde Supabase (no la planilla)
+    if (tipo === 'snapshotbt')      return jsonResponse(snapshotBTMensual(String(params.mes || '') || null)); // sync manual de la BT vigente a Supabase
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
@@ -347,6 +348,145 @@ function _gciaVentaPct(monto, iva, lista, costoRep, ccIva, otros) {
   return gcia / (lista * (1 - iva));
 }
 
+// =======================================================================
+// SNAPSHOT MENSUAL DE LA BT → Supabase (precios_lista + incentivos)
+// =======================================================================
+// Para que nunca más se pierda la economía de un mes cuando "Actual BT" se
+// pisa con la lista nueva (como pasó con mayo). Corre a diario por trigger
+// (snapshotBTDiario): si el mes corriente ya tiene BT en Supabase no hace
+// nada; si falta, copia la "Actual BT" vigente. Escribe con la service key
+// guardada en Script Properties (SUPA_SERVICE — NO está en el repo público;
+// se setea una vez vía doPost acción setsecret).
+// SYNC idempotente del mes: inserta lo que falta y ACTUALIZA lo que cambió,
+// pero solo filas de origen snapshot — lo cargado curado desde circulares no
+// se toca nunca (si difiere, se reporta en difCurados). Así, si "Actual BT"
+// se actualiza a mitad de mes (lista nueva, fe de erratas), el histórico se
+// corrige solo en la próxima corrida.
+const SNAPSHOT_ORIGEN = 'snapshot Actual BT';
+function snapshotBTMensual(mesOverride) {
+  const mes = mesOverride || _yyyyMm(new Date());
+  const svc = PropertiesService.getScriptProperties().getProperty('SUPA_SERVICE');
+  if (!svc) return { error: 'falta SUPA_SERVICE en Script Properties (doPost setsecret)' };
+  const hW = { apikey: svc, Authorization: 'Bearer ' + svc, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
+  const dif = (a, b) => Math.abs((Number(a) || 0) - (Number(b) || 0)) > 0.5;
+
+  const cat = _supaGet('/catalogo_modelos?select=codigo,nombre_corto,nombre_bt&activo=eq.true');
+  const byNorm = {};
+  for (const c of cat) {
+    if (c.nombre_corto) byNorm[_ntrim(c.nombre_corto)] = c;
+    if (c.nombre_bt)    byNorm[_ntrim(c.nombre_bt)]    = c;
+  }
+
+  // Estado actual del mes en Supabase
+  const precExist = {};   // nombre_corto → {lista, costo}
+  for (const p of _supaGet('/precios_lista?select=modelo,precio_lista,costo_concesionario&mes=eq.' + mes)) {
+    precExist[p.modelo] = p;
+  }
+  // lista_num es NOT NULL y único por (lista_num, modelo). Para un mes nuevo el
+  // snapshot no conoce el número de lista VW real, así que usa uno sintético
+  // derivado del mes (202607 = julio 2026): nunca colisiona con las listas
+  // reales (~890) y se distingue que vino del snapshot. Si después se quiere
+  // el número oficial, es un UPDATE de esa columna.
+  const listaNum = parseInt(mes.replace('-', ''), 10);
+  const incExist = {};    // nombre_corto|tipo → {civa, esSnapshot}
+  for (const r of _supaGet('/incentivos?select=nombre_corto,tipo,monto_civa,circular&mes=eq.' + mes)) {
+    incExist[r.nombre_corto + '|' + r.tipo] = { civa: Number(r.monto_civa) || 0, esSnapshot: String(r.circular || '').indexOf('snapshot') === 0 };
+  }
+
+  // "Actual BT": fila 2 header, datos desde 3. Cols (0-based, validadas contra
+  // Supabase junio): 1 modelo · 2 lista · 20 cc s/iva · 21 cc c/iva · 23 cupo ·
+  // 24 táctico · 25 whosale · 26 adic1 · 27 adic2 · 37 costo rep (AL).
+  const sh = SpreadsheetApp.openById(MADRE_ID).getSheetByName('Actual BT');
+  if (!sh) return { error: 'no encontré la pestaña Actual BT en la madre' };
+  const data = sh.getRange(3, 1, sh.getLastRow() - 2, 38).getValues();
+  const r2 = (x) => Math.round((Number(x) || 0) * 100) / 100;
+
+  const precNuevos = [], incNuevos = [], sinMatch = [], difCurados = [];
+  let precPatch = 0, incPatch = 0;
+  const patch = (path, body) => {
+    const res = UrlFetchApp.fetch(SUPA_URL + path, { method: 'patch', headers: hW, payload: JSON.stringify(body), muteHttpExceptions: true });
+    return res.getResponseCode() < 300;
+  };
+
+  for (const r of data) {
+    const modelo = String(r[1] || '').trim();
+    if (!modelo) continue;
+    const c = byNorm[_ntrim(modelo)];
+    if (!c) { sinMatch.push(modelo); continue; }
+    const lista = Number(r[2]) || 0;
+    if (lista <= 0) continue;
+
+    // --- precios_lista: insertar faltante / actualizar si cambió ---
+    const costo = r2(r[37]);
+    const pe = precExist[c.nombre_corto];
+    if (!pe) {
+      precNuevos.push({ mes: mes, codigo: c.codigo, modelo: c.nombre_corto, precio_lista: lista, costo_concesionario: costo, lista_num: listaNum });
+    } else if (dif(pe.precio_lista, lista) || dif(pe.costo_concesionario, costo)) {
+      if (patch('/precios_lista?mes=eq.' + mes + '&modelo=eq.' + encodeURIComponent(c.nombre_corto),
+                { precio_lista: lista, costo_concesionario: costo })) precPatch++;
+    }
+
+    // --- incentivos: insertar faltante / actualizar solo origen snapshot ---
+    // performance lleva su s/iva real (col U); el resto sigue la convención de
+    // la tabla (siva = civa/1,21, igual que las cargas de circulares).
+    const tipos = { performance: [r[21], r[20]], cupo: [r[23], null], tactico: [r[24], null], whosale: [r[25], null], adicional1: [r[26], null], adicional2: [r[27], null] };
+    for (const t in tipos) {
+      const civa = r2(tipos[t][0]);
+      if (civa <= 0) continue;
+      const ex = incExist[c.nombre_corto + '|' + t];
+      if (!ex) {
+        incNuevos.push({ mes: mes, codigo: c.codigo, nombre_corto: c.nombre_corto, tipo: t,
+                         monto_civa: civa, monto_siva: tipos[t][1] !== null ? r2(tipos[t][1]) : r2(civa / 1.21),
+                         condicion: null, circular: SNAPSHOT_ORIGEN });
+      } else if (dif(ex.civa, civa)) {
+        if (ex.esSnapshot) {
+          if (patch('/incentivos?mes=eq.' + mes + '&nombre_corto=eq.' + encodeURIComponent(c.nombre_corto) + '&tipo=eq.' + t,
+                    { monto_civa: civa, monto_siva: tipos[t][1] !== null ? r2(tipos[t][1]) : r2(civa / 1.21) })) incPatch++;
+        } else {
+          difCurados.push(c.nombre_corto + ' ' + t + ': BT=' + civa + ' vs cargado=' + ex.civa);
+        }
+      }
+    }
+  }
+
+  const out = { mes: mes, preciosNuevos: precNuevos.length, preciosActualizados: precPatch,
+                incNuevos: incNuevos.length, incActualizados: incPatch,
+                difCurados: difCurados, sinMatch: sinMatch };
+  if (precNuevos.length) {
+    const res = UrlFetchApp.fetch(SUPA_URL + '/precios_lista', { method: 'post', headers: hW, payload: JSON.stringify(precNuevos), muteHttpExceptions: true });
+    if (res.getResponseCode() >= 300) return { error: 'insert precios_lista falló: ' + res.getContentText().slice(0, 300), parcial: out };
+  }
+  if (incNuevos.length) {
+    const res = UrlFetchApp.fetch(SUPA_URL + '/incentivos', { method: 'post', headers: hW, payload: JSON.stringify(incNuevos), muteHttpExceptions: true });
+    if (res.getResponseCode() >= 300) return { error: 'insert incentivos falló: ' + res.getContentText().slice(0, 300), parcial: out };
+  }
+  return out;
+}
+
+// Handler del trigger diario (instalado vía doPost acción instalartriggersnapshot).
+function snapshotBTDiario() {
+  const r = snapshotBTMensual(null, false);
+  console.log('snapshotBTDiario:', JSON.stringify(r));
+}
+
+function _instalarTriggerSnapshot() {
+  const ya = ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'snapshotBTDiario');
+  if (ya) return { ok: true, yaExistia: true };
+  ScriptApp.newTrigger('snapshotBTDiario').timeBased().everyDays(1).atHour(7).create();
+  return { ok: true, creado: true };
+}
+
+// Guarda un secreto en Script Properties (escritura solamente — no hay forma de
+// leerlos por la API pública). Solo nombres whitelisteados.
+function _setSecret(body) {
+  const nombre = String(body.nombre || '').trim();
+  if (['SUPA_SERVICE'].indexOf(nombre) === -1) return { error: 'nombre no permitido' };
+  const valor = String(body.valor || '').trim();
+  if (!valor) return { error: 'falta valor' };
+  PropertiesService.getScriptProperties().setProperty(nombre, valor);
+  return { ok: true, nombre: nombre };
+}
+
 // Precios de la competencia desde "Resumen Competencia 2" (misma planilla madre;
 // la genera el Apps Script del Sheet Tito scrapeando elcerokm + espasa).
 // Cols: A=Tu Modelo · D=ElCeroKm (c/fyf) · G=Espasa (sin fyf) · H=Espasa (+fyf) · K=actualizado.
@@ -372,6 +512,17 @@ function _readCompetencia() {
 }
 
 function getBaratitoMotor() {
+  // Red de seguridad del histórico de BT: una vez cada ~6 h (con que alguien
+  // abra Baratito alcanza) sincroniza la "Actual BT" del mes a Supabase.
+  // No necesita trigger instalado (el web app no tiene permiso para crearlos).
+  try {
+    const c6 = CacheService.getScriptCache();
+    if (!c6.get('snapbt_check')) {
+      c6.put('snapbt_check', '1', 21600);
+      snapshotBTMensual(null);
+    }
+  } catch (e) {}
+
   const mesActual = _yyyyMm(new Date());
   // 1) precios de TODOS los meses cargados (tabla chica) → BT por mes para
   //    valuar cada venta con la BT de su mes; el mes vigente alimenta la tabla.
@@ -570,6 +721,8 @@ function doPost(e) {
     if (accion === 'resetbaratito')        return jsonResponse(resetBaratitoBaseline());
     if (accion === 'initbaratitobaseline') return jsonResponse(initBaratitoBaselineIfEmpty());
     if (accion === 'setajustecolor')       return jsonResponse(saveAjusteColor(body));
+    if (accion === 'setsecret')            return jsonResponse(_setSecret(body));
+    if (accion === 'instalartriggersnapshot') return jsonResponse(_instalarTriggerSnapshot());
     return jsonResponse({ error: 'accion desconocida: ' + accion });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
