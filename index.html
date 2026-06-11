@@ -1578,6 +1578,13 @@ async function loadAdmVentas(forzar) {
 }
 
 function _admKey(pv) { return String(pv).replace(/[^a-zA-Z0-9]/g, '_'); }
+// '2026-06-11' → '11/06/2026' (la adm trabaja con día/mes/año)
+function _fechaDMA(iso) {
+  const s = String(iso || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const p = s.split('-');
+  return p[2] + '/' + p[1] + '/' + p[0];
+}
 
 function renderAdmVentas() {
   const cont = document.getElementById('admVentasContent');
@@ -1608,12 +1615,12 @@ function renderAdmVentas() {
      + '<th style="text-align:left">PV</th><th style="text-align:left">Fecha</th><th style="text-align:left">Modelo</th>'
      + '<th style="text-align:left">Cliente</th><th style="text-align:left">Vendedor</th><th style="text-align:left">Serie</th>'
      + '<th style="text-align:left">Dominio</th><th style="text-align:left">F. patent.</th>'
-     + '<th>Patenta</th><th>Admin</th><th>Carpeta</th><th>Mes pat. est.</th><th>F. liq. créd.</th><th>Rev/Part</th><th>F. pago VW</th><th>Notas</th><th></th>'
+     + '<th>Patenta</th><th>Admin</th><th>Carpeta</th><th title="La adm confirma el mes una vez pagado el patentamiento (aunque Oversoft ya tenga la fecha)">Mes pat. ✔adm</th><th>F. liq. créd.</th><th>Rev/Part</th><th>F. pago VW</th><th>Notas</th><th></th>'
      + '</tr></thead><tbody>';
 
-  const inp = (key, campo, val, w, type) =>
+  const inp = (key, campo, val, w, type, borde) =>
     '<input type="' + (type || 'text') + '" id="adm_' + campo + '_' + key + '" value="' + escapeHtml(val || '') + '" '
-    + ' style="width:' + w + 'px;padding:3px 5px;border:1px solid var(--vw-grey-2);border-radius:5px;font-size:12px">';
+    + ' style="width:' + w + 'px;padding:3px 5px;border:1px solid ' + (borde || 'var(--vw-grey-2)') + ';border-radius:5px;font-size:12px">';
   const sel = (key, campo, val, opciones, w) => {
     let s = '<select id="adm_' + campo + '_' + key + '" style="width:' + w + 'px;padding:3px 4px;border:1px solid var(--vw-grey-2);border-radius:5px;font-size:12px">';
     s += '<option value=""' + (!val ? ' selected' : '') + '>—</option>';
@@ -1632,17 +1639,18 @@ function renderAdmVentas() {
     if (v.patentaCliente) extra.push('patenta cliente');
     h += '<tr id="admrow_' + key + '">'
        + '<td><b>' + escapeHtml(v.preventa) + '</b>' + (extra.length ? '<br><small style="color:var(--vw-grey-3)">' + extra.join(' · ') + '</small>' : '') + '</td>'
-       + '<td>' + (v.fechaPv || '') + '</td>'
+       + '<td>' + _fechaDMA(v.fechaPv) + '</td>'
        + '<td title="' + escapeHtml(v.modelo) + '">' + escapeHtml(String(v.modelo).replace(/^VW /, '').slice(0, 26)) + '</td>'
        + '<td title="' + escapeHtml(v.localidad) + '">' + escapeHtml(String(v.cliente).slice(0, 24)) + (v.localidad ? '<br><small style="color:var(--vw-grey-3)">' + escapeHtml(v.localidad) + '</small>' : '') + '</td>'
        + '<td>' + escapeHtml(v.vendedor) + '</td>'
        + '<td title="' + escapeHtml(v.chasis) + '">' + escapeHtml(v.serie) + '</td>'
        + '<td>' + (v.dominio ? '<b style="color:#0a7a30">' + escapeHtml(v.dominio) + '</b>' : '<span style="color:#cc6600">pend.</span>') + '</td>'
-       + '<td>' + (v.fechaPatentamiento || '<span style="color:var(--vw-grey-3)">—</span>') + '</td>'
+       + '<td>' + (v.fechaPatentamiento ? _fechaDMA(v.fechaPatentamiento) : '<span style="color:var(--vw-grey-3)">—</span>') + '</td>'
        + '<td>' + sel(key, 'patenta', m.patenta, ['TG', 'CL', 'RE'], 56) + '</td>'
        + '<td>' + inp(key, 'admin', m.admin, 78) + '</td>'
        + '<td>' + sel(key, 'tipo_carpeta', m.tipo_carpeta, ['Contado', 'Financia VW', 'Banco externo', 'Plan ahorro'], 110) + '</td>'
-       + '<td>' + inp(key, 'mes_patentamiento', m.mes_patentamiento, 90, 'month') + '</td>'
+       // Oversoft ya tiene fecha pero la adm no confirmó el mes → borde naranja
+       + '<td>' + inp(key, 'mes_patentamiento', m.mes_patentamiento, 90, 'month', (v.fechaPatentamiento && !m.mes_patentamiento) ? '#cc6600' : null) + '</td>'
        + '<td>' + inp(key, 'fecha_liquidacion', m.fecha_liquidacion, 108, 'date') + '</td>'
        + '<td>' + sel(key, 'reventa_particular', m.reventa_particular, ['PARTICULAR', 'REVENTA'], 92) + '</td>'
        + '<td>' + inp(key, 'fecha_pago_vw', m.fecha_pago_vw, 108, 'date') + '</td>'
@@ -1653,7 +1661,7 @@ function renderAdmVentas() {
   }
   if (!rows.length) h += '<tr><td colspan="17" class="empty">Sin carpetas para ese filtro.</td></tr>';
   h += '</tbody></table></div>';
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio y fecha de patentamiento salen de Oversoft en vivo (no se editan). El resto se completa acá y se guarda por fila con ✓.</div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio y fecha de patentamiento salen de Oversoft en vivo (no se editan). El resto se completa acá y se guarda por fila con ✓. El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes.</div>';
   cont.innerHTML = h;
 }
 

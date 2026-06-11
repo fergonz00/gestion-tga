@@ -77,6 +77,7 @@ function doGet(e) {
     if (tipo === 'motor')           return jsonResponse(_cached('motor', CACHE_TTL_SEC, fresh, getBaratitoMotor));     // MOTOR: calcula desde Supabase (no la planilla)
     if (tipo === 'snapshotbt')      return jsonResponse(snapshotBTMensual(String(params.mes || '') || null)); // sync manual de la BT vigente a Supabase
     if (tipo === 'admventas')       return jsonResponse(_cached('admventas', CACHE_TTL_SEC, fresh, getAdmVentas)); // adm de ventas: Oversoft + campos manuales
+    if (tipo === 'migraradmventas') return jsonResponse(migrarAdmVentasDesdeHoja()); // una-vez: vuelca lo ya cargado en la hoja a adm_ventas
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
@@ -356,7 +357,7 @@ function _gciaVentaPct(monto, iva, lista, costoRep, ccIva, otros) {
 // Espejo moderno de la hoja "adm de ventas" de la madre; alimentará
 // Patentamientos cuando esté validado.
 // =======================================================================
-const ADM_VENTAS_DESDE = '2026-03-01';
+const ADM_VENTAS_DESDE = '2026-01-01';
 
 // 'PV 08032/1' (Oversoft) → '8032/1' (como la hoja). Misma normalización que
 // usa el front de ventas para matchear contra la hoja PVs.
@@ -447,6 +448,72 @@ function getAdmVentas() {
     };
   });
   return { ventas: ventas, total: ventas.length, desde: ADM_VENTAS_DESDE, updatedAt: new Date().toISOString() };
+}
+
+// MIGRACIÓN una-vez (re-ejecutable): lo que la administrativa YA cargó en la
+// hoja "adm de ventas" (espejo "patentamientos") se vuelca a la tabla
+// adm_ventas. Solo inserta PVs que NO existan en la tabla (lo cargado en el
+// portal nunca se pisa). Cols hoja (0-based): 1=PV · 2=fecha PV · 5=mes pat
+// (texto "ABRIL") · 6=patenta · 7=admin · 8=AA carpeta · 10=fecha liq ·
+// 11=reventa/particular · 19=fecha pago VW.
+function migrarAdmVentasDesdeHoja() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName('patentamientos');
+  if (!sh) return { error: 'no encontré la hoja patentamientos' };
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return { migradas: 0 };
+  const raw = sh.getRange(1, 1, lastRow, 20).getValues();
+  const display = sh.getRange(1, 1, lastRow, 20).getDisplayValues();
+
+  const existentes = {};
+  try { for (const m of _supaGet('/adm_ventas?select=preventa')) existentes[m.preventa] = true; } catch (e) {}
+
+  const isoDate = (v, d) => {
+    const f = _parseFecha(v, d);
+    return f ? Utilities.formatDate(f, 'America/Argentina/Buenos_Aires', 'yyyy-MM-dd') : null;
+  };
+
+  const rows = [];
+  let saltadas = 0;
+  for (let i = 1; i < raw.length; i++) {
+    const pv = _normPv(display[i][1]);
+    if (!pv || pv === '0' || !/\d/.test(pv)) continue;
+    if (existentes[pv]) { saltadas++; continue; }
+    existentes[pv] = true;   // dedup dentro de la propia hoja (filas repetidas)
+    const fechaPv = _parseFecha(raw[i][2], display[i][2]);
+    // mes pat: texto "ABRIL" → 'yyyy-mm' (año de la fecha PV; +1 si el mes es anterior)
+    let mesPat = null;
+    const mesNum = _MES_TXT_A_NUM[_norm(display[i][5])];
+    if (mesNum && fechaPv) {
+      let anio = fechaPv.getFullYear();
+      if (parseInt(mesNum, 10) < fechaPv.getMonth() + 1) anio += 1;
+      mesPat = anio + '-' + mesNum;
+    }
+    const limpio = (x) => { const s = String(x || '').trim(); return s || null; };
+    const fila = {
+      preventa: pv,
+      mes_patentamiento:  mesPat,
+      patenta:            limpio(display[i][6]),
+      admin:              limpio(display[i][7]),
+      tipo_carpeta:       limpio(display[i][8]),
+      fecha_liquidacion:  isoDate(raw[i][10], display[i][10]),
+      reventa_particular: limpio(display[i][11]),
+      fecha_pago_vw:      isoDate(raw[i][19], display[i][19]),
+      updated_by:         'migracion hoja',
+    };
+    // solo migrar filas que tengan ALGO cargado por la adm
+    if (fila.mes_patentamiento || fila.patenta || fila.admin || fila.tipo_carpeta ||
+        fila.fecha_liquidacion || fila.reventa_particular || fila.fecha_pago_vw) {
+      rows.push(fila);
+    }
+  }
+  if (rows.length) {
+    const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates' };
+    const res = UrlFetchApp.fetch(SUPA_URL + '/adm_ventas?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(rows), muteHttpExceptions: true });
+    if (res.getResponseCode() >= 300) return { error: 'insert falló: ' + res.getContentText().slice(0, 300) };
+  }
+  try { CacheService.getScriptCache().remove('admventas'); } catch (e) {}
+  return { migradas: rows.length, yaExistian: saltadas };
 }
 
 // Upsert de los campos manuales de una carpeta (key = # preventa normalizado).
