@@ -347,6 +347,30 @@ function _gciaVentaPct(monto, iva, lista, costoRep, ccIva, otros) {
   return gcia / (lista * (1 - iva));
 }
 
+// Precios de la competencia desde "Resumen Competencia 2" (misma planilla madre;
+// la genera el Apps Script del Sheet Tito scrapeando elcerokm + espasa).
+// Cols: A=Tu Modelo · D=ElCeroKm (c/fyf) · G=Espasa (sin fyf) · H=Espasa (+fyf) · K=actualizado.
+// Para comparar contra nuestro precio (c/FYF) usar D y H.
+function _readCompetencia() {
+  const out = { porModelo: {}, actualizado: null };
+  try {
+    const sh = SpreadsheetApp.openById(MADRE_ID).getSheetByName('Resumen Competencia 2');
+    if (!sh) return out;
+    const last = sh.getLastRow();
+    if (last < 2) return out;
+    const v = sh.getRange(2, 1, last - 1, 11).getValues();
+    for (const r of v) {
+      const k = _ntrim(r[0]);
+      if (!k) continue;
+      const el0km = Number(r[3]) || 0;
+      const espasaFyf = Number(r[7]) || 0;
+      if (el0km || espasaFyf) out.porModelo[k] = { el0km: el0km, espasaFyf: espasaFyf };
+      if (!out.actualizado && r[10]) out.actualizado = String(r[10]);
+    }
+  } catch (e) {}
+  return out;
+}
+
 function getBaratitoMotor() {
   const mesActual = _yyyyMm(new Date());
   // 1) precios de TODOS los meses cargados (tabla chica) → BT por mes para
@@ -391,6 +415,9 @@ function getBaratitoMotor() {
     ventasDet = od.ventasDet || {};
     sinCatalogo = od.sinCatalogo || [];
   } catch (e) {}
+
+  // Competencia (elcerokm + espasa, ambos comparables c/FYF)
+  const comp = _readCompetencia();
 
   // Ajustes de precio por color (tabla baratito_ajustes_color; color '*' = todos)
   const ajustesByNc = {};
@@ -454,6 +481,7 @@ function getBaratitoMotor() {
                        .sort((a, b) => b.stock - a.stock || a.color.localeCompare(b.color)),
       ajustes:       ajustesByNc[c.nombre_corto] || {},
       nombreCorto:   c.nombre_corto,    // clave para guardar ajustes
+      competencia:   comp.porModelo[_ntrim(c.nombre_bt || c.nombre_corto)] || comp.porModelo[_ntrim(c.nombre_corto)] || null,
       sim:           { lista: lista, costoRep: costo, cc90Iva: cc90Iva, otros: lista > 0 ? otros / lista : 0 },
       codigo:        c.codigo, familia: c.familia,
     });
@@ -482,6 +510,7 @@ function getBaratitoMotor() {
     stockTotalOversoft: stockTotalOversoft,   // todas las unidades NO entregadas en Oversoft
     stockCatalogado: stockCatalogado,         // las que caen en un modelo del catálogo
     sinCatalogo: sinCatalogo,                 // descripciones de Oversoft que no matchean el catálogo
+    competenciaActualizado: comp.actualizado, // sello de la última corrida del scraper de competencia
     constantes: { fyf: PRECIOS_FYF, iibb: PRECIOS_IIBB, comision: PRECIOS_COMISION, cheque: PRECIOS_CHEQUE, iva: 1.21 },
     updatedAt: new Date().toISOString(),
   };

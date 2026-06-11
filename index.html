@@ -1647,7 +1647,8 @@ function renderPrecios() {
        + '<td class="num" data-label="Dto VW">' + (Number(m.dtoVw) * 100).toFixed(1) + '%</td>'
        + '<td class="num" data-label="Dto TG"><b>' + (Number(m.dtoTG) * 100).toFixed(0) + '%</b></td>'
        + '<td class="num" data-label="Precio oferta"><b>' + fmtPesos(precioFila) + '</b>'
-       + (tieneAjustes ? ' <span title="Tiene precio ajustado a mano (ver colores en el detalle)" style="cursor:help">✎</span>' : '') + '</td>'
+       + (tieneAjustes ? ' <span title="Tiene precio ajustado a mano (ver colores en el detalle)" style="cursor:help">✎</span>' : '')
+       + _compLineas(m, precioFila) + '</td>'
        + '<td class="num" data-label="Stock">' + (Number(m.stock) || 0) + '</td>'
        + '<td class="num" data-label="Vend.">' + _ventasVentana(m) + '</td>'
        + '<td class="num" data-label="Gcia/lista" style="font-weight:700;color:' + _gClsP(g) + '">' + (g * 100).toFixed(2) + '%</td>'
@@ -1681,8 +1682,29 @@ function renderPrecios() {
        + '<td colspan="2"></td></tr>';
   }
   h += '</tbody></table></div>';
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Precio = lista (Supabase) − dto + FYF, más el ajuste a mano si lo hay (✎); ganancia con incentivos, IIBB (1,35%), comisión (1,40%) e imp. cheque (0,85%). Stock y colores en vivo de Oversoft.</div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Precio = lista (Supabase) − dto + FYF, más el ajuste a mano si lo hay (✎); ganancia con incentivos, IIBB (1,35%), comisión (1,40%) e imp. cheque (0,85%). Stock y colores en vivo de Oversoft.'
+     + ' Competencia: 0km publica c/FYF, a Espasa se le suma FYF para comparar; verde = estás más barato.'
+     + (preciosData.competenciaActualizado ? ' Competencia actualizada: ' + escapeHtml(String(preciosData.competenciaActualizado)) + '.' : '')
+     + '</div>';
   cont.innerHTML = h;
+}
+
+// Líneas de competencia bajo el precio: ElCeroKm (publica c/FYF) y Espasa
+// (publica SIN flete y formularios → se compara su valor +FYF, ya calculado
+// en la hoja). Verde = nuestro precio es más barato; rojo = el de ellos.
+function _compLineas(m, nuestroPrecio) {
+  const c = m.competencia;
+  if (!c) return '';
+  const linea = (lbl, val, title) => {
+    if (!(val > 0)) return '';
+    const dif = val - nuestroPrecio;                     // >0 → estamos más baratos
+    const col = dif >= 0 ? '#0a7a30' : '#c00';
+    const difTxt = (dif >= 0 ? '+' : '−') + fmtPesosCompact(Math.abs(dif));
+    return '<div style="font-size:11px;font-weight:400;color:var(--vw-grey-3);white-space:nowrap" title="' + title + '">'
+         + lbl + ' ' + fmtPesos(val) + ' <span style="color:' + col + '">(' + difTxt + ')</span></div>';
+  };
+  return linea('0km', c.el0km, 'ElCeroKm — publica con flete y formularios incluidos')
+       + linea('Espasa', c.espasaFyf, 'Espasa publica SIN flete y formularios: se le suma FYF para comparar');
 }
 
 // Ajuste vigente para un color: el específico pisa al general ('*').
