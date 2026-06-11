@@ -1723,7 +1723,10 @@ function _precioDetalle(m, key) {
   h += li('FYF (flete+form.)', fmtPesos(cos.fyf));
   h += li('Stock', (Number(m.stock)||0));
   h += li('Ventas (' + ({3:'últ. 3 meses',2:'últ. 2 meses',1:'mes actual'}[preciosVentasMeses]) + ')', _ventasVentana(m));
-  h += li('Prom. gcia/venta real', (Number(m.promGcia)*100).toFixed(2) + '%');
+  // En Motor el prom viene con n (ventas valuadas con la BT de su mes); en Planilla es la col N de la hoja.
+  const pgN = Number(m.promGciaN) || 0;
+  const pgNota = pgN ? ' <small style="color:var(--vw-grey-3)">(' + pgN + ' vta' + (pgN !== 1 ? 's' : '') + (Number(m.promGciaSinBt) ? ' · ' + m.promGciaSinBt + ' s/BT' : '') + ')</small>' : '';
+  h += li('Prom. gcia/venta real' + pgNota, (Number(m.promGcia)*100).toFixed(2) + '%');
   h += li('Ganancia actual', '<b style="color:' + _gClsP(Number(m.gananciaPct)||0) + '">' + fmtPesos(m.gananciaPesos) + ' · ' + ((Number(m.gananciaPct)||0)*100).toFixed(2) + '%</b>');
   h += '</div>';
 

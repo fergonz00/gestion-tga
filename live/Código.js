@@ -258,6 +258,7 @@ function _ntrim(s) {
 //   VENTAS = preventas por FECHA de creación, no anuladas, 0km (tipopv 'O', sin
 //            usados). Verificado: coincide al palo con la hoja PVs.
 // Devuelve { stockPorTrim:{nc:n}, stockTotal, ventasPorTrim:{nc:{mes:n}},
+//            ventasDet:{nc:[{mes,monto,iva}]} (para gcia real por venta),
 //            sinCatalogo:[{desc,stock,ventas}] } (lo que no matcheó el catálogo).
 function _oversoftMotorData(catByNorm) {
   const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
@@ -291,9 +292,10 @@ function _oversoftMotorData(catByNorm) {
   const hoy = new Date();
   const d6 = new Date(hoy.getFullYear(), hoy.getMonth() - 5, 1);
   const desdeStr = d6.getFullYear() + '-' + String(d6.getMonth() + 1).padStart(2, '0') + '-01';
-  const res3 = UrlFetchApp.fetch(OVERSOFT_URL + '/preventas?select=modelo,fecha&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + desdeStr + '&limit=5000', h);
+  const res3 = UrlFetchApp.fetch(OVERSOFT_URL + '/preventas?select=modelo,fecha,precioventa,tasadeivaid&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + desdeStr + '&limit=5000', h);
   const pvs = (res3.getResponseCode() < 300) ? JSON.parse(res3.getContentText()) : [];
   const ventasPorTrim = {};
+  const ventasDet = {};   // nc → [{mes, monto, iva}] para la gcia real por venta
   for (const pv of pvs) {
     const nc = ncDe(pv.modelo);
     if (!nc) { anotarSinCat(pv.modelo, 'ventas'); continue; }
@@ -301,30 +303,57 @@ function _oversoftMotorData(catByNorm) {
     const mk = String(pv.fecha).slice(0, 7);
     if (!ventasPorTrim[nc]) ventasPorTrim[nc] = {};
     ventasPorTrim[nc][mk] = (ventasPorTrim[nc][mk] || 0) + 1;
+    const monto = Number(pv.precioventa) || 0;
+    if (monto > 0) {
+      if (!ventasDet[nc]) ventasDet[nc] = [];
+      // IVA por tasadeivaid de Oversoft: 3 = 10,5% (pickups), resto 21%.
+      ventasDet[nc].push({ mes: mk, monto: monto, iva: (Number(pv.tasadeivaid) === 3 ? 0.105 : 0.21) });
+    }
   }
   return { stockPorTrim: stockPorTrim, stockTotal: stockTotal, ventasPorTrim: ventasPorTrim,
-           sinCatalogo: Object.values(sinCat) };
+           ventasDet: ventasDet, sinCatalogo: Object.values(sinCat) };
+}
+
+// Gcia real de UNA venta, % sobre lista — réplica EXACTA de la fórmula de la
+// hoja PVs (filas vivas, leída de la madre 2026-06-11), valuada con la BT del
+// mes que se le pase. Convenciones de la hoja: neto = bruto·(1−IVA); comisión
+// 1,5% (neta si dto>5%, s/precio si no); IIBB = max(1,4% venta neta, 10% dif
+// venta vs costo neta). Diferencias documentadas vs la hoja: costo histórico ≈
+// costo rep del mes (Oversoft tiene costounidad=0) — solo pesa cuando se vende
+// arriba del costo (4/201 casos); accesorios y "ahorro compra" no disponibles.
+function _gciaVentaPct(monto, iva, lista, costoRep, ccIva, otros) {
+  if (!(lista > 0) || !(monto > 0)) return null;
+  const U = costoRep - ccIva - otros;                 // costo rep tomando incentivos
+  const dto = 1 - monto / lista;
+  const com = (dto > 0.05) ? (monto / (1 + iva)) * 0.015 : 0.015 * monto;
+  const iibb = Math.max(0.014 * monto * (1 - iva), 0.1 * (monto - costoRep) * (1 - iva));
+  const gcia = monto * (1 - iva) - U * (1 - iva) - com - iibb;
+  return gcia / (lista * (1 - iva));
 }
 
 function getBaratitoMotor() {
   const mesActual = _yyyyMm(new Date());
-  // 1) precios del mes (fallback al mes más reciente cargado)
-  let prec = _supaGet('/precios_lista?select=codigo,modelo,precio_lista,costo_concesionario&mes=eq.' + mesActual);
-  let mesUsado = mesActual;
-  if (!prec.length) {
-    const ult = _supaGet('/precios_lista?select=mes&order=mes.desc&limit=1');
-    if (ult.length) { mesUsado = ult[0].mes; prec = _supaGet('/precios_lista?select=codigo,modelo,precio_lista,costo_concesionario&mes=eq.' + mesUsado); }
+  // 1) precios de TODOS los meses cargados (tabla chica) → BT por mes para
+  //    valuar cada venta con la BT de su mes; el mes vigente alimenta la tabla.
+  const btPorMes = {};   // mes → nc → {lista, costo}
+  for (const p of _supaGet('/precios_lista?select=mes,codigo,modelo,precio_lista,costo_concesionario')) {
+    if (!btPorMes[p.mes]) btPorMes[p.mes] = {};
+    btPorMes[p.mes][p.modelo] = p;
   }
-  const precByNc = {};
-  for (const p of prec) precByNc[p.modelo] = p;
+  const mesesBt = Object.keys(btPorMes).sort();
+  if (!mesesBt.length) return { error: 'sin precios_lista cargados' };
+  const mesUsado = btPorMes[mesActual] ? mesActual : mesesBt[mesesBt.length - 1];
+  const precByNc = btPorMes[mesUsado];
 
-  // 2) catálogo, 3) incentivos del mes, 4) dto
+  // 2) catálogo, 3) incentivos de TODOS los meses, 4) dto
   const cat = _supaGet('/catalogo_modelos?select=codigo,nombre_corto,nombre_bt,familia&activo=eq.true');
-  const incByNc = {};
-  for (const r of _supaGet('/incentivos?select=nombre_corto,tipo,monto_civa&mes=eq.' + mesUsado)) {
-    if (!incByNc[r.nombre_corto]) incByNc[r.nombre_corto] = {};
-    incByNc[r.nombre_corto][r.tipo] = Number(r.monto_civa) || 0;
+  const incPorMes = {};  // mes → nc → {tipo: civa}
+  for (const r of _supaGet('/incentivos?select=mes,nombre_corto,tipo,monto_civa')) {
+    if (!incPorMes[r.mes]) incPorMes[r.mes] = {};
+    if (!incPorMes[r.mes][r.nombre_corto]) incPorMes[r.mes][r.nombre_corto] = {};
+    incPorMes[r.mes][r.nombre_corto][r.tipo] = Number(r.monto_civa) || 0;
   }
+  const incByNc = incPorMes[mesUsado] || {};
   const dtoByNc = {};
   for (const d of _supaGet('/dto_tg?select=nombre_corto,dto')) dtoByNc[d.nombre_corto] = Number(d.dto) || 0;
 
@@ -336,12 +365,13 @@ function getBaratitoMotor() {
     if (c.nombre_bt)    catByNorm[_ntrim(c.nombre_bt)]    = c.nombre_corto;
   }
   // Stock Y ventas, ambos genuinos desde Oversoft (por trim exacto).
-  let stockPorTrim = {}, stockTotalOversoft = 0, ventasNc = {}, sinCatalogo = [];
+  let stockPorTrim = {}, stockTotalOversoft = 0, ventasNc = {}, ventasDet = {}, sinCatalogo = [];
   try {
     const od = _oversoftMotorData(catByNorm);
     stockPorTrim = od.stockPorTrim;
     stockTotalOversoft = od.stockTotal;
     ventasNc = od.ventasPorTrim;
+    ventasDet = od.ventasDet || {};
     sinCatalogo = od.sinCatalogo || [];
   } catch (e) {}
 
@@ -360,6 +390,21 @@ function getBaratitoMotor() {
     const vn = lista * (1 - dto);
     const iibb = PRECIOS_IIBB * (vn / 1.21), comision = PRECIOS_COMISION * (vn / 1.21), cheque = PRECIOS_CHEQUE * vn;
     const an = ((vn - costo + cc90Iva + otros) / lista) * lista - iibb - comision - cheque;
+
+    // Prom. gcia/venta REAL: cada venta de Oversoft valuada con la BT de SU mes.
+    // Ventas de meses sin BT cargada (ej. marzo) quedan afuera y se cuentan aparte.
+    let gciaSum = 0, gciaN = 0, gciaSinBt = 0;
+    for (const vd of (ventasDet[c.nombre_corto] || [])) {
+      const btMes = btPorMes[vd.mes] && btPorMes[vd.mes][c.nombre_corto];
+      const im = (incPorMes[vd.mes] || {})[c.nombre_corto] || {};
+      const listaM = btMes ? Number(btMes.precio_lista) || 0 : 0;
+      if (listaM <= 0) { gciaSinBt++; continue; }
+      const ccM = Number(im.performance) || 0;
+      const otrosM = (Number(im.tactico)||0) + (Number(im.whosale)||0) + (Number(im.adicional1)||0) + (Number(im.adicional2)||0) + (Number(im.cupo)||0);
+      const y = _gciaVentaPct(vd.monto, vd.iva, listaM, Number(btMes.costo_concesionario) || 0, ccM, otrosM);
+      if (y === null) { gciaSinBt++; continue; }
+      gciaSum += y; gciaN++;
+    }
     out.push({
       modelo:        c.nombre_bt || c.nombre_corto,
       lista:         lista,
@@ -370,7 +415,10 @@ function getBaratitoMotor() {
       gananciaPct:   an / lista,
       gananciaPesos: an,
       stock:         stk,
-      vendidos:      0, vendidos60: 0, promGcia: 0,
+      vendidos:      0, vendidos60: 0,
+      promGcia:      gciaN ? gciaSum / gciaN : 0,
+      promGciaN:     gciaN,          // sobre cuántas ventas se promedió
+      promGciaSinBt: gciaSinBt,      // ventas sin BT de su mes (quedan afuera)
       costos:        { iibb: iibb, comision: comision, cheque: cheque, fyf: PRECIOS_FYF },
       incentivos:    { cc90: 0, cc90Iva: cc90Iva, tactico: Number(ii.tactico)||0, whosale: Number(ii.whosale)||0, adicional1: Number(ii.adicional1)||0, adicional2: Number(ii.adicional2)||0, cupo: Number(ii.cupo)||0 },
       ventasPorMes:  ventasNc[c.nombre_corto] || {},
