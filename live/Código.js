@@ -426,6 +426,23 @@ function getBaratitoMotor() {
       codigo:        c.codigo, familia: c.familia,
     });
   }
+  // Orden de la PLANILLA (solo cosmético, pedido de Fer 11-jun): mismos puestos
+  // que la col B de "Actual BT" en la madre. Modelos que no figuran van al final
+  // manteniendo su orden relativo. Si la madre no responde, queda el orden actual.
+  try {
+    const sh = SpreadsheetApp.openById(MADRE_ID).getSheetByName('Actual BT');
+    const filas = sh.getRange(3, 2, Math.max(1, sh.getLastRow() - 2), 1).getValues();
+    const ordenBt = {};
+    let pos = 0;
+    for (const f of filas) {
+      const k = _ntrim(f[0]);
+      if (k && ordenBt[k] === undefined) ordenBt[k] = pos++;
+    }
+    out.forEach((m, i) => { m._ord = (ordenBt[_ntrim(m.modelo)] !== undefined) ? ordenBt[_ntrim(m.modelo)] : 9999 + i; });
+    out.sort((a, b) => a._ord - b._ord);
+    out.forEach(m => { delete m._ord; });
+  } catch (e) {}
+
   let stockCatalogado = 0;
   for (const m of out) stockCatalogado += (Number(m.stock) || 0);
   return {
