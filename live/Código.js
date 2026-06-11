@@ -243,6 +243,7 @@ function _ntrim(s) {
   s = String(s || '').toLowerCase();
   s = s.replace(/bi[\s-]*tono/g, 'bitono');
   s = s.replace(/\b(vw|nuevo)\b/g, '');
+  s = s.replace(/\bmtg([123])\b/g, 'mt');   // Oversoft a veces pega la generación al cambio: "MTG3" = "MT G3"
   s = s.replace(/\bmy2[0-9]\b/g, '').replace(/\b20[0-9][0-9]\b/g, '').replace(/\bg[123]\b/g, '');
   s = s.replace(/\bph[ag]\b/g, '').replace(/\b(pack|safe|i|ii|se|cd|l)\b/g, '');
   return s.replace(/[^a-z0-9]/g, '');
@@ -256,7 +257,8 @@ function _ntrim(s) {
 //   STOCK  = disponible para vender: físico libre + a recibir, SIN PV, SIN asignar.
 //   VENTAS = preventas por FECHA de creación, no anuladas, 0km (tipopv 'O', sin
 //            usados). Verificado: coincide al palo con la hoja PVs.
-// Devuelve { stockPorTrim:{nc:n}, stockTotal, ventasPorTrim:{nc:{mes:n}} }.
+// Devuelve { stockPorTrim:{nc:n}, stockTotal, ventasPorTrim:{nc:{mes:n}},
+//            sinCatalogo:[{desc,stock,ventas}] } (lo que no matcheó el catálogo).
 function _oversoftMotorData(catByNorm) {
   const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
   // 1) descripción por código completo (paginado)
@@ -271,12 +273,19 @@ function _oversoftMotorData(catByNorm) {
     off += 1000;
   }
   const ncDe = (codFull) => { const d = desc[String(codFull || '').trim()]; return d ? (catByNorm[_ntrim(d)] || null) : null; };
+  // Registro de lo que NO matchea, para que el front pueda mostrar cuáles son.
+  const sinCat = {};
+  const anotarSinCat = (codFull, campo) => {
+    const d = desc[String(codFull || '').trim()] || ('código ' + String(codFull || '?').trim());
+    if (!sinCat[d]) sinCat[d] = { desc: d, stock: 0, ventas: 0 };
+    sinCat[d][campo]++;
+  };
 
   // 2) STOCK
   const res2 = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo&entregada=eq.false&asignada=eq.false&preventa=eq.&limit=3000', h);
   const us = (res2.getResponseCode() < 300) ? JSON.parse(res2.getContentText()) : [];
   const stockPorTrim = {}; let stockTotal = 0;
-  for (const u of us) { stockTotal++; const nc = ncDe(u.modelo); if (nc) stockPorTrim[nc] = (stockPorTrim[nc] || 0) + 1; }
+  for (const u of us) { stockTotal++; const nc = ncDe(u.modelo); if (nc) stockPorTrim[nc] = (stockPorTrim[nc] || 0) + 1; else anotarSinCat(u.modelo, 'stock'); }
 
   // 3) VENTAS (preventas no anuladas, 0km, por fecha) — últimos ~6 meses
   const hoy = new Date();
@@ -287,12 +296,14 @@ function _oversoftMotorData(catByNorm) {
   const ventasPorTrim = {};
   for (const pv of pvs) {
     const nc = ncDe(pv.modelo);
-    if (!nc || !pv.fecha) continue;
+    if (!nc) { anotarSinCat(pv.modelo, 'ventas'); continue; }
+    if (!pv.fecha) continue;
     const mk = String(pv.fecha).slice(0, 7);
     if (!ventasPorTrim[nc]) ventasPorTrim[nc] = {};
     ventasPorTrim[nc][mk] = (ventasPorTrim[nc][mk] || 0) + 1;
   }
-  return { stockPorTrim: stockPorTrim, stockTotal: stockTotal, ventasPorTrim: ventasPorTrim };
+  return { stockPorTrim: stockPorTrim, stockTotal: stockTotal, ventasPorTrim: ventasPorTrim,
+           sinCatalogo: Object.values(sinCat) };
 }
 
 function getBaratitoMotor() {
@@ -325,12 +336,13 @@ function getBaratitoMotor() {
     if (c.nombre_bt)    catByNorm[_ntrim(c.nombre_bt)]    = c.nombre_corto;
   }
   // Stock Y ventas, ambos genuinos desde Oversoft (por trim exacto).
-  let stockPorTrim = {}, stockTotalOversoft = 0, ventasNc = {};
+  let stockPorTrim = {}, stockTotalOversoft = 0, ventasNc = {}, sinCatalogo = [];
   try {
     const od = _oversoftMotorData(catByNorm);
     stockPorTrim = od.stockPorTrim;
     stockTotalOversoft = od.stockTotal;
     ventasNc = od.ventasPorTrim;
+    sinCatalogo = od.sinCatalogo || [];
   } catch (e) {}
 
   const out = [];
@@ -372,6 +384,7 @@ function getBaratitoMotor() {
     modelos: out, total: out.length, fuente: 'Motor TGA · Supabase (lista ' + mesUsado + ' + incentivos + Oversoft)',
     stockTotalOversoft: stockTotalOversoft,   // todas las unidades NO entregadas en Oversoft
     stockCatalogado: stockCatalogado,         // las que caen en un modelo del catálogo
+    sinCatalogo: sinCatalogo,                 // descripciones de Oversoft que no matchean el catálogo
     constantes: { fyf: PRECIOS_FYF, iibb: PRECIOS_IIBB, comision: PRECIOS_COMISION, cheque: PRECIOS_CHEQUE, iva: 1.21 },
     updatedAt: new Date().toISOString(),
   };

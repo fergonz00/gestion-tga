@@ -1667,7 +1667,12 @@ function renderPrecios() {
     if (preciosFuente === 'motor' && preciosData.stockTotalOversoft != null && !hayFiltroTexto) {
       const gap = preciosData.stockTotalOversoft - (preciosData.stockCatalogado || 0);
       totStock = preciosData.stockTotalOversoft;
-      if (gap > 0) stockNota = ' <span style="font-weight:400;font-size:11px;color:var(--vw-grey-3)">(' + gap + ' s/cat.)</span>';
+      if (gap > 0) {
+        const detSinCat = (preciosData.sinCatalogo || []).filter(s => s.stock > 0)
+          .map(s => s.stock + ' u. ' + s.desc).join('\n');
+        stockNota = ' <span style="font-weight:400;font-size:11px;color:var(--vw-grey-3)' + (detSinCat ? ';cursor:help;text-decoration:underline dotted' : '') + '"'
+                  + (detSinCat ? ' title="Sin catalogar:\n' + escapeHtml(detSinCat) + '"' : '') + '>(' + gap + ' s/cat.)</span>';
+      }
     }
     const totVend = rows.reduce((a, m) => a + _ventasVentana(m), 0);
     h += '<tr style="font-weight:700;background:#eef3fb;border-top:2px solid var(--vw-blue)">'
