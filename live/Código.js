@@ -285,11 +285,24 @@ function _oversoftMotorData(catByNorm) {
     sinCat[d][campo]++;
   };
 
-  // 2) STOCK
-  const res2 = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo&entregada=eq.false&asignada=eq.false&preventa=eq.&limit=3000', h);
+  // 2) STOCK (con color: tabla colores = colorid → descripción)
+  const colorDe = {};
+  try {
+    const resC = UrlFetchApp.fetch(OVERSOFT_URL + '/colores?select=colorid,descripcion&limit=2000', h);
+    if (resC.getResponseCode() < 300) for (const c of JSON.parse(resC.getContentText())) colorDe[String(c.colorid)] = String(c.descripcion || '').trim();
+  } catch (e) {}
+  const res2 = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo,color&entregada=eq.false&asignada=eq.false&preventa=eq.&limit=3000', h);
   const us = (res2.getResponseCode() < 300) ? JSON.parse(res2.getContentText()) : [];
-  const stockPorTrim = {}; let stockTotal = 0;
-  for (const u of us) { stockTotal++; const nc = ncDe(u.modelo); if (nc) stockPorTrim[nc] = (stockPorTrim[nc] || 0) + 1; else anotarSinCat(u.modelo, 'stock'); }
+  const stockPorTrim = {}; const stockColorPorTrim = {}; let stockTotal = 0;
+  for (const u of us) {
+    stockTotal++;
+    const nc = ncDe(u.modelo);
+    if (!nc) { anotarSinCat(u.modelo, 'stock'); continue; }
+    stockPorTrim[nc] = (stockPorTrim[nc] || 0) + 1;
+    const col = colorDe[String(u.color)] || ('color ' + u.color);
+    if (!stockColorPorTrim[nc]) stockColorPorTrim[nc] = {};
+    stockColorPorTrim[nc][col] = (stockColorPorTrim[nc][col] || 0) + 1;
+  }
 
   // 3) VENTAS (preventas no anuladas, 0km, por fecha) — últimos ~6 meses
   const hoy = new Date();
@@ -313,8 +326,8 @@ function _oversoftMotorData(catByNorm) {
       ventasDet[nc].push({ mes: mk, monto: monto, iva: (Number(pv.tasadeivaid) === 3 ? 0.105 : 0.21) });
     }
   }
-  return { stockPorTrim: stockPorTrim, stockTotal: stockTotal, ventasPorTrim: ventasPorTrim,
-           ventasDet: ventasDet, sinCatalogo: Object.values(sinCat) };
+  return { stockPorTrim: stockPorTrim, stockColorPorTrim: stockColorPorTrim, stockTotal: stockTotal,
+           ventasPorTrim: ventasPorTrim, ventasDet: ventasDet, sinCatalogo: Object.values(sinCat) };
 }
 
 // Gcia real de UNA venta, % sobre lista — réplica EXACTA de la fórmula de la
@@ -368,14 +381,24 @@ function getBaratitoMotor() {
     if (c.nombre_bt)    catByNorm[_ntrim(c.nombre_bt)]    = c.nombre_corto;
   }
   // Stock Y ventas, ambos genuinos desde Oversoft (por trim exacto).
-  let stockPorTrim = {}, stockTotalOversoft = 0, ventasNc = {}, ventasDet = {}, sinCatalogo = [];
+  let stockPorTrim = {}, stockColorPorTrim = {}, stockTotalOversoft = 0, ventasNc = {}, ventasDet = {}, sinCatalogo = [];
   try {
     const od = _oversoftMotorData(catByNorm);
     stockPorTrim = od.stockPorTrim;
+    stockColorPorTrim = od.stockColorPorTrim || {};
     stockTotalOversoft = od.stockTotal;
     ventasNc = od.ventasPorTrim;
     ventasDet = od.ventasDet || {};
     sinCatalogo = od.sinCatalogo || [];
+  } catch (e) {}
+
+  // Ajustes de precio por color (tabla baratito_ajustes_color; color '*' = todos)
+  const ajustesByNc = {};
+  try {
+    for (const a of _supaGet('/baratito_ajustes_color?select=nombre_corto,color,ajuste')) {
+      if (!ajustesByNc[a.nombre_corto]) ajustesByNc[a.nombre_corto] = {};
+      ajustesByNc[a.nombre_corto][a.color] = Number(a.ajuste) || 0;
+    }
   } catch (e) {}
 
   const out = [];
@@ -425,6 +448,12 @@ function getBaratitoMotor() {
       costos:        { iibb: iibb, comision: comision, cheque: cheque, fyf: PRECIOS_FYF },
       incentivos:    { cc90: 0, cc90Iva: cc90Iva, tactico: Number(ii.tactico)||0, whosale: Number(ii.whosale)||0, adicional1: Number(ii.adicional1)||0, adicional2: Number(ii.adicional2)||0, cupo: Number(ii.cupo)||0 },
       ventasPorMes:  ventasNc[c.nombre_corto] || {},
+      // stock por color (Oversoft) + ajustes de precio por color ('*' = todos)
+      colores:       Object.entries(stockColorPorTrim[c.nombre_corto] || {})
+                       .map(([col, n]) => ({ color: col, stock: n }))
+                       .sort((a, b) => b.stock - a.stock || a.color.localeCompare(b.color)),
+      ajustes:       ajustesByNc[c.nombre_corto] || {},
+      nombreCorto:   c.nombre_corto,    // clave para guardar ajustes
       sim:           { lista: lista, costoRep: costo, cc90Iva: cc90Iva, otros: lista > 0 ? otros / lista : 0 },
       codigo:        c.codigo, familia: c.familia,
     });
@@ -458,6 +487,33 @@ function getBaratitoMotor() {
   };
 }
 
+// Guarda/borra un ajuste de precio por color del Baratito (tabla
+// baratito_ajustes_color en Supabase). body: { modelo: nombre_corto,
+// color: '*'|descripción, ajuste: pesos sobre el precio base }.
+// ajuste 0 o vacío = borrar (vuelve al precio base).
+function saveAjusteColor(body) {
+  const nc = String(body.modelo || '').trim();
+  const color = String(body.color || '*').trim() || '*';
+  const ajuste = Number(body.ajuste) || 0;
+  if (!nc) return { error: 'falta modelo' };
+  const h = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json' };
+  let res;
+  if (!ajuste) {
+    const filtro = '?nombre_corto=eq.' + encodeURIComponent(nc) + '&color=eq.' + encodeURIComponent(color);
+    res = UrlFetchApp.fetch(SUPA_URL + '/baratito_ajustes_color' + filtro, { method: 'delete', headers: h, muteHttpExceptions: true });
+  } else {
+    res = UrlFetchApp.fetch(SUPA_URL + '/baratito_ajustes_color?on_conflict=nombre_corto,color', {
+      method: 'post',
+      headers: Object.assign({ Prefer: 'resolution=merge-duplicates' }, h),
+      payload: JSON.stringify({ nombre_corto: nc, color: color, ajuste: ajuste, updated_at: new Date().toISOString() }),
+      muteHttpExceptions: true,
+    });
+  }
+  if (res.getResponseCode() >= 300) return { error: 'guardar ajuste falló: ' + res.getContentText().slice(0, 200) };
+  try { CacheService.getScriptCache().remove('motor'); } catch (e) {}   // que el próximo load lo traiga
+  return { ok: true, modelo: nc, color: color, ajuste: ajuste };
+}
+
 // POST endpoint para guardar pagos parseados de los PDFs de VW.
 // Acepta dos formatos para evitar el problema de redirect POST→GET en browsers:
 //   1. FormData con field 'payload' (preferido desde el frontend)
@@ -484,6 +540,7 @@ function doPost(e) {
     if (accion === 'setbaratitosnapshot')  return jsonResponse(saveBaratitoSnapshots(body.snapshots || []));
     if (accion === 'resetbaratito')        return jsonResponse(resetBaratitoBaseline());
     if (accion === 'initbaratitobaseline') return jsonResponse(initBaratitoBaselineIfEmpty());
+    if (accion === 'setajustecolor')       return jsonResponse(saveAjusteColor(body));
     return jsonResponse({ error: 'accion desconocida: ' + accion });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
