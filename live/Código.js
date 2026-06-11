@@ -76,6 +76,7 @@ function doGet(e) {
     if (tipo === 'precios')         return jsonResponse(_cached('precios', CACHE_TTL_SEC, fresh, getPreciosActualBT)); // espejo de precios/ganancia de "Actual BT"
     if (tipo === 'motor')           return jsonResponse(_cached('motor', CACHE_TTL_SEC, fresh, getBaratitoMotor));     // MOTOR: calcula desde Supabase (no la planilla)
     if (tipo === 'snapshotbt')      return jsonResponse(snapshotBTMensual(String(params.mes || '') || null)); // sync manual de la BT vigente a Supabase
+    if (tipo === 'admventas')       return jsonResponse(_cached('admventas', CACHE_TTL_SEC, fresh, getAdmVentas)); // adm de ventas: Oversoft + campos manuales
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
@@ -90,8 +91,9 @@ const MADRE_ID = '1KvuRZzHuVpWSppZqT8xDf8WSrplR-vYzeY0gQPftlpQ';
 // Whitelist: SOLO pestañas de incentivos/BT. El token va en el frontend público,
 // así que NO exponemos haberes, clientes, financiaciones, etc.
 const MADRE_SHEETS_OK = [
-  'cc', 'Actual BT', 'BT anteriores', 'Mayo 2026 BT', 'Marzo 26 BT',
-  'Febrero 26 BT', 'chequeo incentivos', 'cupos', 'listas de precios', 'aumentos vw',
+  'cc', 'Actual BT', 'BT anteriores', 'Mayo 2026 BT', 'Abril 2026 BT', 'Marzo 26 BT',
+  'Febrero 26 BT', 'Enero 26 BT', 'Enero 2026 BT', 'Resumen Competencia 2',
+  'chequeo incentivos', 'cupos', 'listas de precios', 'aumentos vw',
 ];
 function getMadreSheet(params) {
   const nombre = String(params.sheet || '').trim();
@@ -346,6 +348,120 @@ function _gciaVentaPct(monto, iva, lista, costoRep, ccIva, otros) {
   const iibb = Math.max(0.014 * monto * (1 - iva), 0.1 * (monto - costoRep) * (1 - iva));
   const gcia = monto * (1 - iva) - U * (1 - iva) - com - iibb;
   return gcia / (lista * (1 - iva));
+}
+
+// =======================================================================
+// ADM DE VENTAS — lo que sale de Oversoft, automático; el resto lo completa
+// la administrativa en el portal (tabla adm_ventas en Supabase, key = # PV).
+// Espejo moderno de la hoja "adm de ventas" de la madre; alimentará
+// Patentamientos cuando esté validado.
+// =======================================================================
+const ADM_VENTAS_DESDE = '2026-03-01';
+
+// 'PV 08032/1' (Oversoft) → '8032/1' (como la hoja). Misma normalización que
+// usa el front de ventas para matchear contra la hoja PVs.
+function _normPv(s) {
+  s = String(s || '').toUpperCase().replace('PV', '').trim();
+  const p = s.split('/');
+  return (p[0].replace(/^0+/, '') || '0') + (p[1] ? '/' + p[1] : '');
+}
+
+function getAdmVentas() {
+  const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
+  const get = (path) => {
+    const res = UrlFetchApp.fetch(OVERSOFT_URL + path, h);
+    return (res.getResponseCode() < 300) ? JSON.parse(res.getContentText()) : [];
+  };
+
+  // 1) ventas 0km (no anuladas) desde marzo
+  const pvs = get('/preventas?select=numero,fecha,cliente,vendedorid,unidadid,usadoid,financiacion_importe,patentacliente,modelo&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + ADM_VENTAS_DESDE + '&order=fecha.desc&limit=2000');
+
+  // 2) unidades (serie, chasis, dominio, fecha patentamiento) en lotes
+  const uidSet = {};
+  for (const p of pvs) if (p.unidadid) uidSet[p.unidadid] = true;
+  const uids = Object.keys(uidSet);
+  const unis = {};
+  for (let i = 0; i < uids.length; i += 100) {
+    for (const u of get('/unidades?select=unidadid,serie,vin,patente,fechapatentamiento&unidadid=in.(' + uids.slice(i, i + 100).join(',') + ')')) unis[u.unidadid] = u;
+  }
+
+  // 3) vendedores y clientes (nombre + localidad, por CUIT)
+  const vend = {};
+  for (const v of get('/vendedores?select=vendedorid,nombre&limit=2000')) vend[v.vendedorid] = String(v.nombre || '').trim();
+  const cuitSet = {};
+  for (const p of pvs) { const c = String(p.cliente || '').trim(); if (c) cuitSet[c] = true; }
+  const cuits = Object.keys(cuitSet);
+  const clis = {};
+  for (let i = 0; i < cuits.length; i += 80) {
+    const lote = cuits.slice(i, i + 80).map(c => '"' + c + '"').join(',');
+    for (const c of get('/clientes?select=cuit_cuil,nombre,localidad&cuit_cuil=in.(' + encodeURIComponent(lote) + ')')) {
+      clis[String(c.cuit_cuil).trim()] = c;
+    }
+  }
+
+  // 4) descripción de modelo por código completo (igual que el motor)
+  const desc = {};
+  let off = 0;
+  for (let i = 0; i < 12; i++) {
+    const ch = get('/modelos?select=codigodecompra,descripcionoperativa&order=modeloid&limit=1000&offset=' + off);
+    for (const m of ch) if (m.codigodecompra) desc[String(m.codigodecompra).trim()] = m.descripcionoperativa;
+    if (ch.length < 1000) break;
+    off += 1000;
+  }
+
+  // 5) campos manuales de la administrativa (Supabase)
+  const man = {};
+  try {
+    for (const m of _supaGet('/adm_ventas?select=*')) man[m.preventa] = m;
+  } catch (e) {}
+
+  const ventas = pvs.map(p => {
+    const u = unis[p.unidadid] || {};
+    const cli = clis[String(p.cliente || '').trim()] || {};
+    const key = _normPv(p.numero);
+    const m = man[key] || {};
+    return {
+      preventa: key,
+      fechaPv: String(p.fecha || '').slice(0, 10),
+      modelo: desc[String(p.modelo || '').trim()] || p.modelo,
+      cliente: String(cli.nombre || '').trim() || String(p.cliente || ''),
+      localidad: String(cli.localidad || '').trim(),
+      vendedor: vend[p.vendedorid] || '',
+      serie: String(u.serie || '').trim(),
+      chasis: String(u.vin || '').trim(),
+      dominio: String(u.patente || '').trim(),
+      fechaPatentamiento: u.fechapatentamiento ? String(u.fechapatentamiento).slice(0, 10) : '',
+      usado: (Number(p.usadoid) || 0) > 0,
+      montoFinanciado: Number(p.financiacion_importe) || 0,
+      patentaCliente: !!p.patentacliente,
+      manual: {
+        mes_patentamiento:  m.mes_patentamiento || '',
+        patenta:            m.patenta || '',
+        admin:              m.admin || '',
+        tipo_carpeta:       m.tipo_carpeta || '',
+        fecha_liquidacion:  m.fecha_liquidacion || '',
+        reventa_particular: m.reventa_particular || '',
+        fecha_pago_vw:      m.fecha_pago_vw || '',
+        notas:              m.notas || '',
+      },
+    };
+  });
+  return { ventas: ventas, total: ventas.length, desde: ADM_VENTAS_DESDE, updatedAt: new Date().toISOString() };
+}
+
+// Upsert de los campos manuales de una carpeta (key = # preventa normalizado).
+function saveAdmVenta(body) {
+  const pv = String(body.preventa || '').trim();
+  if (!pv) return { error: 'falta preventa' };
+  const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'notas'];
+  const row = { preventa: pv, updated_at: new Date().toISOString(), updated_by: String(body.usuario || '') };
+  const campos = body.campos || {};
+  for (const k of permitidos) if (campos[k] !== undefined) row[k] = (campos[k] === '' ? null : campos[k]);
+  const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
+  const res = UrlFetchApp.fetch(SUPA_URL + '/adm_ventas?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(row), muteHttpExceptions: true });
+  if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200) };
+  try { CacheService.getScriptCache().remove('admventas'); } catch (e) {}
+  return { ok: true, preventa: pv };
 }
 
 // =======================================================================
@@ -722,6 +838,7 @@ function doPost(e) {
     if (accion === 'initbaratitobaseline') return jsonResponse(initBaratitoBaselineIfEmpty());
     if (accion === 'setajustecolor')       return jsonResponse(saveAjusteColor(body));
     if (accion === 'setsecret')            return jsonResponse(_setSecret(body));
+    if (accion === 'setadmventa')          return jsonResponse(saveAdmVenta(body));
     if (accion === 'instalartriggersnapshot') return jsonResponse(_instalarTriggerSnapshot());
     return jsonResponse({ error: 'accion desconocida: ' + accion });
   } catch (err) {

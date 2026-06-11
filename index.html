@@ -1148,6 +1148,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <button class="tab" data-tab="stock" onclick="setTab('stock')">Stock</button>
       <button class="tab" data-tab="ventas" onclick="setTab('ventas')">Ventas</button>
       <button class="tab" data-tab="patentamientos" onclick="setTab('patentamientos')">Patentamientos</button>
+      <button class="tab" data-tab="admventas" onclick="setTab('admventas')">Adm. ventas</button>
       <button class="tab" data-tab="trimestre" onclick="setTab('trimestre')">Trimestre</button>
       <button class="tab" data-tab="incentivos" onclick="setTab('incentivos')">Incentivos</button>
       <button class="tab" data-tab="precios" onclick="setTab('precios')">Baratito</button>
@@ -1283,6 +1284,17 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <div id="industriaContent"></div>
     </section>
 
+    <!-- =================== ADM DE VENTAS =================== -->
+    <section class="panel" id="panelAdmVentas">
+      <div class="toolbar">
+        <div class="updated" id="updatedAtAdmVentas">Carpetas de venta: lo de Oversoft sale solo; completá el resto y guardá por fila.</div>
+        <div class="actions">
+          <button class="refresh" onclick="loadAdmVentas(true)">Actualizar</button>
+        </div>
+      </div>
+      <div id="admVentasContent"><div class="empty">Cargando…</div></div>
+    </section>
+
     <!-- =================== OVERSOFT (admin / prueba de conexión) =================== -->
     <section class="panel" id="panelOversoft">
       <div class="toolbar">
@@ -1310,6 +1322,8 @@ table.patent-tbl.resumida .col-extra { display: none; }
 const SHARED_COOKIE = 'tga_session';
 const SHARED_DOMAIN = '.titogonzalez.online';
 const USUARIOS_PERMITIDOS = ['fngonzalez', 'fgonzalez'];
+// Usuarios que entran SOLO a la solapa "Adm. ventas" (la administrativa).
+const USUARIOS_ADM_VENTAS = ['admventas'];
 
 // URL del Web App publicado desde el Apps Script de la planilla espejo.
 // Pendiente: pegar acá la URL que devuelve "Deploy → Web app" en el editor de Apps Script.
@@ -1539,6 +1553,139 @@ async function loadIndustria() {
     }
   } catch (e) { console.error('loadIndustria:', e); }
 }
+// =======================================================================
+// ADM DE VENTAS — Oversoft automático + campos manuales (Supabase adm_ventas)
+// =======================================================================
+let admVentasData = null;
+let admVentasFiltro = 'pendientes';   // 'pendientes' (sin dominio) | 'todas' | 'patentadas'
+let admVentasBusca = '';
+
+async function loadAdmVentas(forzar) {
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return;
+  const cont = document.getElementById('admVentasContent');
+  if (cont && !admVentasData) cont.innerHTML = '<div class="empty">Cargando carpetas (Oversoft)…</div>';
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=admventas' + (forzar ? '&fresh=1' : '');
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.error) { if (cont) cont.innerHTML = '<div class="errbox"><div class="ttl">⚠️ ' + escapeHtml(data.error) + '</div></div>'; return; }
+    admVentasData = data;
+    const up = document.getElementById('updatedAtAdmVentas');
+    if (up && data.updatedAt) up.textContent = data.total + ' carpetas desde ' + (data.desde || '').slice(0, 7) + ' · Oversoft en vivo · actualizado ' + new Date(data.updatedAt).toLocaleString('es-AR');
+    renderAdmVentas();
+  } catch (e) { console.error('loadAdmVentas:', e); }
+}
+
+function _admKey(pv) { return String(pv).replace(/[^a-zA-Z0-9]/g, '_'); }
+
+function renderAdmVentas() {
+  const cont = document.getElementById('admVentasContent');
+  if (!cont) return;
+  if (!admVentasData || !Array.isArray(admVentasData.ventas)) { cont.innerHTML = '<div class="empty">Sin datos.</div>'; return; }
+  const q = admVentasBusca.trim().toLowerCase();
+  const rows = admVentasData.ventas.filter(v => {
+    if (admVentasFiltro === 'pendientes' && v.dominio) return false;
+    if (admVentasFiltro === 'patentadas' && !v.dominio) return false;
+    if (q && !(v.preventa + ' ' + v.cliente + ' ' + v.modelo + ' ' + v.serie + ' ' + v.vendedor + ' ' + v.dominio).toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  const chip = (val, lbl) => '<button onclick="admVentasFiltro=\'' + val + '\';renderAdmVentas()" style="padding:6px 12px;border:1px solid var(--vw-grey-2);border-radius:16px;cursor:pointer;font-size:13px;'
+    + (admVentasFiltro === val ? 'background:var(--vw-blue);color:#fff;border-color:var(--vw-blue);font-weight:700' : 'background:#fff;color:var(--vw-grey-3)') + '">' + lbl + '</button>';
+
+  let h = '<div class="mes-row" style="margin-bottom:10px;flex-wrap:wrap;gap:8px">';
+  h += chip('pendientes', 'Pendientes de patentar');
+  h += chip('patentadas', 'Patentadas');
+  h += chip('todas', 'Todas');
+  h += '<input type="text" placeholder="🔍 PV, cliente, serie, dominio…" value="' + escapeHtml(admVentasBusca) + '" oninput="admVentasBusca=this.value;renderAdmVentas()" '
+     + ' style="padding:7px 12px;border:1px solid var(--vw-grey-2);border-radius:8px;min-width:220px;font-size:13px">';
+  h += '<span style="font-size:12px;color:var(--vw-grey-3)">' + rows.length + ' carpetas</span>';
+  h += '</div>';
+
+  h += '<div class="table-wrap"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:1280px">';
+  h += '<thead><tr>'
+     + '<th style="text-align:left">PV</th><th style="text-align:left">Fecha</th><th style="text-align:left">Modelo</th>'
+     + '<th style="text-align:left">Cliente</th><th style="text-align:left">Vendedor</th><th style="text-align:left">Serie</th>'
+     + '<th style="text-align:left">Dominio</th><th style="text-align:left">F. patent.</th>'
+     + '<th>Patenta</th><th>Admin</th><th>Carpeta</th><th>Mes pat. est.</th><th>F. liq. créd.</th><th>Rev/Part</th><th>F. pago VW</th><th>Notas</th><th></th>'
+     + '</tr></thead><tbody>';
+
+  const inp = (key, campo, val, w, type) =>
+    '<input type="' + (type || 'text') + '" id="adm_' + campo + '_' + key + '" value="' + escapeHtml(val || '') + '" '
+    + ' style="width:' + w + 'px;padding:3px 5px;border:1px solid var(--vw-grey-2);border-radius:5px;font-size:12px">';
+  const sel = (key, campo, val, opciones, w) => {
+    let s = '<select id="adm_' + campo + '_' + key + '" style="width:' + w + 'px;padding:3px 4px;border:1px solid var(--vw-grey-2);border-radius:5px;font-size:12px">';
+    s += '<option value=""' + (!val ? ' selected' : '') + '>—</option>';
+    for (const o of opciones) s += '<option value="' + o + '"' + (val === o ? ' selected' : '') + '>' + o + '</option>';
+    // valor libre histórico que no está en las opciones → lo conservamos
+    if (val && opciones.indexOf(val) === -1) s += '<option value="' + escapeHtml(val) + '" selected>' + escapeHtml(val) + '</option>';
+    return s + '</select>';
+  };
+
+  for (const v of rows) {
+    const key = _admKey(v.preventa);
+    const m = v.manual || {};
+    const extra = [];
+    if (v.usado) extra.push('toma usado');
+    if (v.montoFinanciado > 0) extra.push('financia ' + fmtPesosCompact(v.montoFinanciado));
+    if (v.patentaCliente) extra.push('patenta cliente');
+    h += '<tr id="admrow_' + key + '">'
+       + '<td><b>' + escapeHtml(v.preventa) + '</b>' + (extra.length ? '<br><small style="color:var(--vw-grey-3)">' + extra.join(' · ') + '</small>' : '') + '</td>'
+       + '<td>' + (v.fechaPv || '') + '</td>'
+       + '<td title="' + escapeHtml(v.modelo) + '">' + escapeHtml(String(v.modelo).replace(/^VW /, '').slice(0, 26)) + '</td>'
+       + '<td title="' + escapeHtml(v.localidad) + '">' + escapeHtml(String(v.cliente).slice(0, 24)) + (v.localidad ? '<br><small style="color:var(--vw-grey-3)">' + escapeHtml(v.localidad) + '</small>' : '') + '</td>'
+       + '<td>' + escapeHtml(v.vendedor) + '</td>'
+       + '<td title="' + escapeHtml(v.chasis) + '">' + escapeHtml(v.serie) + '</td>'
+       + '<td>' + (v.dominio ? '<b style="color:#0a7a30">' + escapeHtml(v.dominio) + '</b>' : '<span style="color:#cc6600">pend.</span>') + '</td>'
+       + '<td>' + (v.fechaPatentamiento || '<span style="color:var(--vw-grey-3)">—</span>') + '</td>'
+       + '<td>' + sel(key, 'patenta', m.patenta, ['TG', 'CL', 'RE'], 56) + '</td>'
+       + '<td>' + inp(key, 'admin', m.admin, 78) + '</td>'
+       + '<td>' + sel(key, 'tipo_carpeta', m.tipo_carpeta, ['Contado', 'Financia VW', 'Banco externo', 'Plan ahorro'], 110) + '</td>'
+       + '<td>' + inp(key, 'mes_patentamiento', m.mes_patentamiento, 90, 'month') + '</td>'
+       + '<td>' + inp(key, 'fecha_liquidacion', m.fecha_liquidacion, 108, 'date') + '</td>'
+       + '<td>' + sel(key, 'reventa_particular', m.reventa_particular, ['PARTICULAR', 'REVENTA'], 92) + '</td>'
+       + '<td>' + inp(key, 'fecha_pago_vw', m.fecha_pago_vw, 108, 'date') + '</td>'
+       + '<td>' + inp(key, 'notas', m.notas, 110) + '</td>'
+       + '<td><button onclick="guardarAdmVenta(\'' + v.preventa + '\')" id="admsave_' + key + '" title="Guardar esta fila" '
+       + ' style="border:0;background:var(--vw-blue);color:#fff;border-radius:6px;padding:4px 9px;cursor:pointer">✓</button></td>'
+       + '</tr>';
+  }
+  if (!rows.length) h += '<tr><td colspan="17" class="empty">Sin carpetas para ese filtro.</td></tr>';
+  h += '</tbody></table></div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio y fecha de patentamiento salen de Oversoft en vivo (no se editan). El resto se completa acá y se guarda por fila con ✓.</div>';
+  cont.innerHTML = h;
+}
+
+async function guardarAdmVenta(preventa) {
+  const key = _admKey(preventa);
+  const campos = {};
+  for (const c of ['patenta', 'admin', 'tipo_carpeta', 'mes_patentamiento', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'notas']) {
+    const el = document.getElementById('adm_' + c + '_' + key);
+    if (el) campos[c] = el.value.trim();
+  }
+  const btn = document.getElementById('admsave_' + key);
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const body = new URLSearchParams();
+    body.set('payload', JSON.stringify({
+      token: APPS_SCRIPT_TOKEN, accion: 'setadmventa',
+      preventa: preventa, campos: campos, usuario: window._tgaUser || '',
+    }));
+    const res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    // refrescar copia local
+    const v = (admVentasData.ventas || []).find(x => x.preventa === preventa);
+    if (v) v.manual = Object.assign({}, v.manual, campos);
+    if (btn) { btn.disabled = false; btn.textContent = '✓'; btn.style.background = '#0a7a30'; setTimeout(() => { btn.style.background = ''; }, 1200); }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '✓'; }
+    alert('No se pudo guardar la carpeta ' + preventa + ': ' + e.message);
+  }
+}
+
 // =======================================================================
 // BARATITO — motor propio: precios Supabase + stock/ventas/colores Oversoft
 // (la vista "Planilla" se retiró el 11-jun una vez validado el motor; el
@@ -2023,6 +2170,13 @@ function enterApp(session) {
   document.getElementById('gateScreen').classList.add('hidden');
   document.getElementById('appScreen').classList.remove('hidden');
   document.getElementById('userName').textContent = session.nombre || session.usuario;
+  window._tgaUser = session.usuario;
+  // Usuario de administración: ve SOLO la solapa "Adm. ventas".
+  if (USUARIOS_ADM_VENTAS.includes(session.usuario)) {
+    document.querySelectorAll('.tab').forEach(t => { if (t.dataset.tab !== 'admventas') t.style.display = 'none'; });
+    setTab('admventas');
+    return;
+  }
   loadObjetivosPat();      // pisa el cache local con la verdad de la planilla
   loadObjetivosCompras();  // idem para objetivos de compras
   loadIndustria();         // idem para data de industria (TGA vs mercado)
@@ -2095,6 +2249,7 @@ function setTab(tab) {
     incentivos:     'panelIncentivos',
     precios:        'panelPrecios',
     industria:      'panelIndustria',
+    admventas:      'panelAdmVentas',
     oversoft:       'panelOversoft',
   };
   const el = document.getElementById(map[tab]);
@@ -2110,6 +2265,7 @@ function setTab(tab) {
   }
   if (tab === 'incentivos'     && !incentivosData) loadIncentivos(false);
   if (tab === 'precios'        && !preciosData)    loadPrecios(false);
+  if (tab === 'admventas'      && !admVentasData)  loadAdmVentas(false);
   if (tab === 'industria') {
     // Industria depende de patentData para contar TGA patentadas
     if (!patentData) loadPatentamientos(false);
@@ -5888,7 +6044,7 @@ function escapeHtml(s) {
     showGate('Esta vista no permite sesiones impersonadas.');
     return;
   }
-  if (!USUARIOS_PERMITIDOS.includes(session.usuario)) {
+  if (!USUARIOS_PERMITIDOS.includes(session.usuario) && !USUARIOS_ADM_VENTAS.includes(session.usuario)) {
     showGate('Tu usuario no tiene acceso a esta vista.');
     return;
   }
