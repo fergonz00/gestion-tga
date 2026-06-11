@@ -245,7 +245,10 @@ function _ntrim(s) {
   s = s.replace(/\b(vw|nuevo)\b/g, '');
   s = s.replace(/\bmtg([123])\b/g, 'mt');   // Oversoft a veces pega la generación al cambio: "MTG3" = "MT G3"
   s = s.replace(/\bmy2[0-9]\b/g, '').replace(/\b20[0-9][0-9]\b/g, '').replace(/\bg[123]\b/g, '');
-  s = s.replace(/\bph[ag]\b/g, '').replace(/\b(pack|safe|i|ii|se|cd|l)\b/g, '');
+  // OJO: NO borrar pack/safe/i/ii — "Tera Trend MSI MT" y "... + Pack Safe I"
+  // son productos DISTINTOS (precio/dto distintos) y Oversoft describe sin pack.
+  // "se" sí se borra: los nombres "SE G2" de Amarok son el mismo producto.
+  s = s.replace(/\bph[ag]\b/g, '').replace(/\b(se|cd|l)\b/g, '');
   return s.replace(/[^a-z0-9]/g, '');
 }
 
