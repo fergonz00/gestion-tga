@@ -1349,7 +1349,8 @@ function _norm(s) {
 //   1) fecha real de patentamiento de Oversoft → mes (manda siempre)
 //   2) si todavía no está patentada → mes_patentamiento cargado por la adm
 //      (sirve de estimado para que la carpeta cuente como pendiente del mes)
-//   3) sin ninguno de los dos → la carpeta no se puede ubicar y queda afuera
+//   3) sin ninguno de los dos → MES EN CURSO (pendiente del mes corriente;
+//      la adm le cambia el mes si corresponde a otro)
 // Filtro: solo desde PATENTAMIENTOS_MES_MINIMO (2026-04).
 // _MES_TXT_A_NUM lo sigue usando la migración (col F texto "ABRIL").
 const _MES_TXT_A_NUM = {
@@ -1442,7 +1443,10 @@ function getPatentamientos() {
       mesKey = String(m.mes_patentamiento).slice(0, 7);
       mesKeyOrigen = 'adm';
     } else {
-      continue;   // sin fecha real ni mes estimado → no se puede ubicar en un mes
+      // Sin fecha real ni mes confirmado → MES EN CURSO: la venta nueva cuenta
+      // ya como pendiente del mes corriente (la adm la corrige si va a otro mes).
+      mesKey = _yyyyMm(new Date());
+      mesKeyOrigen = 'default';
     }
     if (mesKey < PATENTAMIENTOS_MES_MINIMO) continue;
 

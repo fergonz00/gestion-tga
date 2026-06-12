@@ -1583,11 +1583,13 @@ let admVentasBusca = '';
 let admVentasMes = '';                // 'yyyy-mm' | '__sin__' | '__todos__' (default: mes actual)
 
 // Mes de cada carpeta — mismo criterio que Patentamientos: la fecha real de
-// Oversoft manda; si no está patentada, el mes confirmado/estimado por la adm.
+// Oversoft manda; si no está patentada, el mes confirmado/estimado por la adm;
+// sin ninguno de los dos, el MES EN CURSO (la venta nueva aparece ya como
+// pendiente del mes corriente y Moni la corrige si va a otro mes).
 function _admMesDe(v) {
   if (v.fechaPatentamiento) return String(v.fechaPatentamiento).slice(0, 7);
   const m = (v.manual && v.manual.mes_patentamiento) || '';
-  return m ? String(m).slice(0, 7) : '';
+  return m ? String(m).slice(0, 7) : _mesActualReal();
 }
 
 async function loadAdmVentas(forzar) {
@@ -1621,23 +1623,21 @@ function renderAdmVentas() {
   if (!cont) return;
   if (!admVentasData || !Array.isArray(admVentasData.ventas)) { cont.innerHTML = '<div class="empty">Sin datos.</div>'; return; }
 
-  // Meses disponibles (cuenta por mes + carpetas sin mes asignado)
+  // Meses disponibles (cuenta por mes; las nuevas sin dato caen al mes en curso)
   const cuentaMes = {};
-  let sinMes = 0;
   for (const v of admVentasData.ventas) {
     const mk = _admMesDe(v);
-    if (mk) cuentaMes[mk] = (cuentaMes[mk] || 0) + 1; else sinMes++;
+    cuentaMes[mk] = (cuentaMes[mk] || 0) + 1;
   }
   const mesesAdm = Object.keys(cuentaMes).sort().reverse();
-  if (!admVentasMes || (admVentasMes !== '__todos__' && admVentasMes !== '__sin__' && mesesAdm.indexOf(admVentasMes) === -1)) {
+  if (!admVentasMes || (admVentasMes !== '__todos__' && mesesAdm.indexOf(admVentasMes) === -1)) {
     const hoy = _mesActualReal();
     admVentasMes = mesesAdm.indexOf(hoy) >= 0 ? hoy : (mesesAdm[0] || '__todos__');
   }
 
   const q = admVentasBusca.trim().toLowerCase();
   const rows = admVentasData.ventas.filter(v => {
-    if (admVentasMes === '__sin__') { if (_admMesDe(v)) return false; }
-    else if (admVentasMes !== '__todos__' && _admMesDe(v) !== admVentasMes) return false;
+    if (admVentasMes !== '__todos__' && _admMesDe(v) !== admVentasMes) return false;
     if (admVentasFiltro === 'pendientes' && v.dominio) return false;
     if (admVentasFiltro === 'patentadas' && !v.dominio) return false;
     if (q && !(v.preventa + ' ' + v.cliente + ' ' + v.modelo + ' ' + v.serie + ' ' + v.vendedor + ' ' + v.dominio).toLowerCase().includes(q)) return false;
@@ -1656,7 +1656,6 @@ function renderAdmVentas() {
     const lbl = _mesLabelLargo(mk) + ' ' + mk.slice(0, 4) + ' · ' + cuentaMes[mk] + ' carpetas' + (obj > 0 ? ' · obj ' + obj : '');
     h += '<option value="' + mk + '"' + (admVentasMes === mk ? ' selected' : '') + '>' + lbl + '</option>';
   }
-  if (sinMes) h += '<option value="__sin__"' + (admVentasMes === '__sin__' ? ' selected' : '') + '>⚠ Sin mes asignado · ' + sinMes + '</option>';
   h += '<option value="__todos__"' + (admVentasMes === '__todos__' ? ' selected' : '') + '>Todos los meses · ' + admVentasData.ventas.length + '</option>';
   h += '</select>';
   h += chip('pendientes', 'Pendientes de patentar');
@@ -1666,14 +1665,6 @@ function renderAdmVentas() {
      + ' style="padding:7px 12px;border:1px solid var(--vw-grey-2);border-radius:8px;min-width:220px;font-size:13px">';
   h += '<span style="font-size:12px;color:var(--vw-grey-3)">' + rows.length + ' carpetas</span>';
   h += '</div>';
-
-  // Aviso: ventas nuevas que todavía no tienen mes (no aparecen en ningún mes
-  // del selector hasta que Oversoft registre la fecha o la adm les ponga mes).
-  if (sinMes && admVentasMes !== '__sin__') {
-    h += '<div onclick="admVentasMes=\'__sin__\';renderAdmVentas()" style="cursor:pointer;background:#fff4e5;border:1px solid #f0c36d;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12.5px;color:#8a5a00">'
-       + '⚠ Hay <b>' + sinMes + '</b> carpeta' + (sinMes > 1 ? 's' : '') + ' sin mes asignado (ventas nuevas) — <u>tocá acá para verlas</u> y ponerles el mes estimado.'
-       + '</div>';
-  }
 
   // .table-scroll = scroll horizontal de respaldo si aún así no entra
   // (sin él, .table-wrap tiene overflow:hidden y cortaba columnas).
@@ -1733,7 +1724,7 @@ function renderAdmVentas() {
   }
   if (!rows.length) h += '<tr><td colspan="17" class="empty">Sin carpetas para ese filtro.</td></tr>';
   h += '</tbody></table></div></div>';
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio y fecha de patentamiento salen de Oversoft en vivo (no se editan). El resto se completa acá y <b>se guarda solo al cambiar cada campo</b> (el ✓ de la fila se pone verde cuando guardó bien; si algo falla, avisa y podés reintentar con el ✓). El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes. El mes de cada carpeta (selector de arriba, mismo criterio que Patentamientos) = fecha real de Oversoft o, si aún no está patentada, el "Mes pat. ✔adm" — las que no tienen ninguno quedan en "Sin mes asignado".</div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio y fecha de patentamiento salen de Oversoft en vivo (no se editan). El resto se completa acá y <b>se guarda solo al cambiar cada campo</b> (el ✓ de la fila se pone verde cuando guardó bien; si algo falla, avisa y podés reintentar con el ✓). El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes. El mes de cada carpeta (selector de arriba, mismo criterio que Patentamientos) = fecha real de Oversoft o, si aún no está patentada, el "Mes pat. ✔adm" — las ventas nuevas sin ninguno de los dos entran al mes en curso (cambiale el "Mes pat." si va para otro mes).</div>';
   cont.innerHTML = h;
 }
 
