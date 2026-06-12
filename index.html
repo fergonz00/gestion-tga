@@ -1646,8 +1646,10 @@ function renderAdmVentas() {
   h += '<span style="font-size:12px;color:var(--vw-grey-3)">' + rows.length + ' carpetas</span>';
   h += '</div>';
 
-  h += '<div class="table-wrap"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:1280px">';
-  h += '<thead><tr>'
+  // .table-scroll = scroll horizontal propio (sin él, .table-wrap tiene
+  // overflow:hidden y en pantallas angostas se cortaban las últimas columnas).
+  h += '<div class="table-wrap"><div class="table-scroll"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:1380px">';
+  h += '<thead style="white-space:nowrap"><tr>'
      + '<th style="text-align:left">PV</th><th style="text-align:left">Fecha</th><th style="text-align:left">Modelo</th>'
      + '<th style="text-align:left">Cliente</th><th style="text-align:left">Vendedor</th><th style="text-align:left">Serie</th>'
      + '<th style="text-align:left">Dominio</th><th style="text-align:left">F. patent.</th>'
@@ -1700,7 +1702,7 @@ function renderAdmVentas() {
        + '</tr>';
   }
   if (!rows.length) h += '<tr><td colspan="17" class="empty">Sin carpetas para ese filtro.</td></tr>';
-  h += '</tbody></table></div>';
+  h += '</tbody></table></div></div>';
   h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio y fecha de patentamiento salen de Oversoft en vivo (no se editan). El resto se completa acá y <b>se guarda solo al cambiar cada campo</b> (el ✓ de la fila se pone verde cuando guardó bien; si algo falla, avisa y podés reintentar con el ✓). El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes. El mes de cada carpeta (selector de arriba, mismo criterio que Patentamientos) = fecha real de Oversoft o, si aún no está patentada, el "Mes pat. ✔adm" — las que no tienen ninguno quedan en "Sin mes asignado".</div>';
   cont.innerHTML = h;
 }

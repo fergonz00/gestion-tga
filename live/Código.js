@@ -374,8 +374,10 @@ function getAdmVentas() {
     return (res.getResponseCode() < 300) ? JSON.parse(res.getContentText()) : [];
   };
 
-  // 1) ventas 0km (no anuladas) desde marzo
-  const pvs = get('/preventas?select=numero,fecha,cliente,vendedorid,unidadid,usadoid,financiacion_importe,patentacliente,modelo&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + ADM_VENTAS_DESDE + '&order=fecha.desc&limit=2000');
+  // 1) ventas 0km (no anuladas) desde ADM_VENTAS_DESDE. Orden por prevtaid
+  // desc = orden REAL de creación, lo más nuevo arriba (preventas.fecha viene
+  // sin hora; el id secuencial sí refleja fecha+hora de carga).
+  const pvs = get('/preventas?select=prevtaid,numero,fecha,cliente,vendedorid,unidadid,usadoid,financiacion_importe,patentacliente,modelo&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + ADM_VENTAS_DESDE + '&order=prevtaid.desc&limit=2000');
 
   // 2) unidades (serie, chasis, dominio, fecha patentamiento) en lotes
   const uidSet = {};
@@ -423,6 +425,7 @@ function getAdmVentas() {
     const m = man[key] || {};
     return {
       preventa: key,
+      pvId: Number(p.prevtaid) || 0,   // orden de creación (id secuencial Oversoft)
       fechaPv: String(p.fecha || '').slice(0, 10),
       modelo: desc[String(p.modelo || '').trim()] || p.modelo,
       cliente: String(cli.nombre || '').trim() || String(p.cliente || ''),
@@ -1422,10 +1425,10 @@ function getPatentamientos() {
   const carpetas = [];
   const cuentaPorMes = {};
 
-  // Orden por fecha de PV ascendente: el número de carpeta (#) reproduce el
-  // correlativo que llevaba la hoja.
+  // Orden por id de creación ascendente: el número de carpeta (#) reproduce
+  // el correlativo real de carga en Oversoft (fecha+hora).
   const ventas = (adm.ventas || []).slice()
-    .sort((a, b) => (a.fechaPv < b.fechaPv ? -1 : (a.fechaPv > b.fechaPv ? 1 : 0)));
+    .sort((a, b) => (a.pvId || 0) - (b.pvId || 0));
 
   let num = 0;
   for (const v of ventas) {
