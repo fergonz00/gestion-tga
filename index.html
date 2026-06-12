@@ -331,6 +331,11 @@ tbody td { padding: 10px 10px; vertical-align: middle; }
 tbody tr.expo { background: linear-gradient(to right, rgba(139,92,246,0.06), transparent 280px); }
 tbody tr.expo:hover { background: linear-gradient(to right, rgba(139,92,246,0.12), var(--vw-grey-1) 280px); }
 
+/* Grilla Adm. ventas: 17 columnas — celdas compactas para que entre todo
+   en pantallas de ~1400px efectivos (notebook con escala 125%). */
+.admv thead th { padding: 7px 4px; font-size: 9.5px; letter-spacing: 0.2px; }
+.admv tbody td { padding: 5px 4px; }
+
 .serie { font-weight: 600; color: var(--vw-blue); font-family: monospace; font-size: 12px; }
 .muted { color: var(--vw-grey-3); font-size: 11px; }
 
@@ -1587,12 +1592,12 @@ async function loadAdmVentas(forzar) {
 }
 
 function _admKey(pv) { return String(pv).replace(/[^a-zA-Z0-9]/g, '_'); }
-// '2026-06-11' → '11/06/2026' (la adm trabaja con día/mes/año)
+// '2026-06-11' → '11/06/26' (día/mes/año corto — gana ancho en la grilla)
 function _fechaDMA(iso) {
   const s = String(iso || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   const p = s.split('-');
-  return p[2] + '/' + p[1] + '/' + p[0];
+  return p[2] + '/' + p[1] + '/' + p[0].slice(2);
 }
 
 function renderAdmVentas() {
@@ -1646,9 +1651,9 @@ function renderAdmVentas() {
   h += '<span style="font-size:12px;color:var(--vw-grey-3)">' + rows.length + ' carpetas</span>';
   h += '</div>';
 
-  // .table-scroll = scroll horizontal propio (sin él, .table-wrap tiene
-  // overflow:hidden y en pantallas angostas se cortaban las últimas columnas).
-  h += '<div class="table-wrap"><div class="table-scroll"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:1380px">';
+  // .table-scroll = scroll horizontal de respaldo si aún así no entra
+  // (sin él, .table-wrap tiene overflow:hidden y cortaba columnas).
+  h += '<div class="table-wrap"><div class="table-scroll"><table class="admv" style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:1100px">';
   h += '<thead style="white-space:nowrap"><tr>'
      + '<th style="text-align:left">PV</th><th style="text-align:left">Fecha</th><th style="text-align:left">Modelo</th>'
      + '<th style="text-align:left">Cliente</th><th style="text-align:left">Vendedor</th><th style="text-align:left">Serie</th>'
@@ -1682,21 +1687,21 @@ function renderAdmVentas() {
     h += '<tr id="admrow_' + key + '">'
        + '<td><b>' + escapeHtml(v.preventa) + '</b>' + (extra.length ? '<br><small style="color:var(--vw-grey-3)">' + extra.join(' · ') + '</small>' : '') + '</td>'
        + '<td>' + _fechaDMA(v.fechaPv) + '</td>'
-       + '<td title="' + escapeHtml(v.modelo) + '">' + escapeHtml(String(v.modelo).replace(/^VW /, '').slice(0, 26)) + '</td>'
-       + '<td title="' + escapeHtml(v.localidad) + '">' + escapeHtml(String(v.cliente).slice(0, 24)) + (v.localidad ? '<br><small style="color:var(--vw-grey-3)">' + escapeHtml(v.localidad) + '</small>' : '') + '</td>'
+       + '<td title="' + escapeHtml(v.modelo) + '">' + escapeHtml(String(v.modelo).replace(/^VW /, '').slice(0, 19)) + '</td>'
+       + '<td title="' + escapeHtml(String(v.cliente) + (v.localidad ? ' — ' + v.localidad : '')) + '">' + escapeHtml(String(v.cliente).slice(0, 17)) + (v.localidad ? '<br><small style="color:var(--vw-grey-3)">' + escapeHtml(String(v.localidad).slice(0, 17)) + '</small>' : '') + '</td>'
        + '<td>' + escapeHtml(v.vendedor) + '</td>'
        + '<td title="' + escapeHtml(v.chasis) + '">' + escapeHtml(v.serie) + '</td>'
        + '<td>' + (v.dominio ? '<b style="color:#0a7a30">' + escapeHtml(v.dominio) + '</b>' : '<span style="color:#cc6600">pend.</span>') + '</td>'
        + '<td>' + (v.fechaPatentamiento ? _fechaDMA(v.fechaPatentamiento) : '<span style="color:var(--vw-grey-3)">—</span>') + '</td>'
-       + '<td>' + sel(v.preventa, key, 'patenta', m.patenta, ['TG', 'CL', 'RE'], 56) + '</td>'
-       + '<td>' + sel(v.preventa, key, 'admin', m.admin, ['MECHI', 'ANTO', 'VALE', 'MONI'], 82) + '</td>'
-       + '<td>' + sel(v.preventa, key, 'tipo_carpeta', m.tipo_carpeta, ['Contado', 'Financia VW', 'Banco externo', 'Plan ahorro'], 110) + '</td>'
+       + '<td>' + sel(v.preventa, key, 'patenta', m.patenta, ['TG', 'CL', 'RE'], 50) + '</td>'
+       + '<td>' + sel(v.preventa, key, 'admin', m.admin, ['MECHI', 'ANTO', 'VALE', 'MONI'], 68) + '</td>'
+       + '<td>' + sel(v.preventa, key, 'tipo_carpeta', m.tipo_carpeta, ['Contado', 'Financia VW', 'Banco externo', 'Plan ahorro'], 88) + '</td>'
        // Oversoft ya tiene fecha pero la adm no confirmó el mes → borde naranja
-       + '<td>' + inp(v.preventa, key, 'mes_patentamiento', m.mes_patentamiento, 90, 'month', (v.fechaPatentamiento && !m.mes_patentamiento) ? '#cc6600' : null) + '</td>'
-       + '<td>' + inp(v.preventa, key, 'fecha_liquidacion', m.fecha_liquidacion, 108, 'date') + '</td>'
-       + '<td>' + sel(v.preventa, key, 'reventa_particular', m.reventa_particular, ['PARTICULAR', 'REVENTA'], 92) + '</td>'
-       + '<td>' + inp(v.preventa, key, 'fecha_pago_vw', m.fecha_pago_vw, 108, 'date') + '</td>'
-       + '<td>' + inp(v.preventa, key, 'notas', m.notas, 110) + '</td>'
+       + '<td>' + inp(v.preventa, key, 'mes_patentamiento', m.mes_patentamiento, 88, 'month', (v.fechaPatentamiento && !m.mes_patentamiento) ? '#cc6600' : null) + '</td>'
+       + '<td>' + inp(v.preventa, key, 'fecha_liquidacion', m.fecha_liquidacion, 98, 'date') + '</td>'
+       + '<td>' + sel(v.preventa, key, 'reventa_particular', m.reventa_particular, ['PARTICULAR', 'REVENTA'], 78) + '</td>'
+       + '<td>' + inp(v.preventa, key, 'fecha_pago_vw', m.fecha_pago_vw, 98, 'date') + '</td>'
+       + '<td>' + inp(v.preventa, key, 'notas', m.notas, 92) + '</td>'
        + '<td><button onclick="guardarAdmVenta(\'' + v.preventa + '\')" id="admsave_' + key + '" title="Reintentar guardado de la fila" '
        + ' style="border:0;background:var(--vw-blue);color:#fff;border-radius:6px;padding:4px 9px;cursor:pointer">✓</button></td>'
        + '</tr>';
