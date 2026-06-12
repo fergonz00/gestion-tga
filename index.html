@@ -1581,6 +1581,15 @@ let admVentasData = null;
 let admVentasFiltro = 'todas';        // 'pendientes' (sin dominio) | 'todas' | 'patentadas'
 let admVentasBusca = '';
 let admVentasMes = '';                // 'yyyy-mm' | '__sin__' | '__todos__' (default: mes actual)
+let admVentasComAbiertos = new Set(); // keys con el comentario de la PV desplegado (sobrevive re-renders)
+
+function toggleAdmComentario(key) {
+  const tr = document.getElementById('admcom_' + key);
+  if (!tr) return;
+  const abrir = tr.style.display === 'none';
+  tr.style.display = abrir ? '' : 'none';
+  if (abrir) admVentasComAbiertos.add(key); else admVentasComAbiertos.delete(key);
+}
 
 // Mes de cada carpeta — mismo criterio que Patentamientos: la fecha real de
 // Oversoft manda; si no está patentada, el mes confirmado/estimado por la adm;
@@ -1640,7 +1649,7 @@ function renderAdmVentas() {
     if (admVentasMes !== '__todos__' && _admMesDe(v) !== admVentasMes) return false;
     if (admVentasFiltro === 'pendientes' && v.dominio) return false;
     if (admVentasFiltro === 'patentadas' && !v.dominio) return false;
-    if (q && !(v.preventa + ' ' + v.cliente + ' ' + v.modelo + ' ' + v.serie + ' ' + v.vendedor + ' ' + v.dominio).toLowerCase().includes(q)) return false;
+    if (q && !(v.preventa + ' ' + v.cliente + ' ' + v.modelo + ' ' + v.serie + ' ' + v.vendedor + ' ' + v.dominio + ' ' + (v.comentario || '')).toLowerCase().includes(q)) return false;
     return true;
   });
 
@@ -1700,10 +1709,15 @@ function renderAdmVentas() {
     if (v.usado) extra.push('toma usado');
     if (v.montoFinanciado > 0) extra.push('financia ' + fmtPesosCompact(v.montoFinanciado));
     if (v.patentaCliente) extra.push('patenta cliente');
+    // 💬 = la PV tiene comentario del vendedor en Oversoft; se despliega al tocar
+    const btnCom = v.comentario
+      ? ' <button onclick="toggleAdmComentario(\'' + key + '\')" title="Ver comentario de la preventa" '
+        + ' style="border:0;background:none;cursor:pointer;font-size:13px;padding:0 2px;vertical-align:middle">💬</button>'
+      : '';
     h += '<tr id="admrow_' + key + '">'
-       + '<td data-label="PV"><b>' + escapeHtml(v.preventa) + '</b>' + (extra.length ? '<br><small style="color:var(--vw-grey-3)">' + extra.join(' · ') + '</small>' : '') + '</td>'
+       + '<td data-label="PV"><b>' + escapeHtml(v.preventa) + '</b>' + btnCom + (extra.length ? '<br><small style="color:var(--vw-grey-3)">' + extra.join(' · ') + '</small>' : '') + '</td>'
        + '<td data-label="Fecha">' + _fechaDMA(v.fechaPv) + '</td>'
-       + '<td data-label="Modelo" title="' + escapeHtml(v.modelo) + '">' + escapeHtml(String(v.modelo).replace(/^VW /, '').slice(0, 19)) + '</td>'
+       + '<td data-label="Modelo">' + escapeHtml(v.modelo) + '</td>'
        + '<td data-label="Cliente" title="' + escapeHtml(String(v.cliente) + (v.localidad ? ' — ' + v.localidad : '')) + '">' + escapeHtml(String(v.cliente).slice(0, 17)) + (v.localidad ? '<br><small style="color:var(--vw-grey-3)">' + escapeHtml(String(v.localidad).slice(0, 17)) + '</small>' : '') + '</td>'
        + '<td data-label="Vendedor">' + escapeHtml(v.vendedor) + '</td>'
        + '<td data-label="Serie" title="' + escapeHtml(v.chasis) + '">' + escapeHtml(v.serie) + '</td>'
@@ -1721,6 +1735,11 @@ function renderAdmVentas() {
        + '<td data-label="Guardado"><button onclick="guardarAdmVenta(\'' + v.preventa + '\')" id="admsave_' + key + '" title="Reintentar guardado de la fila" '
        + ' style="border:0;background:var(--vw-blue);color:#fff;border-radius:6px;padding:4px 9px;cursor:pointer">✓</button></td>'
        + '</tr>';
+    if (v.comentario) {
+      h += '<tr id="admcom_' + key + '"' + (admVentasComAbiertos.has(key) ? '' : ' style="display:none"') + '>'
+         + '<td colspan="17" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">'
+         + '💬 <b>Comentario de la PV ' + escapeHtml(v.preventa) + ':</b> ' + escapeHtml(v.comentario) + '</td></tr>';
+    }
   }
   if (!rows.length) h += '<tr><td colspan="17" class="empty">Sin carpetas para ese filtro.</td></tr>';
   h += '</tbody></table></div></div>';

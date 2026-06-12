@@ -377,7 +377,7 @@ function getAdmVentas() {
   // 1) ventas 0km (no anuladas) desde ADM_VENTAS_DESDE. Orden por prevtaid
   // desc = orden REAL de creación, lo más nuevo arriba (preventas.fecha viene
   // sin hora; el id secuencial sí refleja fecha+hora de carga).
-  const pvs = get('/preventas?select=prevtaid,numero,fecha,cliente,vendedorid,unidadid,usadoid,financiacion_importe,patentacliente,modelo&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + ADM_VENTAS_DESDE + '&order=prevtaid.desc&limit=2000');
+  const pvs = get('/preventas?select=prevtaid,numero,fecha,cliente,vendedorid,unidadid,usadoid,financiacion_importe,patentacliente,modelo,comentario,comentarioaux&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + ADM_VENTAS_DESDE + '&order=prevtaid.desc&limit=2000');
 
   // 2) unidades (serie, chasis, dominio, fecha patentamiento) en lotes
   const uidSet = {};
@@ -438,6 +438,7 @@ function getAdmVentas() {
       usado: (Number(p.usadoid) || 0) > 0,
       montoFinanciado: Number(p.financiacion_importe) || 0,
       patentaCliente: !!p.patentacliente,
+      comentario: [String(p.comentario || '').trim(), String(p.comentarioaux || '').trim()].filter(Boolean).join('\n'),
       manual: {
         mes_patentamiento:  m.mes_patentamiento || '',
         patenta:            m.patenta || '',
