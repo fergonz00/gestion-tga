@@ -1683,7 +1683,7 @@ function renderAdmVentas() {
        + '<td>' + (v.dominio ? '<b style="color:#0a7a30">' + escapeHtml(v.dominio) + '</b>' : '<span style="color:#cc6600">pend.</span>') + '</td>'
        + '<td>' + (v.fechaPatentamiento ? _fechaDMA(v.fechaPatentamiento) : '<span style="color:var(--vw-grey-3)">—</span>') + '</td>'
        + '<td>' + sel(key, 'patenta', m.patenta, ['TG', 'CL', 'RE'], 56) + '</td>'
-       + '<td>' + inp(key, 'admin', m.admin, 78) + '</td>'
+       + '<td>' + sel(key, 'admin', m.admin, ['MECHI', 'ANTO', 'VALE', 'MONI'], 82) + '</td>'
        + '<td>' + sel(key, 'tipo_carpeta', m.tipo_carpeta, ['Contado', 'Financia VW', 'Banco externo', 'Plan ahorro'], 110) + '</td>'
        // Oversoft ya tiene fecha pero la adm no confirmó el mes → borde naranja
        + '<td>' + inp(key, 'mes_patentamiento', m.mes_patentamiento, 90, 'month', (v.fechaPatentamiento && !m.mes_patentamiento) ? '#cc6600' : null) + '</td>'
