@@ -1677,6 +1677,29 @@ function getIncentivos(params) {
     if (v.preventaNum) modeloPorPv[String(v.preventaNum).trim()] = String(v.modelo || '').trim();
   }
 
+  // CC al 100% REAL por modelo (tabla "Performance Bonus" de la circular del
+  // mes, cargada en Supabase como tipo='performance100', SIN iva). Hay modelos
+  // "planos" (90% = 100%) que cambian mes a mes, por eso NO alcanza con ÷0,9.
+  // Las filas vienen con nombre_corto; las unidades usan el nombre largo de la
+  // BT → se traduce vía catalogo_modelos (nombre_corto → nombre_bt).
+  // Si el mes no tiene filas, cc100Base queda 0 y el front cae a la estimación.
+  const cc100PorModelo = {};
+  try {
+    const cien = _supaGet('/incentivos?select=nombre_corto,monto_siva&tipo=eq.performance100&mes=eq.' + mesKey);
+    if (cien.length) {
+      const btPorCorto = {};
+      for (const c of _supaGet('/catalogo_modelos?select=nombre_corto,nombre_bt&activo=eq.true')) {
+        if (c.nombre_corto && c.nombre_bt) btPorCorto[_normModeloKey(c.nombre_corto)] = c.nombre_bt;
+      }
+      for (const f of cien) {
+        const monto = Number(f.monto_siva) || 0;
+        cc100PorModelo[_normModeloKey(f.nombre_corto)] = monto;          // por si llega el corto
+        const bt = btPorCorto[_normModeloKey(f.nombre_corto)];
+        if (bt) cc100PorModelo[_normModeloKey(bt)] = monto;              // nombre largo BT
+      }
+    }
+  } catch (e) {}
+
   const patDelMes = (pat.carpetas || []).filter(c =>
     c.mesKey === mesKey && c.tipoCarpetaCanon !== 'Plan ahorro'
   );
@@ -1701,6 +1724,9 @@ function getIncentivos(params) {
       // 1,105 pickups), igual que táctico y whosale.
       cc90Base:    cc ? cc.cc90 : 0,
       cc90ConIva:  cc ? (cc.cc90Iva || 0) : 0,
+      // CC 100% real de la circular (SIN iva; el front lo lleva a c/IVA con el
+      // ratio V/U del modelo). 0 = sin dato → el front estima ÷0,9.
+      cc100Base:   cc100PorModelo[_normModeloKey(modelo)] || 0,
       tactico:     cc ? cc.tactico : 0,
       adicional1:  cc ? cc.adicional1 : 0,
       adicional2:  cc ? cc.adicional2 : 0,
