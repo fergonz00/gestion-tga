@@ -314,6 +314,12 @@ h2 { font-size: 22px; font-weight: 700; color: var(--vw-blue); margin-bottom: 4p
 .table-wrap .table-head h3 { font-size: 14px; font-weight: 600; color: var(--vw-blue); }
 .table-wrap .table-head .count { font-size: 12px; color: var(--vw-grey-4); }
 .table-scroll { overflow-x: auto; }
+/* Barra de scroll horizontal siempre visible (Windows usa barras overlay que
+   se ocultan y no se descubre que la tabla sigue para el costado) */
+.table-scroll::-webkit-scrollbar { height: 10px; }
+.table-scroll::-webkit-scrollbar-track { background: var(--vw-grey-1); border-radius: 5px; }
+.table-scroll::-webkit-scrollbar-thumb { background: var(--vw-grey-3); border-radius: 5px; }
+.table-scroll::-webkit-scrollbar-thumb:hover { background: var(--vw-grey-4); }
 table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 thead th {
   background: var(--vw-grey-1); color: var(--vw-grey-4);
@@ -1661,6 +1667,14 @@ function renderAdmVentas() {
   h += '<span style="font-size:12px;color:var(--vw-grey-3)">' + rows.length + ' carpetas</span>';
   h += '</div>';
 
+  // Aviso: ventas nuevas que todavía no tienen mes (no aparecen en ningún mes
+  // del selector hasta que Oversoft registre la fecha o la adm les ponga mes).
+  if (sinMes && admVentasMes !== '__sin__') {
+    h += '<div onclick="admVentasMes=\'__sin__\';renderAdmVentas()" style="cursor:pointer;background:#fff4e5;border:1px solid #f0c36d;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12.5px;color:#8a5a00">'
+       + '⚠ Hay <b>' + sinMes + '</b> carpeta' + (sinMes > 1 ? 's' : '') + ' sin mes asignado (ventas nuevas) — <u>tocá acá para verlas</u> y ponerles el mes estimado.'
+       + '</div>';
+  }
+
   // .table-scroll = scroll horizontal de respaldo si aún así no entra
   // (sin él, .table-wrap tiene overflow:hidden y cortaba columnas).
   h += '<div class="table-wrap"><div class="table-scroll"><table class="admv responsive-cards" style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:1100px">';
@@ -1679,7 +1693,8 @@ function renderAdmVentas() {
     '<input type="' + (type || 'text') + '" id="adm_' + campo + '_' + key + '" value="' + escapeHtml(val || '') + '"' + auto(pv)
     + ' style="width:' + w + 'px;padding:3px 5px;border:1px solid ' + (borde || 'var(--vw-grey-2)') + ';border-radius:5px;font-size:12px">';
   const sel = (pv, key, campo, val, opciones, w) => {
-    let s = '<select id="adm_' + campo + '_' + key + '"' + auto(pv) + ' style="width:' + w + 'px;padding:3px 4px;border:1px solid var(--vw-grey-2);border-radius:5px;font-size:12px">';
+    // padding-right reserva el lugar de la flecha nativa (si no, el texto se pisa con ella)
+    let s = '<select id="adm_' + campo + '_' + key + '"' + auto(pv) + ' style="width:' + w + 'px;padding:3px 14px 3px 4px;border:1px solid var(--vw-grey-2);border-radius:5px;font-size:12px">';
     s += '<option value=""' + (!val ? ' selected' : '') + '>—</option>';
     for (const o of opciones) s += '<option value="' + o + '"' + (val === o ? ' selected' : '') + '>' + o + '</option>';
     // valor libre histórico que no está en las opciones → lo conservamos
@@ -1703,13 +1718,13 @@ function renderAdmVentas() {
        + '<td data-label="Serie" title="' + escapeHtml(v.chasis) + '">' + escapeHtml(v.serie) + '</td>'
        + '<td data-label="Dominio">' + (v.dominio ? '<b style="color:#0a7a30">' + escapeHtml(v.dominio) + '</b>' : '<span style="color:#cc6600">pend.</span>') + '</td>'
        + '<td data-label="F. patent.">' + (v.fechaPatentamiento ? _fechaDMA(v.fechaPatentamiento) : '<span style="color:var(--vw-grey-3)">—</span>') + '</td>'
-       + '<td data-label="Patenta">' + sel(v.preventa, key, 'patenta', m.patenta, ['TG', 'CL', 'RE'], 50) + '</td>'
-       + '<td data-label="Admin">' + sel(v.preventa, key, 'admin', m.admin, ['MECHI', 'ANTO', 'VALE', 'MONI'], 68) + '</td>'
-       + '<td data-label="Carpeta">' + sel(v.preventa, key, 'tipo_carpeta', m.tipo_carpeta, ['Contado', 'Financia VW', 'Banco externo', 'Plan ahorro'], 88) + '</td>'
+       + '<td data-label="Patenta">' + sel(v.preventa, key, 'patenta', m.patenta, ['TG', 'CL', 'RE'], 58) + '</td>'
+       + '<td data-label="Admin">' + sel(v.preventa, key, 'admin', m.admin, ['MECHI', 'ANTO', 'VALE', 'MONI'], 78) + '</td>'
+       + '<td data-label="Carpeta">' + sel(v.preventa, key, 'tipo_carpeta', m.tipo_carpeta, ['Contado', 'Financia VW', 'Banco externo', 'Plan ahorro'], 98) + '</td>'
        // Oversoft ya tiene fecha pero la adm no confirmó el mes → borde naranja
        + '<td data-label="Mes pat. ✔adm">' + inp(v.preventa, key, 'mes_patentamiento', m.mes_patentamiento, 88, 'month', (v.fechaPatentamiento && !m.mes_patentamiento) ? '#cc6600' : null) + '</td>'
        + '<td data-label="F. liq. créd.">' + inp(v.preventa, key, 'fecha_liquidacion', m.fecha_liquidacion, 98, 'date') + '</td>'
-       + '<td data-label="Rev/Part">' + sel(v.preventa, key, 'reventa_particular', m.reventa_particular, ['PARTICULAR', 'REVENTA'], 78) + '</td>'
+       + '<td data-label="Rev/Part">' + sel(v.preventa, key, 'reventa_particular', m.reventa_particular, ['PARTICULAR', 'REVENTA'], 90) + '</td>'
        + '<td data-label="F. pago VW">' + inp(v.preventa, key, 'fecha_pago_vw', m.fecha_pago_vw, 98, 'date') + '</td>'
        + '<td data-label="Notas">' + inp(v.preventa, key, 'notas', m.notas, 92) + '</td>'
        + '<td data-label="Guardado"><button onclick="guardarAdmVenta(\'' + v.preventa + '\')" id="admsave_' + key + '" title="Reintentar guardado de la fila" '
