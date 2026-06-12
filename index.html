@@ -1654,11 +1654,15 @@ function renderAdmVentas() {
      + '<th>Patenta</th><th>Admin</th><th>Carpeta</th><th title="La adm confirma el mes una vez pagado el patentamiento (aunque Oversoft ya tenga la fecha)">Mes pat. ✔adm</th><th>F. liq. créd.</th><th>Rev/Part</th><th>F. pago VW</th><th>Notas</th><th></th>'
      + '</tr></thead><tbody>';
 
-  const inp = (key, campo, val, w, type, borde) =>
-    '<input type="' + (type || 'text') + '" id="adm_' + campo + '_' + key + '" value="' + escapeHtml(val || '') + '" '
+  // Guardado AUTOMÁTICO: cualquier cambio en un campo dispara el guardado de
+  // la fila (onchange — en los de texto salta al salir del campo). El ✓ queda
+  // como reintento manual por si algún guardado falla.
+  const auto = (pv) => ' onchange="guardarAdmVenta(\'' + pv + '\')"';
+  const inp = (pv, key, campo, val, w, type, borde) =>
+    '<input type="' + (type || 'text') + '" id="adm_' + campo + '_' + key + '" value="' + escapeHtml(val || '') + '"' + auto(pv)
     + ' style="width:' + w + 'px;padding:3px 5px;border:1px solid ' + (borde || 'var(--vw-grey-2)') + ';border-radius:5px;font-size:12px">';
-  const sel = (key, campo, val, opciones, w) => {
-    let s = '<select id="adm_' + campo + '_' + key + '" style="width:' + w + 'px;padding:3px 4px;border:1px solid var(--vw-grey-2);border-radius:5px;font-size:12px">';
+  const sel = (pv, key, campo, val, opciones, w) => {
+    let s = '<select id="adm_' + campo + '_' + key + '"' + auto(pv) + ' style="width:' + w + 'px;padding:3px 4px;border:1px solid var(--vw-grey-2);border-radius:5px;font-size:12px">';
     s += '<option value=""' + (!val ? ' selected' : '') + '>—</option>';
     for (const o of opciones) s += '<option value="' + o + '"' + (val === o ? ' selected' : '') + '>' + o + '</option>';
     // valor libre histórico que no está en las opciones → lo conservamos
@@ -1682,22 +1686,22 @@ function renderAdmVentas() {
        + '<td title="' + escapeHtml(v.chasis) + '">' + escapeHtml(v.serie) + '</td>'
        + '<td>' + (v.dominio ? '<b style="color:#0a7a30">' + escapeHtml(v.dominio) + '</b>' : '<span style="color:#cc6600">pend.</span>') + '</td>'
        + '<td>' + (v.fechaPatentamiento ? _fechaDMA(v.fechaPatentamiento) : '<span style="color:var(--vw-grey-3)">—</span>') + '</td>'
-       + '<td>' + sel(key, 'patenta', m.patenta, ['TG', 'CL', 'RE'], 56) + '</td>'
-       + '<td>' + sel(key, 'admin', m.admin, ['MECHI', 'ANTO', 'VALE', 'MONI'], 82) + '</td>'
-       + '<td>' + sel(key, 'tipo_carpeta', m.tipo_carpeta, ['Contado', 'Financia VW', 'Banco externo', 'Plan ahorro'], 110) + '</td>'
+       + '<td>' + sel(v.preventa, key, 'patenta', m.patenta, ['TG', 'CL', 'RE'], 56) + '</td>'
+       + '<td>' + sel(v.preventa, key, 'admin', m.admin, ['MECHI', 'ANTO', 'VALE', 'MONI'], 82) + '</td>'
+       + '<td>' + sel(v.preventa, key, 'tipo_carpeta', m.tipo_carpeta, ['Contado', 'Financia VW', 'Banco externo', 'Plan ahorro'], 110) + '</td>'
        // Oversoft ya tiene fecha pero la adm no confirmó el mes → borde naranja
-       + '<td>' + inp(key, 'mes_patentamiento', m.mes_patentamiento, 90, 'month', (v.fechaPatentamiento && !m.mes_patentamiento) ? '#cc6600' : null) + '</td>'
-       + '<td>' + inp(key, 'fecha_liquidacion', m.fecha_liquidacion, 108, 'date') + '</td>'
-       + '<td>' + sel(key, 'reventa_particular', m.reventa_particular, ['PARTICULAR', 'REVENTA'], 92) + '</td>'
-       + '<td>' + inp(key, 'fecha_pago_vw', m.fecha_pago_vw, 108, 'date') + '</td>'
-       + '<td>' + inp(key, 'notas', m.notas, 110) + '</td>'
-       + '<td><button onclick="guardarAdmVenta(\'' + v.preventa + '\')" id="admsave_' + key + '" title="Guardar esta fila" '
+       + '<td>' + inp(v.preventa, key, 'mes_patentamiento', m.mes_patentamiento, 90, 'month', (v.fechaPatentamiento && !m.mes_patentamiento) ? '#cc6600' : null) + '</td>'
+       + '<td>' + inp(v.preventa, key, 'fecha_liquidacion', m.fecha_liquidacion, 108, 'date') + '</td>'
+       + '<td>' + sel(v.preventa, key, 'reventa_particular', m.reventa_particular, ['PARTICULAR', 'REVENTA'], 92) + '</td>'
+       + '<td>' + inp(v.preventa, key, 'fecha_pago_vw', m.fecha_pago_vw, 108, 'date') + '</td>'
+       + '<td>' + inp(v.preventa, key, 'notas', m.notas, 110) + '</td>'
+       + '<td><button onclick="guardarAdmVenta(\'' + v.preventa + '\')" id="admsave_' + key + '" title="Reintentar guardado de la fila" '
        + ' style="border:0;background:var(--vw-blue);color:#fff;border-radius:6px;padding:4px 9px;cursor:pointer">✓</button></td>'
        + '</tr>';
   }
   if (!rows.length) h += '<tr><td colspan="17" class="empty">Sin carpetas para ese filtro.</td></tr>';
   h += '</tbody></table></div>';
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio y fecha de patentamiento salen de Oversoft en vivo (no se editan). El resto se completa acá y se guarda por fila con ✓. El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes. El mes de cada carpeta (selector de arriba, mismo criterio que Patentamientos) = fecha real de Oversoft o, si aún no está patentada, el "Mes pat. ✔adm" — las que no tienen ninguno quedan en "Sin mes asignado".</div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio y fecha de patentamiento salen de Oversoft en vivo (no se editan). El resto se completa acá y <b>se guarda solo al cambiar cada campo</b> (el ✓ de la fila se pone verde cuando guardó bien; si algo falla, avisa y podés reintentar con el ✓). El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes. El mes de cada carpeta (selector de arriba, mismo criterio que Patentamientos) = fecha real de Oversoft o, si aún no está patentada, el "Mes pat. ✔adm" — las que no tienen ninguno quedan en "Sin mes asignado".</div>';
   cont.innerHTML = h;
 }
 
