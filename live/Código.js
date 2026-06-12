@@ -512,7 +512,7 @@ function migrarAdmVentasDesdeHoja() {
     const res = UrlFetchApp.fetch(SUPA_URL + '/adm_ventas?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(rows), muteHttpExceptions: true });
     if (res.getResponseCode() >= 300) return { error: 'insert falló: ' + res.getContentText().slice(0, 300) };
   }
-  try { CacheService.getScriptCache().remove('admventas'); } catch (e) {}
+  try { CacheService.getScriptCache().removeAll(['admventas', 'patentamientos']); } catch (e) {}
   return { migradas: rows.length, yaExistian: saltadas };
 }
 
@@ -527,7 +527,8 @@ function saveAdmVenta(body) {
   const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
   const res = UrlFetchApp.fetch(SUPA_URL + '/adm_ventas?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(row), muteHttpExceptions: true });
   if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200) };
-  try { CacheService.getScriptCache().remove('admventas'); } catch (e) {}
+  // patentamientos se arma desde adm_ventas → invalidar ambos caches
+  try { CacheService.getScriptCache().removeAll(['admventas', 'patentamientos']); } catch (e) {}
   return { ok: true, preventa: pv };
 }
 
@@ -1302,6 +1303,7 @@ function _matchVendedor(raw) {
   // TG (gerencia): la palabra "tg" como token (separadores: espacio, guion,
   // punto, coma), o "Maximiliano", o "Cata" (alias de gerencia).
   if (/(^|[\s\-.,])tg($|[\s\-.,])/.test(n)) return 'TG';
+  if (/^t\.?\s*g\.?$/.test(n))               return 'TG';   // "T.G." (Oversoft)
   if (n.indexOf('maximiliano') >= 0)         return 'TG';
   if (n.indexOf('cata') >= 0)                return 'TG';
 
@@ -1333,28 +1335,20 @@ function _norm(s) {
 // =======================================================================
 // PATENTAMIENTOS
 // =======================================================================
-// Hoja "patentamientos" = espejo (IMPORTRANGE) de "adm de ventas".
-// Mapeo real (confirmado por Fer 2026-05-14, headers de la madre):
-//   A num                  L reventa o particular
-//   B # PV                 M vendedor
-//   C fecha PV             N usado SI/NO
-//   D serie                O cliente
-//   E chasis               P modelo
-//   F mes patentamiento    Q localidad
-//     (texto "ABRIL")      R fecha patentamiento (real)
-//   G patenta TG/CL/RE     S dominio
-//   H admin                T fecha pago VW (no usado)
-//   I AA (tipo carpeta: TRAD / PLAN AHORRO / FINANCIA FRANCES)
-//   J monto financiado (no usado)
-//   K fecha liquidación crédito (no usado)
+// Desde 12-jun se arma 100% desde la data de Adm. de ventas (getAdmVentas):
+// Oversoft pone lo automático (fecha de patentamiento, dominio, serie,
+// cliente, vendedor, modelo, fecha PV) y la tabla adm_ventas lo manual
+// (mes confirmado por la adm, patenta TG/CL/RE, admin, tipo carpeta,
+// reventa/particular). La hoja espejo del Sheet YA NO se lee acá — solo la
+// usa la migración una-vez (migrarAdmVentasDesdeHoja).
 //
+// Mes de cada carpeta (la base de objetivos, recupero e industria):
+//   1) fecha real de patentamiento de Oversoft → mes (manda siempre)
+//   2) si todavía no está patentada → mes_patentamiento cargado por la adm
+//      (sirve de estimado para que la carpeta cuente como pendiente del mes)
+//   3) sin ninguno de los dos → la carpeta no se puede ubicar y queda afuera
 // Filtro: solo desde PATENTAMIENTOS_MES_MINIMO (2026-04).
-// FECHA DE PATENTAMIENTO y DOMINIO salen de OVERSOFT (match por # PV
-// normalizado); col R / col S de la hoja quedan de fallback para lo que la
-// réplica no tenga. El mes se determina por la fecha real de patentamiento
-// cuando existe; si la carpeta todavía no está patentada, cae al texto de
-// col F ("ABRIL"/etc). Esto matchea con cómo Fer cuenta (por fecha de
-// patentamiento).
+// _MES_TXT_A_NUM lo sigue usando la migración (col F texto "ABRIL").
 const _MES_TXT_A_NUM = {
   'enero':'01','febrero':'02','marzo':'03','abril':'04','mayo':'05',
   'junio':'06','julio':'07','agosto':'08','septiembre':'09','sept':'09',
@@ -1393,146 +1387,88 @@ function _normTipoCarpeta(raw) {
   return s0;  // sin clasificar → devuelvo el raw
 }
 
-// PV normalizado → { dominio, fechaPat ISO } desde la réplica Oversoft.
-// La patente y la fecha de patentamiento las carga el gestor en Oversoft,
-// así que son más confiables que el tipeo manual de la hoja. PVs 0km no
-// anulados desde 2025 (una carpeta puede venderse meses antes de patentarse).
-function _oversoftPatPorPv() {
-  const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
-  const get = (path) => {
-    const res = UrlFetchApp.fetch(OVERSOFT_URL + path, h);
-    return (res.getResponseCode() < 300) ? JSON.parse(res.getContentText()) : [];
-  };
-  // Paginado de a 1000 (la réplica capea las respuestas en 1000 filas).
-  const pvs = [];
-  for (let off = 0; off < 10000; off += 1000) {
-    const ch = get('/preventas?select=numero,unidadid&anulada=not.is.true&tipopv=eq.O&fecha=gte.2025-01-01&order=fecha.asc&limit=1000&offset=' + off);
-    for (const p of ch) pvs.push(p);
-    if (ch.length < 1000) break;
-  }
-  const uidPorPv = {};
-  for (const p of pvs) if (p.unidadid) uidPorPv[_normPv(p.numero)] = p.unidadid;
-  const uidSet = {};
-  for (const pv in uidPorPv) uidSet[uidPorPv[pv]] = true;
-  const uids = Object.keys(uidSet);
-  const unis = {};
-  for (let i = 0; i < uids.length; i += 100) {
-    for (const u of get('/unidades?select=unidadid,patente,fechapatentamiento&unidadid=in.(' + uids.slice(i, i + 100).join(',') + ')')) unis[u.unidadid] = u;
-  }
-  const map = {};
-  for (const pv in uidPorPv) {
-    const u = unis[uidPorPv[pv]] || {};
-    const dominio  = String(u.patente || '').trim();
-    const fechaPat = u.fechapatentamiento ? String(u.fechapatentamiento).slice(0, 10) : '';
-    if (dominio || fechaPat) map[pv] = { dominio: dominio, fechaPat: fechaPat };
-  }
-  return map;
+// 'TG'/'CL'/'RE' (selects nuevos del portal) y valores históricos migrados
+// de la hoja ('CLIENTE', 'REVENTA', 'REVENTA ROCIO') → TG / CLIENTE / REVENTA
+// (lo que esperan los badges y desgloses del front).
+function _normPatenta(raw) {
+  const s = String(raw || '').trim().toUpperCase();
+  if (!s) return '';
+  if (s.indexOf('TG') === 0) return 'TG';
+  if (s.indexOf('CL') === 0) return 'CLIENTE';
+  if (s.indexOf('RE') === 0) return 'REVENTA';
+  return s;
+}
+
+// PARTICULAR / REVENTA. La hoja vieja traía basura de fórmulas ('0', '#N/D')
+// que migró tal cual → la tratamos como vacío.
+function _normRevPart(raw) {
+  const s = String(raw || '').trim().toUpperCase();
+  if (!s || s === '0' || s === '#N/D') return '';
+  if (s.indexOf('PARTIC') >= 0) return 'PARTICULAR';
+  if (s.indexOf('REVENTA') >= 0 || s === 'RE') return 'REVENTA';
+  return s;
+}
+
+// '2026-06-11' → '11/06/2026'
+function _dmaFromIso(iso) {
+  const s = String(iso || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  return s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4);
 }
 
 function getPatentamientos() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sh = ss.getSheetByName('patentamientos')
-    || ss.getSheets().find(s => /^pat/i.test(s.getName()) || /adm.*venta/i.test(s.getName()));
-  if (!sh) throw new Error('No encontré la hoja "patentamientos"');
-
-  // Oversoft manda en fecha de patentamiento y dominio; si la réplica no
-  // responde, todo cae a la hoja como antes.
-  let ovsPat = {};
-  try { ovsPat = _oversoftPatPorPv(); } catch (e) {}
-
-  const lastRow = sh.getLastRow();
-  if (lastRow < 2) {
-    return { carpetas: [], meses: [], updatedAt: new Date().toISOString() };
-  }
-
-  const range   = sh.getRange(1, 1, lastRow, 26);
-  const display = range.getDisplayValues();
-  const raw     = range.getValues();
-
-  // Header detection — fila con "num" / "#" en A y "pv" en B
-  let headerRow = -1;
-  for (let i = 0; i < Math.min(5, display.length); i++) {
-    const a = String(display[i][0] || '').toLowerCase().trim();
-    const b = String(display[i][1] || '').toLowerCase().trim();
-    if (/(num|nro|#)/.test(a) && /(pv|preventa)/.test(b)) { headerRow = i; break; }
-  }
-  if (headerRow < 0) headerRow = 0;
+  const adm = getAdmVentas();   // Oversoft en vivo + manual adm_ventas
 
   const carpetas = [];
   const cuentaPorMes = {};
 
-  for (let i = headerRow + 1; i < display.length; i++) {
-    const drow = display[i];
-    const rrow = raw[i];
+  // Orden por fecha de PV ascendente: el número de carpeta (#) reproduce el
+  // correlativo que llevaba la hoja.
+  const ventas = (adm.ventas || []).slice()
+    .sort((a, b) => (a.fechaPv < b.fechaPv ? -1 : (a.fechaPv > b.fechaPv ? 1 : 0)));
 
-    const num   = toNumber(rrow[0]);
-    const pv    = String(drow[1] || '').trim();
-    const serie = String(drow[3] || '').trim();
-    if (!num && !pv && !serie) continue;
+  let num = 0;
+  for (const v of ventas) {
+    const m = v.manual || {};
 
-    // C = fecha PV (cuándo se vendió). Es la referencia de "qué año" cuando
-    // sólo tenemos texto en col F. Sin fecha PV, no podemos garantizar que la
-    // carpeta sea reciente → la descartamos (evita filas viejas con col F
-    // "MAYO" que se contaban como mayo del año actual).
-    const fechaPv  = _parseFecha(rrow[2], drow[2]);
-    // Fecha de patentamiento: Oversoft primero, col R de fallback.
-    const ov = ovsPat[_normPv(pv)];
-    const ovFecha = (ov && ov.fechaPat) ? ov.fechaPat : '';
-    const fechaPat = ovFecha
-      ? new Date(+ovFecha.slice(0, 4), +ovFecha.slice(5, 7) - 1, +ovFecha.slice(8, 10))
-      : _parseFecha(rrow[17], drow[17]);
-
-    let mesKey;
-    let mesKeyOrigen;
-    if (fechaPat) {
-      mesKey = _yyyyMm(fechaPat);
-      mesKeyOrigen = 'fechaR';
+    let mesKey, mesKeyOrigen;
+    if (v.fechaPatentamiento) {
+      mesKey = String(v.fechaPatentamiento).slice(0, 7);
+      mesKeyOrigen = 'oversoft';
+    } else if (m.mes_patentamiento) {
+      mesKey = String(m.mes_patentamiento).slice(0, 7);
+      mesKeyOrigen = 'adm';
     } else {
-      const mesTxt = _norm(drow[5]);
-      const mesNum = _MES_TXT_A_NUM[mesTxt];
-      if (!mesNum) continue;
-      if (!fechaPv) continue;
-      // Si col F dice un mes anterior al de la PV asumimos que es el año
-      // siguiente (ej. PV en diciembre y col F "ENERO").
-      let anio = fechaPv.getFullYear();
-      const mesPvNum = fechaPv.getMonth() + 1;
-      if (parseInt(mesNum, 10) < mesPvNum) anio += 1;
-      mesKey = anio + '-' + mesNum;
-      mesKeyOrigen = 'colF';
+      continue;   // sin fecha real ni mes estimado → no se puede ubicar en un mes
     }
     if (mesKey < PATENTAMIENTOS_MES_MINIMO) continue;
 
-    // M = vendedor → mapeo a oficial
-    const vendedorRaw = String(drow[12] || '').trim();
-    const vendedor    = _matchVendedor(vendedorRaw);
-
+    num++;
     cuentaPorMes[mesKey] = (cuentaPorMes[mesKey] || 0) + 1;
 
     carpetas.push({
-      num:                num,                                      // A
-      pv:                 pv,                                       // B
-      serie:              serie,                                    // D
-      mesPatente:         String(drow[5] || '').trim().toUpperCase(), // F (texto)
-      mesKey:             mesKey,                                   // 'yyyy-mm'
-      patentaA:           String(drow[6] || '').trim().toUpperCase(), // G (TG/CLIENTE/REVENTA)
-      admin:              String(drow[7] || '').trim(),             // H
-      tipoCarpeta:        String(drow[8] || '').trim().toUpperCase(), // I (AA) — raw
-      tipoCarpetaCanon:   _normTipoCarpeta(drow[8]),                  // I → canónico (4 buckets)
-      reventaOParticular: String(drow[11] || '').trim().toUpperCase(), // L
-      vendedor:           vendedor,                                 // M → oficial
-      vendedorRaw:        vendedorRaw,                              // M → tal cual
-      cliente:            String(drow[14] || '').trim(),            // O
-      modelo:             String(drow[15] || '').trim(),            // P
-      fechaPvIso:         fechaPv ? _isoDate(fechaPv) : '',         // C → ISO
-      fechaPvStr:         String(drow[2] || '').trim(),             // C → display
-      fechaPatIso:        fechaPat ? _isoDate(fechaPat) : '',       // ISO
-      fechaPatStr:        ovFecha
-        ? ovFecha.slice(8, 10) + '/' + ovFecha.slice(5, 7) + '/' + ovFecha.slice(0, 4)
-        : String(drow[17] || '').trim(),                            // display
-      patentada:          !!fechaPat,
-      mesKeyOrigen:       mesKeyOrigen,                              // 'fechaR' | 'colF'
-      patOrigen:          ovFecha ? 'oversoft' : (fechaPat ? 'hoja' : ''),
-      dominio:            (ov && ov.dominio) || String(drow[18] || '').trim(),  // Oversoft → col S fallback
+      num:                num,
+      pv:                 v.preventa,
+      serie:              v.serie,
+      mesPatente:         String(m.mes_patentamiento || ''),         // 'yyyy-mm' confirmado por la adm
+      mesKey:             mesKey,                                    // 'yyyy-mm'
+      patentaA:           _normPatenta(m.patenta),                   // TG / CLIENTE / REVENTA
+      admin:              String(m.admin || '').trim().toUpperCase(),
+      tipoCarpeta:        String(m.tipo_carpeta || '').trim().toUpperCase(),
+      tipoCarpetaCanon:   _normTipoCarpeta(m.tipo_carpeta),          // 4 buckets
+      reventaOParticular: _normRevPart(m.reventa_particular),
+      vendedor:           _matchVendedor(v.vendedor),                // → oficial o null
+      vendedorRaw:        v.vendedor,
+      cliente:            v.cliente,
+      modelo:             v.modelo,
+      fechaPvIso:         v.fechaPv,
+      fechaPvStr:         _dmaFromIso(v.fechaPv),
+      fechaPatIso:        v.fechaPatentamiento,
+      fechaPatStr:        _dmaFromIso(v.fechaPatentamiento),
+      patentada:          !!v.fechaPatentamiento,
+      mesKeyOrigen:       mesKeyOrigen,                              // 'oversoft' | 'adm'
+      patOrigen:          v.fechaPatentamiento ? 'oversoft' : '',
+      dominio:            v.dominio,
     });
   }
 

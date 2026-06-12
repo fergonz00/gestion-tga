@@ -4406,7 +4406,7 @@ async function loadPatentamientos(forzar) {
       }
       renderPatentamientos();
       const upd = document.getElementById('updatedAtPatent');
-      if (upd && cached.updatedAt) upd.textContent = 'Actualizado: ' + new Date(cached.updatedAt).toLocaleString('es-AR');
+      if (upd && cached.updatedAt) upd.textContent = 'Oversoft + Adm. ventas · actualizado: ' + new Date(cached.updatedAt).toLocaleString('es-AR');
       _fetchPatentSilent();
       return;
     }
@@ -4437,7 +4437,7 @@ async function loadPatentamientos(forzar) {
     }
     renderPatentamientos();
     const upd = document.getElementById('updatedAtPatent');
-    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+    if (upd && data.updatedAt) upd.textContent = 'Oversoft + Adm. ventas · actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
     // Si la solapa Industria está visible, re-render con la data nueva
     const panelInd = document.getElementById('panelIndustria');
     if (panelInd && panelInd.classList.contains('active')) renderIndustria();
@@ -4466,7 +4466,7 @@ async function _fetchPatentSilent() {
     }
     renderPatentamientos();
     const upd = document.getElementById('updatedAtPatent');
-    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+    if (upd && data.updatedAt) upd.textContent = 'Oversoft + Adm. ventas · actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
     // Si la solapa Industria está visible, también re-render (depende de patentData para TGA pat)
     const panelInd = document.getElementById('panelIndustria');
     if (panelInd && panelInd.classList.contains('active')) renderIndustria();
