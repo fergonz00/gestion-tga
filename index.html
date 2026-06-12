@@ -1559,6 +1559,15 @@ async function loadIndustria() {
 let admVentasData = null;
 let admVentasFiltro = 'pendientes';   // 'pendientes' (sin dominio) | 'todas' | 'patentadas'
 let admVentasBusca = '';
+let admVentasMes = '';                // 'yyyy-mm' | '__sin__' | '__todos__' (default: mes actual)
+
+// Mes de cada carpeta — mismo criterio que Patentamientos: la fecha real de
+// Oversoft manda; si no está patentada, el mes confirmado/estimado por la adm.
+function _admMesDe(v) {
+  if (v.fechaPatentamiento) return String(v.fechaPatentamiento).slice(0, 7);
+  const m = (v.manual && v.manual.mes_patentamiento) || '';
+  return m ? String(m).slice(0, 7) : '';
+}
 
 async function loadAdmVentas(forzar) {
   if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return;
@@ -1590,8 +1599,24 @@ function renderAdmVentas() {
   const cont = document.getElementById('admVentasContent');
   if (!cont) return;
   if (!admVentasData || !Array.isArray(admVentasData.ventas)) { cont.innerHTML = '<div class="empty">Sin datos.</div>'; return; }
+
+  // Meses disponibles (cuenta por mes + carpetas sin mes asignado)
+  const cuentaMes = {};
+  let sinMes = 0;
+  for (const v of admVentasData.ventas) {
+    const mk = _admMesDe(v);
+    if (mk) cuentaMes[mk] = (cuentaMes[mk] || 0) + 1; else sinMes++;
+  }
+  const mesesAdm = Object.keys(cuentaMes).sort().reverse();
+  if (!admVentasMes || (admVentasMes !== '__todos__' && admVentasMes !== '__sin__' && mesesAdm.indexOf(admVentasMes) === -1)) {
+    const hoy = _mesActualReal();
+    admVentasMes = mesesAdm.indexOf(hoy) >= 0 ? hoy : (mesesAdm[0] || '__todos__');
+  }
+
   const q = admVentasBusca.trim().toLowerCase();
   const rows = admVentasData.ventas.filter(v => {
+    if (admVentasMes === '__sin__') { if (_admMesDe(v)) return false; }
+    else if (admVentasMes !== '__todos__' && _admMesDe(v) !== admVentasMes) return false;
     if (admVentasFiltro === 'pendientes' && v.dominio) return false;
     if (admVentasFiltro === 'patentadas' && !v.dominio) return false;
     if (q && !(v.preventa + ' ' + v.cliente + ' ' + v.modelo + ' ' + v.serie + ' ' + v.vendedor + ' ' + v.dominio).toLowerCase().includes(q)) return false;
@@ -1602,6 +1627,17 @@ function renderAdmVentas() {
     + (admVentasFiltro === val ? 'background:var(--vw-blue);color:#fff;border-color:var(--vw-blue);font-weight:700' : 'background:#fff;color:var(--vw-grey-3)') + '">' + lbl + '</button>';
 
   let h = '<div class="mes-row" style="margin-bottom:10px;flex-wrap:wrap;gap:8px">';
+  // Selector de mes — igual que en Patentamientos (cantidad + objetivo del mes)
+  h += '<label for="mesSelAdm">Mes:</label>';
+  h += '<select id="mesSelAdm" onchange="admVentasMes=this.value;renderAdmVentas()">';
+  for (const mk of mesesAdm) {
+    const obj = objetivosPat[mk] || 0;
+    const lbl = _mesLabelLargo(mk) + ' ' + mk.slice(0, 4) + ' · ' + cuentaMes[mk] + ' carpetas' + (obj > 0 ? ' · obj ' + obj : '');
+    h += '<option value="' + mk + '"' + (admVentasMes === mk ? ' selected' : '') + '>' + lbl + '</option>';
+  }
+  if (sinMes) h += '<option value="__sin__"' + (admVentasMes === '__sin__' ? ' selected' : '') + '>⚠ Sin mes asignado · ' + sinMes + '</option>';
+  h += '<option value="__todos__"' + (admVentasMes === '__todos__' ? ' selected' : '') + '>Todos los meses · ' + admVentasData.ventas.length + '</option>';
+  h += '</select>';
   h += chip('pendientes', 'Pendientes de patentar');
   h += chip('patentadas', 'Patentadas');
   h += chip('todas', 'Todas');
@@ -1661,7 +1697,7 @@ function renderAdmVentas() {
   }
   if (!rows.length) h += '<tr><td colspan="17" class="empty">Sin carpetas para ese filtro.</td></tr>';
   h += '</tbody></table></div>';
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio y fecha de patentamiento salen de Oversoft en vivo (no se editan). El resto se completa acá y se guarda por fila con ✓. El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes.</div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio y fecha de patentamiento salen de Oversoft en vivo (no se editan). El resto se completa acá y se guarda por fila con ✓. El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes. El mes de cada carpeta (selector de arriba, mismo criterio que Patentamientos) = fecha real de Oversoft o, si aún no está patentada, el "Mes pat. ✔adm" — las que no tienen ninguno quedan en "Sin mes asignado".</div>';
   cont.innerHTML = h;
 }
 
