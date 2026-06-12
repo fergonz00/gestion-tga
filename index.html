@@ -852,6 +852,16 @@ table.patent-tbl.resumida .col-extra { display: none; }
   table.responsive-cards td[data-label="Modelo"]::before {
     display: block; margin-bottom: 2px;
   }
+
+  /* Adm. ventas en el cel: tarjetas. El min-width inline de la grilla de
+     escritorio se anula para que la tarjeta ocupe el ancho del teléfono. */
+  table.admv { min-width: 0 !important; font-size: 13px !important; }
+  table.admv td[data-label="PV"] {
+    padding-top: 0; padding-bottom: 8px;
+    margin-bottom: 6px; border-bottom: 1px dashed var(--vw-grey-2);
+    font-size: 14px;
+  }
+  table.admv td[data-label="PV"]::before { display: none; }
 }
 
 
@@ -1653,7 +1663,7 @@ function renderAdmVentas() {
 
   // .table-scroll = scroll horizontal de respaldo si aún así no entra
   // (sin él, .table-wrap tiene overflow:hidden y cortaba columnas).
-  h += '<div class="table-wrap"><div class="table-scroll"><table class="admv" style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:1100px">';
+  h += '<div class="table-wrap"><div class="table-scroll"><table class="admv responsive-cards" style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:1100px">';
   h += '<thead style="white-space:nowrap"><tr>'
      + '<th style="text-align:left">PV</th><th style="text-align:left">Fecha</th><th style="text-align:left">Modelo</th>'
      + '<th style="text-align:left">Cliente</th><th style="text-align:left">Vendedor</th><th style="text-align:left">Serie</th>'
@@ -1685,24 +1695,24 @@ function renderAdmVentas() {
     if (v.montoFinanciado > 0) extra.push('financia ' + fmtPesosCompact(v.montoFinanciado));
     if (v.patentaCliente) extra.push('patenta cliente');
     h += '<tr id="admrow_' + key + '">'
-       + '<td><b>' + escapeHtml(v.preventa) + '</b>' + (extra.length ? '<br><small style="color:var(--vw-grey-3)">' + extra.join(' · ') + '</small>' : '') + '</td>'
-       + '<td>' + _fechaDMA(v.fechaPv) + '</td>'
-       + '<td title="' + escapeHtml(v.modelo) + '">' + escapeHtml(String(v.modelo).replace(/^VW /, '').slice(0, 19)) + '</td>'
-       + '<td title="' + escapeHtml(String(v.cliente) + (v.localidad ? ' — ' + v.localidad : '')) + '">' + escapeHtml(String(v.cliente).slice(0, 17)) + (v.localidad ? '<br><small style="color:var(--vw-grey-3)">' + escapeHtml(String(v.localidad).slice(0, 17)) + '</small>' : '') + '</td>'
-       + '<td>' + escapeHtml(v.vendedor) + '</td>'
-       + '<td title="' + escapeHtml(v.chasis) + '">' + escapeHtml(v.serie) + '</td>'
-       + '<td>' + (v.dominio ? '<b style="color:#0a7a30">' + escapeHtml(v.dominio) + '</b>' : '<span style="color:#cc6600">pend.</span>') + '</td>'
-       + '<td>' + (v.fechaPatentamiento ? _fechaDMA(v.fechaPatentamiento) : '<span style="color:var(--vw-grey-3)">—</span>') + '</td>'
-       + '<td>' + sel(v.preventa, key, 'patenta', m.patenta, ['TG', 'CL', 'RE'], 50) + '</td>'
-       + '<td>' + sel(v.preventa, key, 'admin', m.admin, ['MECHI', 'ANTO', 'VALE', 'MONI'], 68) + '</td>'
-       + '<td>' + sel(v.preventa, key, 'tipo_carpeta', m.tipo_carpeta, ['Contado', 'Financia VW', 'Banco externo', 'Plan ahorro'], 88) + '</td>'
+       + '<td data-label="PV"><b>' + escapeHtml(v.preventa) + '</b>' + (extra.length ? '<br><small style="color:var(--vw-grey-3)">' + extra.join(' · ') + '</small>' : '') + '</td>'
+       + '<td data-label="Fecha">' + _fechaDMA(v.fechaPv) + '</td>'
+       + '<td data-label="Modelo" title="' + escapeHtml(v.modelo) + '">' + escapeHtml(String(v.modelo).replace(/^VW /, '').slice(0, 19)) + '</td>'
+       + '<td data-label="Cliente" title="' + escapeHtml(String(v.cliente) + (v.localidad ? ' — ' + v.localidad : '')) + '">' + escapeHtml(String(v.cliente).slice(0, 17)) + (v.localidad ? '<br><small style="color:var(--vw-grey-3)">' + escapeHtml(String(v.localidad).slice(0, 17)) + '</small>' : '') + '</td>'
+       + '<td data-label="Vendedor">' + escapeHtml(v.vendedor) + '</td>'
+       + '<td data-label="Serie" title="' + escapeHtml(v.chasis) + '">' + escapeHtml(v.serie) + '</td>'
+       + '<td data-label="Dominio">' + (v.dominio ? '<b style="color:#0a7a30">' + escapeHtml(v.dominio) + '</b>' : '<span style="color:#cc6600">pend.</span>') + '</td>'
+       + '<td data-label="F. patent.">' + (v.fechaPatentamiento ? _fechaDMA(v.fechaPatentamiento) : '<span style="color:var(--vw-grey-3)">—</span>') + '</td>'
+       + '<td data-label="Patenta">' + sel(v.preventa, key, 'patenta', m.patenta, ['TG', 'CL', 'RE'], 50) + '</td>'
+       + '<td data-label="Admin">' + sel(v.preventa, key, 'admin', m.admin, ['MECHI', 'ANTO', 'VALE', 'MONI'], 68) + '</td>'
+       + '<td data-label="Carpeta">' + sel(v.preventa, key, 'tipo_carpeta', m.tipo_carpeta, ['Contado', 'Financia VW', 'Banco externo', 'Plan ahorro'], 88) + '</td>'
        // Oversoft ya tiene fecha pero la adm no confirmó el mes → borde naranja
-       + '<td>' + inp(v.preventa, key, 'mes_patentamiento', m.mes_patentamiento, 88, 'month', (v.fechaPatentamiento && !m.mes_patentamiento) ? '#cc6600' : null) + '</td>'
-       + '<td>' + inp(v.preventa, key, 'fecha_liquidacion', m.fecha_liquidacion, 98, 'date') + '</td>'
-       + '<td>' + sel(v.preventa, key, 'reventa_particular', m.reventa_particular, ['PARTICULAR', 'REVENTA'], 78) + '</td>'
-       + '<td>' + inp(v.preventa, key, 'fecha_pago_vw', m.fecha_pago_vw, 98, 'date') + '</td>'
-       + '<td>' + inp(v.preventa, key, 'notas', m.notas, 92) + '</td>'
-       + '<td><button onclick="guardarAdmVenta(\'' + v.preventa + '\')" id="admsave_' + key + '" title="Reintentar guardado de la fila" '
+       + '<td data-label="Mes pat. ✔adm">' + inp(v.preventa, key, 'mes_patentamiento', m.mes_patentamiento, 88, 'month', (v.fechaPatentamiento && !m.mes_patentamiento) ? '#cc6600' : null) + '</td>'
+       + '<td data-label="F. liq. créd.">' + inp(v.preventa, key, 'fecha_liquidacion', m.fecha_liquidacion, 98, 'date') + '</td>'
+       + '<td data-label="Rev/Part">' + sel(v.preventa, key, 'reventa_particular', m.reventa_particular, ['PARTICULAR', 'REVENTA'], 78) + '</td>'
+       + '<td data-label="F. pago VW">' + inp(v.preventa, key, 'fecha_pago_vw', m.fecha_pago_vw, 98, 'date') + '</td>'
+       + '<td data-label="Notas">' + inp(v.preventa, key, 'notas', m.notas, 92) + '</td>'
+       + '<td data-label="Guardado"><button onclick="guardarAdmVenta(\'' + v.preventa + '\')" id="admsave_' + key + '" title="Reintentar guardado de la fila" '
        + ' style="border:0;background:var(--vw-blue);color:#fff;border-radius:6px;padding:4px 9px;cursor:pointer">✓</button></td>'
        + '</tr>';
   }
