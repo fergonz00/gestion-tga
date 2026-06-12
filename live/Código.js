@@ -1349,9 +1349,12 @@ function _norm(s) {
 //   K fecha liquidación crédito (no usado)
 //
 // Filtro: solo desde PATENTAMIENTOS_MES_MINIMO (2026-04).
-// El mes se determina por la FECHA REAL de patentamiento (col R) cuando existe;
-// si la carpeta todavía no está patentada, cae al texto de col F ("ABRIL"/etc).
-// Esto matchea con cómo Fer cuenta (por fecha de patentamiento).
+// FECHA DE PATENTAMIENTO y DOMINIO salen de OVERSOFT (match por # PV
+// normalizado); col R / col S de la hoja quedan de fallback para lo que la
+// réplica no tenga. El mes se determina por la fecha real de patentamiento
+// cuando existe; si la carpeta todavía no está patentada, cae al texto de
+// col F ("ABRIL"/etc). Esto matchea con cómo Fer cuenta (por fecha de
+// patentamiento).
 const _MES_TXT_A_NUM = {
   'enero':'01','febrero':'02','marzo':'03','abril':'04','mayo':'05',
   'junio':'06','julio':'07','agosto':'08','septiembre':'09','sept':'09',
@@ -1390,11 +1393,52 @@ function _normTipoCarpeta(raw) {
   return s0;  // sin clasificar → devuelvo el raw
 }
 
+// PV normalizado → { dominio, fechaPat ISO } desde la réplica Oversoft.
+// La patente y la fecha de patentamiento las carga el gestor en Oversoft,
+// así que son más confiables que el tipeo manual de la hoja. PVs 0km no
+// anulados desde 2025 (una carpeta puede venderse meses antes de patentarse).
+function _oversoftPatPorPv() {
+  const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
+  const get = (path) => {
+    const res = UrlFetchApp.fetch(OVERSOFT_URL + path, h);
+    return (res.getResponseCode() < 300) ? JSON.parse(res.getContentText()) : [];
+  };
+  // Paginado de a 1000 (la réplica capea las respuestas en 1000 filas).
+  const pvs = [];
+  for (let off = 0; off < 10000; off += 1000) {
+    const ch = get('/preventas?select=numero,unidadid&anulada=not.is.true&tipopv=eq.O&fecha=gte.2025-01-01&order=fecha.asc&limit=1000&offset=' + off);
+    for (const p of ch) pvs.push(p);
+    if (ch.length < 1000) break;
+  }
+  const uidPorPv = {};
+  for (const p of pvs) if (p.unidadid) uidPorPv[_normPv(p.numero)] = p.unidadid;
+  const uidSet = {};
+  for (const pv in uidPorPv) uidSet[uidPorPv[pv]] = true;
+  const uids = Object.keys(uidSet);
+  const unis = {};
+  for (let i = 0; i < uids.length; i += 100) {
+    for (const u of get('/unidades?select=unidadid,patente,fechapatentamiento&unidadid=in.(' + uids.slice(i, i + 100).join(',') + ')')) unis[u.unidadid] = u;
+  }
+  const map = {};
+  for (const pv in uidPorPv) {
+    const u = unis[uidPorPv[pv]] || {};
+    const dominio  = String(u.patente || '').trim();
+    const fechaPat = u.fechapatentamiento ? String(u.fechapatentamiento).slice(0, 10) : '';
+    if (dominio || fechaPat) map[pv] = { dominio: dominio, fechaPat: fechaPat };
+  }
+  return map;
+}
+
 function getPatentamientos() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName('patentamientos')
     || ss.getSheets().find(s => /^pat/i.test(s.getName()) || /adm.*venta/i.test(s.getName()));
   if (!sh) throw new Error('No encontré la hoja "patentamientos"');
+
+  // Oversoft manda en fecha de patentamiento y dominio; si la réplica no
+  // responde, todo cae a la hoja como antes.
+  let ovsPat = {};
+  try { ovsPat = _oversoftPatPorPv(); } catch (e) {}
 
   const lastRow = sh.getLastRow();
   if (lastRow < 2) {
@@ -1431,8 +1475,12 @@ function getPatentamientos() {
     // carpeta sea reciente → la descartamos (evita filas viejas con col F
     // "MAYO" que se contaban como mayo del año actual).
     const fechaPv  = _parseFecha(rrow[2], drow[2]);
-    // R = fecha patentamiento real (puede determinar el mes)
-    const fechaPat = _parseFecha(rrow[17], drow[17]);
+    // Fecha de patentamiento: Oversoft primero, col R de fallback.
+    const ov = ovsPat[_normPv(pv)];
+    const ovFecha = (ov && ov.fechaPat) ? ov.fechaPat : '';
+    const fechaPat = ovFecha
+      ? new Date(+ovFecha.slice(0, 4), +ovFecha.slice(5, 7) - 1, +ovFecha.slice(8, 10))
+      : _parseFecha(rrow[17], drow[17]);
 
     let mesKey;
     let mesKeyOrigen;
@@ -1477,11 +1525,14 @@ function getPatentamientos() {
       modelo:             String(drow[15] || '').trim(),            // P
       fechaPvIso:         fechaPv ? _isoDate(fechaPv) : '',         // C → ISO
       fechaPvStr:         String(drow[2] || '').trim(),             // C → display
-      fechaPatIso:        fechaPat ? _isoDate(fechaPat) : '',       // R → ISO
-      fechaPatStr:        String(drow[17] || '').trim(),            // R → display
-      patentada:          !!fechaPat,                                // R → bool
+      fechaPatIso:        fechaPat ? _isoDate(fechaPat) : '',       // ISO
+      fechaPatStr:        ovFecha
+        ? ovFecha.slice(8, 10) + '/' + ovFecha.slice(5, 7) + '/' + ovFecha.slice(0, 4)
+        : String(drow[17] || '').trim(),                            // display
+      patentada:          !!fechaPat,
       mesKeyOrigen:       mesKeyOrigen,                              // 'fechaR' | 'colF'
-      dominio:            String(drow[18] || '').trim(),            // S
+      patOrigen:          ovFecha ? 'oversoft' : (fechaPat ? 'hoja' : ''),
+      dominio:            (ov && ov.dominio) || String(drow[18] || '').trim(),  // Oversoft → col S fallback
     });
   }
 
