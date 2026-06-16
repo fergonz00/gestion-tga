@@ -1594,6 +1594,82 @@ function toggleAdmComentario(key) {
   if (abrir) admVentasComAbiertos.add(key); else admVentasComAbiertos.delete(key);
 }
 
+// Cuadro financiero (formas de pago + recibos) desplegable por PV
+let admVentasFinAbiertos = new Set();
+function toggleAdmFinanciero(key) {
+  const tr = document.getElementById('admfin_' + key);
+  if (!tr) return;
+  const abrir = tr.style.display === 'none';
+  tr.style.display = abrir ? '' : 'none';
+  if (abrir) admVentasFinAbiertos.add(key); else admVentasFinAbiertos.delete(key);
+}
+function _diasEntre(aIso, bIso) {
+  const a = String(aIso || '').slice(0, 10), b = String(bIso || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(a) || !/^\d{4}-\d{2}-\d{2}$/.test(b)) return null;
+  return Math.round((new Date(b) - new Date(a)) / 86400000);
+}
+// Estado de cada línea del cuadro + alerta a nivel PV. Tolerancia 2 días:
+// cobro vencido hace +2d sin recibo = 'destiempo' (🔴); recibo emitido +2d
+// después del vencimiento = 'tarde' (⚠️).
+function _admFinEstado(v) {
+  const hoy = new Date().toISOString().slice(0, 10);
+  let alerta = '';
+  const lineas = (v.cuadro || []).map(c => {
+    const saldo = Math.round(c.plan - c.cobrado);
+    let estado = 'ok';
+    if (saldo > 1) {
+      const d = _diasEntre(c.vto, hoy);
+      if (c.vto && d !== null && d > 2) { estado = 'destiempo'; alerta = 'destiempo'; }
+      else estado = 'pendiente';
+    } else {
+      const d = _diasEntre(c.vto, c.fechaCobro);
+      if (c.vto && c.fechaCobro && d !== null && d > 2) { estado = 'tarde'; if (alerta !== 'destiempo') alerta = 'tarde'; }
+    }
+    return Object.assign({}, c, { saldo, estado, diasTarde: _diasEntre(c.vto, c.fechaCobro) });
+  });
+  return { alerta, lineas };
+}
+const TIPO_CHIP = {
+  'AA':             { txt: 'AA',         bg: '#7C3AED' },
+  'CONTADO':        { txt: 'Contado',    bg: '#64748b' },
+  'FINANCIA_VW':    { txt: 'Fin. VW',    bg: '#001e50' },
+  'FINANCIA_TG':    { txt: 'Fin. TG',    bg: '#0a7a30' },
+  'FINANCIA_OTROS': { txt: 'Fin. otros', bg: '#cc6600' },
+};
+// Fila desplegable con el detalle del cuadro financiero de una PV.
+function _admFinRow(key, v, fs) {
+  const abierto = admVentasFinAbiertos.has(key);
+  let t = '<tr id="admfin_' + key + '"' + (abierto ? '' : ' style="display:none"') + '>'
+    + '<td colspan="18" style="background:#f0f6ff;border-left:3px solid #001e50;padding:10px 14px;text-align:left">'
+    + '<div style="font-weight:700;font-size:12px;margin-bottom:6px">💵 Cuadro financiero · PV ' + escapeHtml(v.preventa)
+    + (v.usadoParte ? ' · <span style="color:#7a5b00">usado ' + escapeHtml(v.usadoParte.marca + ' ' + v.usadoParte.modelo) + ' (' + fmtPesosCompact(v.usadoParte.toma) + ')</span>' : '')
+    + (v.creditoCobrado ? ' · <span style="color:' + (v.creditoCobrado.ok ? '#0a7a30' : '#cc6600') + '">' + (v.creditoCobrado.ok ? 'Crédito cobrado ' + _fechaDMA(v.creditoCobrado.fecha) : 'Crédito pendiente') + '</span>' : '')
+    + '</div>'
+    + '<table style="width:100%;border-collapse:collapse;font-size:12px">'
+    + '<tr style="color:var(--vw-grey-3)"><th style="text-align:left;padding:2px 6px">Concepto</th><th style="text-align:right;padding:2px 6px">Planificado</th><th style="text-align:right;padding:2px 6px">Cobrado</th><th style="padding:2px 6px">Vto</th><th style="padding:2px 6px">Recibo</th><th style="text-align:left;padding:2px 6px">Estado</th></tr>';
+  for (const c of fs.lineas) {
+    let est = 'pendiente', col = 'var(--vw-grey-3)';
+    if (c.estado === 'ok') { est = '✓'; col = '#0a7a30'; }
+    else if (c.estado === 'tarde') { est = '⚠️ recibo tarde (+' + c.diasTarde + 'd)'; col = '#cc6600'; }
+    else if (c.estado === 'destiempo') { est = '🔴 SIN RECIBO · chequear pago'; col = '#cc3300'; }
+    t += '<tr style="border-top:1px solid #dbe7f5">'
+      + '<td style="padding:3px 6px">' + escapeHtml(c.concepto) + '</td>'
+      + '<td style="text-align:right;padding:3px 6px">' + fmtPesos(c.plan) + '</td>'
+      + '<td style="text-align:right;padding:3px 6px">' + (c.cobrado ? fmtPesos(c.cobrado) : '—') + '</td>'
+      + '<td style="text-align:center;padding:3px 6px">' + (c.vto ? _fechaDMA(c.vto) : '—') + '</td>'
+      + '<td style="text-align:center;padding:3px 6px">' + (c.recibos && c.recibos.length ? '#' + c.recibos.join(' #') + (c.fechaCobro ? '<br><small style="color:var(--vw-grey-3)">' + _fechaDMA(c.fechaCobro) + '</small>' : '') : '—') + '</td>'
+      + '<td style="padding:3px 6px;color:' + col + '">' + est + '</td>'
+      + '</tr>';
+  }
+  t += '<tr style="border-top:2px solid #001e50;font-weight:700">'
+    + '<td style="padding:4px 6px">TOTAL</td>'
+    + '<td style="text-align:right;padding:4px 6px">' + fmtPesos(v.totalPlan) + '</td>'
+    + '<td style="text-align:right;padding:4px 6px">' + fmtPesos(v.totalCobrado) + '</td>'
+    + '<td colspan="3" style="padding:4px 6px;color:' + (v.falta > 1 ? '#cc3300' : '#0a7a30') + '">' + (v.falta > 1 ? 'Falta ' + fmtPesos(v.falta) : 'Todo cobrado ✓') + '</td>'
+    + '</tr></table></td></tr>';
+  return t;
+}
+
 // Mes de cada carpeta — mismo criterio que Patentamientos: la fecha real de
 // Oversoft manda; si no está patentada, el mes confirmado/estimado por la adm;
 // sin ninguno de los dos, el MES EN CURSO (la venta nueva aparece ya como
@@ -1685,7 +1761,7 @@ function renderAdmVentas() {
      + '<th style="text-align:left">PV</th><th style="text-align:left">Fecha</th><th style="text-align:left">Modelo</th>'
      + '<th style="text-align:left">Cliente</th><th style="text-align:left">Vendedor</th><th style="text-align:left">Serie</th>'
      + '<th style="text-align:left">Dominio</th><th style="text-align:left">F. patent.</th>'
-     + '<th>Patenta</th><th>Admin</th><th>Carpeta</th><th title="La adm confirma el mes una vez pagado el patentamiento (aunque Oversoft ya tenga la fecha)">Mes pat. ✔adm</th><th>F. liq. créd.</th><th>Rev/Part</th><th>F. pago VW</th><th>Notas</th><th></th>'
+     + '<th>Patenta</th><th>Admin</th><th>Carpeta</th><th title="La adm confirma el mes una vez pagado el patentamiento (aunque Oversoft ya tenga la fecha)">Mes pat. ✔adm</th><th title="Forma de pago según Oversoft (formas de pago + recibos). 💵 abre el detalle">Tipo</th><th>F. liq. créd.</th><th>Rev/Part</th><th>F. pago VW</th><th>Notas</th><th></th>'
      + '</tr></thead><tbody>';
 
   // Guardado AUTOMÁTICO: cualquier cambio en un campo dispara el guardado de
@@ -1708,9 +1784,14 @@ function renderAdmVentas() {
   for (const v of rows) {
     const key = _admKey(v.preventa);
     const m = v.manual || {};
+    const fs = _admFinEstado(v);
+    const chip = TIPO_CHIP[v.tipo] || TIPO_CHIP['CONTADO'];
+    const financiaTxt = (v.tipo && v.tipo.indexOf('FINANCIA') === 0 && v.financia) ? v.financia : '';
+    const alertaIco = fs.alerta === 'destiempo' ? '🔴' : (fs.alerta === 'tarde' ? '⚠️' : '');
+    const faltaTxt = (v.falta > 1) ? ('Falta ' + fmtPesosCompact(v.falta)) : (v.totalPlan > 0 ? '✓ cobrado' : '');
     const extra = [];
-    if (v.usado) extra.push('toma usado');
-    if (v.montoFinanciado > 0) extra.push('financia ' + fmtPesosCompact(v.montoFinanciado));
+    if (v.usadoParte) extra.push('usado ' + (v.usadoParte.marca || '').trim() + ' ' + fmtPesosCompact(v.usadoParte.toma));
+    else if (v.usado) extra.push('toma usado');
     if (v.patentaCliente) extra.push('patenta cliente');
     // 💬 = la PV tiene comentario del vendedor en Oversoft; se despliega al tocar
     const btnCom = v.comentario
@@ -1731,6 +1812,12 @@ function renderAdmVentas() {
        + '<td data-label="Carpeta">' + sel(v.preventa, key, 'tipo_carpeta', m.tipo_carpeta, ['Contado', 'Financia VW', 'Banco externo', 'Plan ahorro'], 98) + '</td>'
        // Oversoft ya tiene fecha pero la adm no confirmó el mes → borde naranja
        + '<td data-label="Mes pat. ✔adm">' + inp(v.preventa, key, 'mes_patentamiento', m.mes_patentamiento, 88, 'month', (v.fechaPatentamiento && !m.mes_patentamiento) ? '#cc6600' : null) + '</td>'
+       + '<td data-label="Tipo">'
+         + '<span style="display:inline-block;background:' + chip.bg + ';color:#fff;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700;white-space:nowrap">' + chip.txt + '</span>'
+         + ((v.cuadro && v.cuadro.length) ? ' <button onclick="toggleAdmFinanciero(\'' + key + '\')" title="Ver cuadro financiero" style="border:0;background:none;cursor:pointer;font-size:13px;padding:0 2px;vertical-align:middle">💵</button>' : '')
+         + (financiaTxt ? '<br><small style="color:var(--vw-grey-3)">' + escapeHtml(financiaTxt) + '</small>' : '')
+         + (faltaTxt ? '<br><small style="color:' + (v.falta > 1 ? '#cc3300' : '#0a7a30') + '">' + alertaIco + ' ' + faltaTxt + '</small>' : (alertaIco ? '<br><small>' + alertaIco + '</small>' : ''))
+       + '</td>'
        + '<td data-label="F. liq. créd.">' + inp(v.preventa, key, 'fecha_liquidacion', m.fecha_liquidacion, 98, 'date') + '</td>'
        + '<td data-label="Rev/Part">' + sel(v.preventa, key, 'reventa_particular', m.reventa_particular, ['PARTICULAR', 'REVENTA'], 90) + '</td>'
        + '<td data-label="F. pago VW">' + inp(v.preventa, key, 'fecha_pago_vw', m.fecha_pago_vw, 98, 'date') + '</td>'
@@ -1738,13 +1825,14 @@ function renderAdmVentas() {
        + '<td data-label="Guardado"><button onclick="guardarAdmVenta(\'' + v.preventa + '\')" id="admsave_' + key + '" title="Reintentar guardado de la fila" '
        + ' style="border:0;background:var(--vw-blue);color:#fff;border-radius:6px;padding:4px 9px;cursor:pointer">✓</button></td>'
        + '</tr>';
+    if (v.cuadro && v.cuadro.length) h += _admFinRow(key, v, fs);
     if (v.comentario) {
       h += '<tr id="admcom_' + key + '"' + (admVentasComAbiertos.has(key) ? '' : ' style="display:none"') + '>'
-         + '<td colspan="17" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">'
+         + '<td colspan="18" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">'
          + '💬 <b>Comentario de la PV ' + escapeHtml(v.preventa) + ':</b> ' + escapeHtml(v.comentario) + '</td></tr>';
     }
   }
-  if (!rows.length) h += '<tr><td colspan="17" class="empty">Sin carpetas para ese filtro.</td></tr>';
+  if (!rows.length) h += '<tr><td colspan="18" class="empty">Sin carpetas para ese filtro.</td></tr>';
   h += '</tbody></table></div></div>';
   h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio y fecha de patentamiento salen de Oversoft en vivo (no se editan). El resto se completa acá y <b>se guarda solo al cambiar cada campo</b> (el ✓ de la fila se pone verde cuando guardó bien; si algo falla, avisa y podés reintentar con el ✓). El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes. El mes de cada carpeta (selector de arriba, mismo criterio que Patentamientos) = fecha real de Oversoft o, si aún no está patentada, el "Mes pat. ✔adm" — las ventas nuevas sin ninguno de los dos entran al mes en curso (cambiale el "Mes pat." si va para otro mes).</div>';
   cont.innerHTML = h;
