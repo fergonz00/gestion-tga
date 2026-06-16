@@ -1171,6 +1171,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <button class="tab" data-tab="patentamientos" onclick="setTab('patentamientos')">Patentamientos</button>
       <button class="tab" data-tab="admventas" onclick="setTab('admventas')">Adm. ventas</button>
       <button class="tab" data-tab="comprasvw" onclick="setTab('comprasvw')">Compras VW</button>
+      <button class="tab" data-tab="flujo" onclick="setTab('flujo')">Flujo financiero</button>
       <button class="tab" data-tab="trimestre" onclick="setTab('trimestre')">Trimestre</button>
       <button class="tab" data-tab="incentivos" onclick="setTab('incentivos')">Incentivos</button>
       <button class="tab" data-tab="industria" onclick="setTab('industria')">Industria</button>
@@ -1318,6 +1319,17 @@ table.patent-tbl.resumida .col-extra { display: none; }
         </div>
       </div>
       <div id="comprasVWContent"><div class="empty">Cargando…</div></div>
+    </section>
+
+    <!-- =================== FLUJO FINANCIERO (ingresos vs egresos) =================== -->
+    <section class="panel" id="panelFlujo">
+      <div class="toolbar">
+        <div class="updated" id="updatedAtFlujo">Cuándo entra plata (cobros pendientes de ventas) y cuándo hay que pagarle a VW.</div>
+        <div class="actions">
+          <button class="refresh" onclick="loadFlujo(true)">Actualizar</button>
+        </div>
+      </div>
+      <div id="flujoContent"><div class="empty">Cargando…</div></div>
     </section>
 
     <!-- =================== OVERSOFT (admin / prueba de conexión) =================== -->
@@ -2234,6 +2246,91 @@ async function borrarCompraVW(serie) {
 }
 
 // =======================================================================
+// FLUJO FINANCIERO — ingresos (cobros pendientes) vs egresos (pago a VW)
+// =======================================================================
+let flujoData = null, flujoAbiertas = new Set();
+function _flujoSemanaKey(iso) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  if (isNaN(d.getTime())) return null;
+  const dow = (d.getDay() + 6) % 7;   // 0 = lunes
+  d.setDate(d.getDate() - dow);
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+function _flujoVenceISO(v) {
+  const p = String(v || '').toLowerCase().trim().split('-');
+  if (p.length < 2) return null;
+  const d = parseInt(p[0], 10), m = _CVW_MESAB[(p[1] || '').slice(0, 3)];
+  if (!m || !d) return null;
+  const pad = n => String(n).padStart(2, '0');
+  return '2026-' + pad(m) + '-' + pad(d);
+}
+function _flujoSemLabel(iso) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? ('Semana del ' + m[3] + '/' + m[2]) : 'Sin fecha';
+}
+function _flujoCard(titulo, monto, color) {
+  return '<div style="flex:1;min-width:150px;background:#fff;border:1px solid var(--vw-grey-2);border-radius:12px;padding:12px 14px">'
+    + '<div style="font-size:12px;color:var(--vw-grey-3)">' + titulo + '</div>'
+    + '<div style="font-size:20px;font-weight:800;color:' + color + ';margin-top:4px">' + fmtPesos(monto) + '</div></div>';
+}
+async function loadFlujo(forzar) {
+  const cont = document.getElementById('flujoContent');
+  if (cont && !flujoData) cont.innerHTML = '<div class="empty">Cargando flujo…</div>';
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=flujo' + (forzar ? '&fresh=1' : '');
+    const res = await fetch(url); const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    flujoData = data; renderFlujo();
+  } catch (e) { console.error('loadFlujo:', e); if (cont) cont.innerHTML = '<div class="empty">Error: ' + escapeHtml(e.message) + '</div>'; }
+}
+function toggleFlujoSem(key) { if (flujoAbiertas.has(key)) flujoAbiertas.delete(key); else flujoAbiertas.add(key); renderFlujo(); }
+function renderFlujo() {
+  const cont = document.getElementById('flujoContent');
+  if (!cont) return;
+  if (!flujoData) { cont.innerHTML = '<div class="empty">Sin datos.</div>'; return; }
+  const ing = flujoData.ingresos || [], egr = flujoData.egresos || [];
+  const totIng = ing.reduce((a, x) => a + (x.monto || 0), 0);
+  const totEgr = egr.reduce((a, x) => a + (x.monto || 0), 0);
+  const sem = {};
+  const add = (key, tipo, monto, item) => { const k = key || '__sin__'; if (!sem[k]) sem[k] = { ing: 0, egr: 0, items: [] }; sem[k][tipo] += monto; sem[k].items.push(item); };
+  for (const x of ing) add(_flujoSemanaKey(x.fecha), 'ing', x.monto, { tipo: 'ing', monto: x.monto, desc: 'PV ' + x.pv + ' · ' + x.concepto + (x.cliente ? ' · ' + x.cliente : '') });
+  for (const x of egr) add(_flujoSemanaKey(_flujoVenceISO(x.vence)), 'egr', x.monto, { tipo: 'egr', monto: x.monto, desc: x.serie + ' · ' + (x.modelo || '') + (x.vence ? ' · vto ' + x.vence : '') });
+  const keys = Object.keys(sem).sort((a, b) => (a === '__sin__' ? '9999' : a).localeCompare(b === '__sin__' ? '9999' : b));
+  let h = '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">'
+    + _flujoCard('💚 A cobrar (clientes)', totIng, '#0a7a30')
+    + _flujoCard('🔴 A pagar a VW', totEgr, '#cc3300')
+    + _flujoCard('⚖️ Neto', totIng - totEgr, (totIng - totEgr) >= 0 ? '#0a7a30' : '#cc3300')
+    + '</div>';
+  h += '<div class="table-wrap"><div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:13px;min-width:680px">';
+  h += '<thead><tr><th style="text-align:left">Semana</th><th style="text-align:right">💚 Ingresos</th><th style="text-align:right">🔴 Egresos</th><th style="text-align:right">Neto</th><th style="text-align:right">Acumulado</th><th></th></tr></thead><tbody>';
+  let acum = 0;
+  for (const k of keys) {
+    const s = sem[k]; const neto = s.ing - s.egr; acum += neto;
+    const abierta = flujoAbiertas.has(k);
+    h += '<tr onclick="toggleFlujoSem(\'' + k + '\')" style="cursor:pointer' + (abierta ? ';background:#eef5ff' : '') + '">'
+      + '<td data-label="Semana">' + (k === '__sin__' ? 'Sin fecha' : _flujoSemLabel(k)) + '</td>'
+      + '<td data-label="Ingresos" style="text-align:right;color:#0a7a30">' + (s.ing ? fmtPesos(s.ing) : '—') + '</td>'
+      + '<td data-label="Egresos" style="text-align:right;color:#cc3300">' + (s.egr ? fmtPesos(s.egr) : '—') + '</td>'
+      + '<td data-label="Neto" style="text-align:right;font-weight:700;color:' + (neto >= 0 ? '#0a7a30' : '#cc3300') + '">' + fmtPesos(neto) + '</td>'
+      + '<td data-label="Acumulado" style="text-align:right;font-weight:700;color:' + (acum >= 0 ? '#0a7a30' : '#cc3300') + '">' + fmtPesos(acum) + '</td>'
+      + '<td style="text-align:center;color:var(--vw-grey-3)">' + (abierta ? '▲' : '▼') + '</td></tr>';
+    if (abierta) {
+      const its = s.items.slice().sort((a, b) => (a.tipo === b.tipo ? 0 : (a.tipo === 'ing' ? -1 : 1)));
+      let det = '<table style="width:100%;border-collapse:collapse;font-size:12px">';
+      for (const it of its) det += '<tr style="border-top:1px solid #e3ecf5"><td style="padding:2px 6px">' + (it.tipo === 'ing' ? '💚' : '🔴') + ' ' + escapeHtml(it.desc) + '</td><td style="text-align:right;padding:2px 6px;color:' + (it.tipo === 'ing' ? '#0a7a30' : '#cc3300') + '">' + (it.tipo === 'ing' ? '+' : '-') + fmtPesos(it.monto) + '</td></tr>';
+      det += '</table>';
+      h += '<tr><td colspan="6" style="background:#f7faff;border-left:3px solid var(--vw-blue);padding:8px 14px">' + det + '</td></tr>';
+    }
+  }
+  h += '</tbody></table></div></div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">💚 Ingresos = cobros pendientes de las ventas vigentes (lo que falta cobrarle a cada cliente, por vencimiento). 🔴 Egresos = facturas impagas a VW (por vencimiento). "Acumulado" = neto sumado semana a semana. Tocá una semana para ver el detalle.</div>';
+  cont.innerHTML = h;
+}
+
+// =======================================================================
 // BARATITO — motor propio: precios Supabase + stock/ventas/colores Oversoft
 // (la vista "Planilla" se retiró el 11-jun una vez validado el motor; el
 //  endpoint tipo=precios sigue vivo en el backend por si hay que comparar)
@@ -2731,9 +2828,9 @@ function enterApp(session) {
     setTab('patentamientos');
     return;
   }
-  // Valeria (compras a VW): ve SOLO esa solapa.
+  // Valeria (compras a VW): ve Compras VW y Flujo financiero.
   if (USUARIOS_COMPRAS.includes(session.usuario)) {
-    document.querySelectorAll('.tab').forEach(t => { if (t.dataset.tab !== 'comprasvw') t.style.display = 'none'; });
+    document.querySelectorAll('.tab').forEach(t => { if (t.dataset.tab !== 'comprasvw' && t.dataset.tab !== 'flujo') t.style.display = 'none'; });
     setTab('comprasvw');
     return;
   }
@@ -2811,6 +2908,7 @@ function setTab(tab) {
     industria:      'panelIndustria',
     admventas:      'panelAdmVentas',
     comprasvw:      'panelComprasVW',
+    flujo:          'panelFlujo',
     oversoft:       'panelOversoft',
   };
   const el = document.getElementById(map[tab]);
@@ -2827,6 +2925,7 @@ function setTab(tab) {
   if (tab === 'incentivos'     && !incentivosData) loadIncentivos(false);
   if (tab === 'admventas'      && !admVentasData)  loadAdmVentas(false);
   if (tab === 'comprasvw'      && !comprasVWData)  loadComprasVW(false);
+  if (tab === 'flujo'          && !flujoData)      loadFlujo(false);
   if (tab === 'industria') {
     // Industria depende de patentData para contar TGA patentadas
     if (!patentData) loadPatentamientos(false);
