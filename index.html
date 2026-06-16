@@ -1622,8 +1622,10 @@ function _admFinEstado(v) {
       if (c.vto && d !== null && d > 2) { estado = 'destiempo'; alerta = 'destiempo'; }
       else estado = 'pendiente';
     } else {
+      // recibo emitido después del Vto: solo dato informativo (NO alarma — es
+      // normal que el recibo del financiado/saldo llegue días después del Vto).
       const d = _diasEntre(c.vto, c.fechaCobro);
-      if (c.vto && c.fechaCobro && d !== null && d > 2) { estado = 'tarde'; if (alerta !== 'destiempo') alerta = 'tarde'; }
+      if (c.vto && c.fechaCobro && d !== null && d > 2) estado = 'tarde';
     }
     return Object.assign({}, c, { saldo, estado, diasTarde: _diasEntre(c.vto, c.fechaCobro) });
   });
@@ -1650,7 +1652,7 @@ function _admFinRow(key, v, fs) {
   for (const c of fs.lineas) {
     let est = 'pendiente', col = 'var(--vw-grey-3)';
     if (c.estado === 'ok') { est = '✓'; col = '#0a7a30'; }
-    else if (c.estado === 'tarde') { est = '⚠️ recibo tarde (+' + c.diasTarde + 'd)'; col = '#cc6600'; }
+    else if (c.estado === 'tarde') { est = '✓ <span style="color:var(--vw-grey-3)">(recibo +' + c.diasTarde + 'd)</span>'; col = '#0a7a30'; }
     else if (c.estado === 'destiempo') { est = '🔴 SIN RECIBO · chequear pago'; col = '#cc3300'; }
     t += '<tr style="border-top:1px solid #dbe7f5">'
       + '<td style="padding:3px 6px">' + escapeHtml(c.concepto) + '</td>'
