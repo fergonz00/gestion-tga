@@ -1892,6 +1892,7 @@ async function guardarAdmVenta(preventa) {
 // =======================================================================
 let comprasVWData = null, comprasVWBusca = '', comprasVWFiltro = 'todas', comprasVWMes = '__todos__', comprasVWAbierta = '', comprasVWVence = '__todas__';
 let comprasVWSel = new Set();   // series seleccionadas para sumar deuda a VW
+let comprasVWPagando = '';      // serie con el pago inline abierto
 
 const _CVW_MESNUM = { enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12 };
 function _cvwMesKey(mes) {
@@ -1939,11 +1940,11 @@ async function loadComprasVW(forzar) {
   if (!window._cvwOutsideBound) {
     window._cvwOutsideBound = true;
     document.addEventListener('click', function (e) {
-      if (!comprasVWAbierta) return;
+      if (!comprasVWAbierta && !comprasVWPagando) return;
       // si el target se desconectó por un re-render (ej. tocar otro renglón), ignorar
       if (e.target && e.target.isConnected === false) return;
       const cont = document.getElementById('comprasVWContent');
-      if (cont && !cont.contains(e.target)) { comprasVWAbierta = ''; renderComprasVW(); }
+      if (cont && !cont.contains(e.target)) { comprasVWAbierta = ''; comprasVWPagando = ''; renderComprasVW(); }
     });
   }
   const cont = document.getElementById('comprasVWContent');
@@ -1971,7 +1972,9 @@ async function _postCompraVW(obj) {
 function _cvwInput(id, ph, w, type) {
   return '<input type="' + (type || 'text') + '" id="' + id + '" placeholder="' + ph + '" style="width:' + w + 'px;padding:6px 8px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:12px">';
 }
-// Renglón SIMPLIFICADO (solo lectura, legible). Al tocarlo se despliega el detalle.
+// Renglón SIMPLIFICADO (solo lectura, legible). Solo las VENDIDAS (con PV) se
+// despliegan al tocarlas. Las acciones (conciliar / pagar) van inline para que
+// las de stock sin PV no necesiten desplegarse.
 function _cvwSummaryRow(c) {
   let ico, txt, estCol;
   if (c.estado === 'cargada') { ico = '🟡'; txt = 'sin Oversoft'; estCol = '#9a7d00'; }
@@ -1980,20 +1983,41 @@ function _cvwSummaryRow(c) {
   const abierta = (comprasVWAbierta === c.serie);
   const k = c.serie.replace(/[^A-Za-z0-9]/g, '_');
   const sel = comprasVWSel.has(c.serie);
-  let h = '<tr class="cvw-sum" onclick="toggleCompraVW(\'' + c.serie + '\')" style="cursor:pointer' + (abierta ? ';background:#eef5ff' : (sel ? ';background:#fff7e6' : '')) + '">'
+  const hasPv = !!c.pv;
+  const pagando = (comprasVWPagando === c.serie);
+  // fondo: vendida (PV) resaltada celeste; seleccionada ámbar; abierta celeste fuerte
+  let bg = '';
+  if (abierta) bg = ';background:#e3eeff';
+  else if (sel) bg = ';background:#fff7e6';
+  else if (hasPv) bg = ';background:#f0f6ff';
+  const conciliarInline = (c.estado === 'sin_conciliar') ? ' <button onclick="event.stopPropagation();conciliarCompraVW(\'' + c.serie + '\')" title="Conciliar con Oversoft" style="background:#0a7a30;color:#fff;border:0;border-radius:5px;padding:2px 7px;cursor:pointer;font-size:10px">✓</button>' : '';
+  // celda Pago VW: pagada (verde) / inline para registrar pago / impaga + botón 💵
+  let pagoCell;
+  if (!c.impaga) {
+    pagoCell = '<span style="color:#0a7a30">' + escapeHtml(c.fecha_pago_vw || 'pagada') + '</span>';
+  } else if (pagando) {
+    pagoCell = '<span onclick="event.stopPropagation()"><input type="date" id="cvwpagoinline_' + k + '" value="' + _cvwHoyISO() + '" onclick="event.stopPropagation()" style="padding:3px 5px;border:1px solid var(--vw-grey-2);border-radius:5px;font-size:12px">'
+      + ' <button onclick="event.stopPropagation();pagarCompraVW(\'' + c.serie + '\')" style="background:#0a7a30;color:#fff;border:0;border-radius:5px;padding:3px 8px;cursor:pointer;font-size:11px">✓</button>'
+      + ' <button onclick="event.stopPropagation();cancelarPagoInline()" style="background:none;border:0;cursor:pointer;font-size:13px">✕</button></span>';
+  } else {
+    pagoCell = '<span style="color:#cc3300;font-weight:700">impaga</span>' + (c.vence ? ' <small style="color:#cc3300">· vto ' + escapeHtml(c.vence) + '</small>' : '')
+      + ' <button onclick="event.stopPropagation();iniciarPagoInline(\'' + c.serie + '\')" title="Registrar pago a VW" style="background:#0a7a30;color:#fff;border:0;border-radius:5px;padding:2px 7px;cursor:pointer;font-size:10px">💵 pagar</button>';
+  }
+  const onclickRow = hasPv ? ' onclick="toggleCompraVW(\'' + c.serie + '\')" style="cursor:pointer' + bg + '"' : ' style="cursor:default' + bg + '"';
+  let h = '<tr class="cvw-sum"' + onclickRow + '>'
     + '<td data-label="✓" onclick="event.stopPropagation()" style="text-align:center"><input type="checkbox"' + (sel ? ' checked' : '') + ' onclick="event.stopPropagation()" onchange="toggleSelCompra(\'' + c.serie + '\',this.checked)" style="width:16px;height:16px;cursor:pointer"></td>'
-    + '<td data-label="Estado" style="white-space:nowrap;color:' + estCol + '">' + ico + ' <span style="font-size:11px">' + txt + '</span></td>'
-    + '<td data-label="Serie"><b>' + escapeHtml(c.serie) + '</b></td>'
+    + '<td data-label="Estado" style="white-space:nowrap;color:' + estCol + '">' + ico + ' <span style="font-size:11px">' + txt + '</span>' + conciliarInline + '</td>'
+    + '<td data-label="Serie"><b>' + escapeHtml(c.serie) + '</b>' + (hasPv ? ' <span title="Vendida · PV ' + escapeHtml(c.pv.numero) + '" style="background:var(--vw-blue);color:#fff;border-radius:4px;padding:1px 5px;font-size:10px;white-space:nowrap">🧾 ' + escapeHtml(c.pv.numero.replace('PV ', '')) + '</span>' : '') + '</td>'
     + '<td data-label="Mes">' + escapeHtml(c.mes || '—') + '</td>'
     + '<td data-label="Modelo">' + escapeHtml(c.modeloOficial || c.modelo_valeria || '—') + '</td>'
     + '<td data-label="Color">' + escapeHtml(c.color || '—') + '</td>'
     + '<td data-label="Vto VW" style="white-space:nowrap">' + escapeHtml(c.vence || '—') + '</td>'
     + '<td data-label="Neto" style="text-align:right;white-space:nowrap">' + fmtPesos(c.neto || 0) + '</td>'
     + '<td data-label="Control" style="text-align:right;white-space:nowrap;font-weight:700">' + fmtPesos(c.control || 0) + '</td>'
-    + '<td data-label="Pago VW" style="white-space:nowrap">' + (c.impaga ? '<span style="color:#cc3300;font-weight:700">impaga</span>' + (c.vence ? ' <small style="color:#cc3300">· vto ' + escapeHtml(c.vence) + '</small>' : '') : '<span style="color:#0a7a30">' + escapeHtml(c.fecha_pago_vw || 'pagada') + '</span>') + '</td>'
-    + '<td data-label="" style="text-align:center;color:var(--vw-grey-3)">' + (abierta ? '▲' : '▼') + '</td>'
+    + '<td data-label="Pago VW" style="white-space:nowrap">' + pagoCell + '</td>'
+    + '<td data-label="" style="text-align:center;color:var(--vw-grey-3)">' + (hasPv ? (abierta ? '▲' : '🧾 ▼') : '') + '</td>'
     + '</tr>';
-  if (abierta) h += _cvwDetailRow(c, k);
+  if (abierta && hasPv) h += _cvwDetailRow(c, k);
   return h;
 }
 // Renglón DETALLE (editable) — aparece al desplegar.
@@ -2045,22 +2069,14 @@ function _cvwDetailRow(c, k) {
   } else if (c.enOversoft) {
     venta = '<div style="margin-top:10px;font-size:12px;color:var(--vw-grey-3)">Esta unidad todavía no tiene preventa (es stock sin vender).</div>';
   }
-  let pago = '';
-  if (c.impaga) {
-    pago = '<div style="margin-top:10px;padding:10px 12px;background:#eafaf0;border:1px solid #b6e3c8;border-radius:8px">'
-      + '<label style="font-size:12px;color:#0a7a30;font-weight:700">💵 Pago de la unidad a VW</label>'
-      + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">'
-      + '<input type="date" id="cvwpagofecha_' + k + '" value="' + _cvwHoyISO() + '" style="padding:6px 8px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px">'
-      + '<button onclick="pagarCompraVW(\'' + c.serie + '\')" style="background:#0a7a30;color:#fff;border:0;border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px;font-weight:600">Confirmar pago</button>'
-      + '<small style="color:var(--vw-grey-3)">(por defecto: hoy)</small>'
-      + '</div></div>';
-  }
   return '<tr class="cvw-det"><td data-label="" colspan="11" style="background:#f7faff;border-left:3px solid var(--vw-blue);padding:12px 14px">'
-    + detalle + ovs + venta + pago
+    + venta + detalle + ovs
     + '<div style="margin-top:10px;text-align:right"><button onclick="borrarCompraVW(\'' + c.serie + '\')" style="background:none;border:1px solid #cc3300;color:#cc3300;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px">🗑 Eliminar</button></div>'
     + '</td></tr>';
 }
 function toggleCompraVW(serie) {
+  const c = (comprasVWData.compras || []).find(x => x.serie === serie);
+  if (!c || !c.pv) return;   // solo las vendidas (con PV) se despliegan
   comprasVWAbierta = (comprasVWAbierta === serie) ? '' : serie;
   renderComprasVW();
 }
@@ -2095,7 +2111,8 @@ function renderComprasVW() {
     if (comprasVWFiltro === 'sinconciliar' && c.estado !== 'sin_conciliar') return false;
     if (comprasVWFiltro === 'conciliadas' && c.estado !== 'conciliada') return false;
     if (comprasVWFiltro === 'impagas' && !c.impaga) return false;
-    if (q) { const blob = [c.serie, c.modelo_valeria, c.modeloOversoft, c.color, c.fc_numero, c.mes].join(' ').toLowerCase(); if (blob.indexOf(q) < 0) return false; }
+    if (comprasVWFiltro === 'conpv' && !c.pv) return false;
+    if (q) { const blob = [c.serie, c.modelo_valeria, c.modeloOversoft, c.color, c.fc_numero, c.mes, (c.pv ? c.pv.numero + ' ' + c.pv.cliente : '')].join(' ').toLowerCase(); if (blob.indexOf(q) < 0) return false; }
     return true;
   }).sort((a, b) => _cvwVenceKey(a.vence) - _cvwVenceKey(b.vence));   // orden por vto de pago a VW
   const meses = Array.from(new Set(comprasVWData.compras.map(c => c.mes).filter(Boolean))).sort((a, b) => _cvwMesKey(b) - _cvwMesKey(a));
@@ -2123,7 +2140,7 @@ function renderComprasVW() {
   h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'
     + '<label style="font-size:13px;color:var(--vw-grey-3)">Mes:</label>' + mesSel
     + '<label style="font-size:13px;color:var(--vw-grey-3)">Vto VW:</label>' + vtoSel
-    + chip('todas', 'Todas') + chip('conciliadas', '🟢 Conciliadas') + chip('sinconciliar', '🔵 A conciliar') + chip('cargadas', '🟡 Sin Oversoft') + chip('impagas', '🔴 Impagas')
+    + chip('todas', 'Todas') + chip('conpv', '🧾 Vendidas') + chip('impagas', '🔴 Impagas') + chip('conciliadas', '🟢 Conciliadas') + chip('sinconciliar', '🔵 A conciliar') + chip('cargadas', '🟡 Sin Oversoft')
     + '<input type="text" placeholder="🔍 serie, modelo, FC…" value="' + escapeHtml(comprasVWBusca) + '" oninput="comprasVWBusca=this.value;renderComprasVW()" style="padding:7px 12px;border:1px solid var(--vw-grey-2);border-radius:8px;min-width:180px;font-size:13px">'
     + '<span style="font-size:12px;color:var(--vw-grey-3)">' + rows.length + ' facturas</span>'
     + '</div>';
@@ -2168,13 +2185,15 @@ async function nuevaCompraVW() {
   catch (e) { alert('No se pudo agregar: ' + e.message); return; }
   await loadComprasVW(true);
 }
+function iniciarPagoInline(serie) { comprasVWPagando = serie; renderComprasVW(); }
+function cancelarPagoInline() { comprasVWPagando = ''; renderComprasVW(); }
 async function pagarCompraVW(serie) {
   const k = serie.replace(/[^A-Za-z0-9]/g, '_');
-  const el = document.getElementById('cvwpagofecha_' + k);
+  const el = document.getElementById('cvwpagoinline_' + k) || document.getElementById('cvwpagofecha_' + k);
   const iso = (el && el.value) ? el.value : _cvwHoyISO();
   const fecha = _cvwISOtoDDmmm(iso);
   const c = (comprasVWData.compras || []).find(x => x.serie === serie); if (!c) return;
-  c.fecha_pago_vw = fecha; c.impaga = false; renderComprasVW();
+  c.fecha_pago_vw = fecha; c.impaga = false; comprasVWPagando = ''; renderComprasVW();
   try { const r = await _postCompraVW({ accion: 'setcompravw', serie: serie, campos: { fecha_pago_vw: fecha } }); if (r && r.error) throw new Error(r.error); }
   catch (e) { alert('No se pudo registrar el pago: ' + e.message); }
 }
