@@ -1890,7 +1890,7 @@ async function guardarAdmVenta(preventa) {
 // =======================================================================
 // COMPRAS VW — carga de Valeria + conciliación con Oversoft (reemplaza el Sheet)
 // =======================================================================
-let comprasVWData = null, comprasVWBusca = '', comprasVWFiltro = 'todas', comprasVWMes = '__todos__';
+let comprasVWData = null, comprasVWBusca = '', comprasVWFiltro = 'todas', comprasVWMes = '__todos__', comprasVWAbierta = '';
 
 const _CVW_MESNUM = { enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12 };
 function _cvwMesKey(mes) {
@@ -1914,6 +1914,17 @@ function _cvwCalc(c) {
 }
 
 async function loadComprasVW(forzar) {
+  // tocar afuera de la grilla cierra el detalle desplegado (una sola vez)
+  if (!window._cvwOutsideBound) {
+    window._cvwOutsideBound = true;
+    document.addEventListener('click', function (e) {
+      if (!comprasVWAbierta) return;
+      // si el target se desconectó por un re-render (ej. tocar otro renglón), ignorar
+      if (e.target && e.target.isConnected === false) return;
+      const cont = document.getElementById('comprasVWContent');
+      if (cont && !cont.contains(e.target)) { comprasVWAbierta = ''; renderComprasVW(); }
+    });
+  }
   const cont = document.getElementById('comprasVWContent');
   if (cont && !comprasVWData) cont.innerHTML = '<div class="empty">Cargando facturas (Oversoft)…</div>';
   try {
@@ -1939,37 +1950,58 @@ async function _postCompraVW(obj) {
 function _cvwInput(id, ph, w, type) {
   return '<input type="' + (type || 'text') + '" id="' + id + '" placeholder="' + ph + '" style="width:' + w + 'px;padding:6px 8px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:12px">';
 }
-function _cvwRow(c) {
+// Renglón SIMPLIFICADO (solo lectura, legible). Al tocarlo se despliega el detalle.
+function _cvwSummaryRow(c) {
+  let ico, txt, estCol;
+  if (c.estado === 'cargada') { ico = '🟡'; txt = 'sin Oversoft'; estCol = '#9a7d00'; }
+  else if (c.estado === 'sin_conciliar') { ico = '🔵'; txt = 'a conciliar'; estCol = '#0a52a8'; }
+  else { ico = '🟢'; txt = 'conciliada'; estCol = '#0a7a30'; }
+  const abierta = (comprasVWAbierta === c.serie);
   const k = c.serie.replace(/[^A-Za-z0-9]/g, '_');
+  let h = '<tr class="cvw-sum" onclick="toggleCompraVW(\'' + c.serie + '\')" style="cursor:pointer' + (abierta ? ';background:#eef5ff' : '') + '">'
+    + '<td data-label="Estado" style="white-space:nowrap;color:' + estCol + '">' + ico + ' <span style="font-size:11px">' + txt + '</span></td>'
+    + '<td data-label="Serie"><b>' + escapeHtml(c.serie) + '</b></td>'
+    + '<td data-label="Mes">' + escapeHtml(c.mes || '—') + '</td>'
+    + '<td data-label="Modelo">' + escapeHtml(c.modeloOficial || c.modelo_valeria || '—') + '</td>'
+    + '<td data-label="Color">' + escapeHtml(c.color || '—') + '</td>'
+    + '<td data-label="Neto" style="text-align:right;white-space:nowrap">' + fmtPesos(c.neto || 0) + '</td>'
+    + '<td data-label="Control" style="text-align:right;white-space:nowrap;font-weight:700">' + fmtPesos(c.control || 0) + '</td>'
+    + '<td data-label="Pago VW" style="white-space:nowrap">' + (c.impaga ? '<span style="color:#cc3300;font-weight:700">impaga</span>' : '<span style="color:#0a7a30">' + escapeHtml(c.fecha_pago_vw || 'pagada') + '</span>') + '</td>'
+    + '<td data-label="" style="text-align:center;color:var(--vw-grey-3)">' + (abierta ? '▲' : '▼') + '</td>'
+    + '</tr>';
+  if (abierta) h += _cvwDetailRow(c, k);
+  return h;
+}
+// Renglón DETALLE (editable) — aparece al desplegar.
+function _cvwDetailRow(c, k) {
   const auto = ' onchange="guardarCompraVW(\'' + c.serie + '\')"';
-  const inp = (campo, val, w, type) => '<input type="' + (type || 'text') + '" id="cvw_' + campo + '_' + k + '" value="' + escapeHtml(val == null ? '' : String(val)) + '"' + auto + ' style="width:' + w + 'px;padding:3px 5px;border:1px solid var(--vw-grey-2);border-radius:5px;font-size:12px">';
-  let est, estCol, accion = '';
-  if (c.estado === 'cargada') { est = '🟡 sin Oversoft'; estCol = '#9a7d00'; }
-  else if (c.estado === 'sin_conciliar') { est = '🔵 a conciliar'; estCol = '#0a52a8'; accion = '<button onclick="conciliarCompraVW(\'' + c.serie + '\')" style="background:#0a7a30;color:#fff;border:0;border-radius:5px;padding:3px 8px;cursor:pointer;font-size:11px;margin-top:4px">✓ Conciliar</button>'; }
-  else { est = '🟢 conciliada'; estCol = '#0a7a30'; }
-  let modeloCell = inp('modelo_valeria', c.modelo_valeria, 150);
+  const fld = (campo, label, val, type) => '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--vw-grey-3)">' + label + '</label>'
+    + '<input type="' + (type || 'text') + '" id="cvw_' + campo + '_' + k + '" value="' + escapeHtml(val == null ? '' : String(val)) + '"' + auto + ' style="padding:6px 8px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px;width:140px;max-width:100%"></div>';
+  const ro = (label, val) => '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:11px;color:var(--vw-grey-3)">' + label + '</label>'
+    + '<div style="padding:6px 8px;background:#eef2f7;border-radius:6px;font-size:13px;font-weight:600;white-space:nowrap">' + val + '</div></div>';
+  let ovs = '';
   if (c.enOversoft && c.modeloOversoft) {
     const dif = String(c.modeloOversoft).trim().toLowerCase() !== String(c.modelo_valeria || '').trim().toLowerCase();
-    const col = (c.estado === 'conciliada') ? '#0a7a30' : (dif ? '#cc6600' : '#0a7a30');
-    modeloCell += '<br><small style="color:' + col + '">OVS: ' + escapeHtml(c.modeloOversoft) + (dif && c.estado !== 'conciliada' ? ' ⚠' : '') + '</small>';
+    ovs = '<div style="margin-top:10px;padding:9px 11px;background:#fff;border-radius:7px;border:1px solid #cfe0f5;font-size:13px">'
+      + '<small style="color:var(--vw-grey-3)">Oversoft (serie ' + escapeHtml(c.serie) + (c.preventaOversoft ? ' · PV ' + escapeHtml(c.preventaOversoft) : '') + '):</small> <b>' + escapeHtml(c.modeloOversoft) + '</b>' + (c.colorOversoft ? ' · ' + escapeHtml(c.colorOversoft) : '')
+      + (c.estado === 'sin_conciliar' ? ' <button onclick="conciliarCompraVW(\'' + c.serie + '\')" style="background:#0a7a30;color:#fff;border:0;border-radius:6px;padding:5px 11px;cursor:pointer;font-size:12px;margin-left:6px">✓ Conciliar (deja nombre Oversoft)</button>' : (c.estado === 'conciliada' ? ' <span style="color:#0a7a30;font-weight:600">✓ conciliada</span>' : ''))
+      + (dif && c.estado !== 'conciliada' ? ' <span style="color:#cc6600">⚠ difiere de lo cargado</span>' : '')
+      + '</div>';
   }
-  return '<tr>'
-    + '<td data-label="Estado" style="color:' + estCol + ';white-space:nowrap">' + est + (accion ? '<br>' + accion : '') + '</td>'
-    + '<td data-label="Serie"><b>' + escapeHtml(c.serie) + '</b>' + (c.preventaOversoft ? '<br><small style="color:var(--vw-grey-3)">PV ' + escapeHtml(c.preventaOversoft) + '</small>' : '') + '</td>'
-    + '<td data-label="Mes">' + inp('mes', c.mes, 88) + '</td>'
-    + '<td data-label="Modelo">' + modeloCell + '</td>'
-    + '<td data-label="Color">' + inp('color', c.color, 90) + (c.colorOversoft ? '<br><small style="color:var(--vw-grey-3)">OVS: ' + escapeHtml(c.colorOversoft) + '</small>' : '') + '</td>'
-    + '<td data-label="N° FC">' + inp('fc_numero', c.fc_numero, 88) + '</td>'
-    + '<td data-label="Fecha FC">' + inp('fecha_fc', c.fecha_fc, 70) + '</td>'
-    + '<td data-label="Vence">' + inp('vence', c.vence, 70) + '</td>'
-    + '<td data-label="Neto" style="text-align:right">' + inp('neto', c.neto, 100, 'number') + '</td>'
-    + '<td data-label="IVA" style="text-align:right;white-space:nowrap">' + fmtPesos(c.iva) + '<br><small style="color:var(--vw-grey-3)">' + (Math.round(c.ivaRate * 1000) / 10) + '%</small></td>'
-    + '<td data-label="IIBB" style="text-align:right">' + fmtPesos(c.iibb) + '</td>'
-    + '<td data-label="IIBB BsAs" style="text-align:right">' + fmtPesos(c.iibbBsAs) + '</td>'
-    + '<td data-label="Control" style="text-align:right;font-weight:700">' + fmtPesos(c.control) + '</td>'
-    + '<td data-label="Pago VW">' + inp('fecha_pago_vw', c.fecha_pago_vw, 78) + (c.impaga ? '<br><small style="color:#cc3300;font-weight:700">impaga</small>' : '') + '</td>'
-    + '<td><button onclick="borrarCompraVW(\'' + c.serie + '\')" title="Eliminar" style="border:0;background:none;cursor:pointer;font-size:14px">🗑</button></td>'
-    + '</tr>';
+  const detalle = '<div style="display:flex;flex-wrap:wrap;gap:10px">'
+    + fld('mes', 'Mes', c.mes) + fld('modelo_valeria', 'Modelo', c.modelo_valeria) + fld('color', 'Color', c.color)
+    + fld('fc_numero', 'N° factura', c.fc_numero) + fld('fecha_fc', 'Fecha FC', c.fecha_fc) + fld('vence', 'Vence', c.vence)
+    + fld('neto', 'Neto $', c.neto, 'number') + fld('fecha_pago_vw', 'Fecha pago VW', c.fecha_pago_vw)
+    + ro('IVA (' + (Math.round(c.ivaRate * 1000) / 10) + '%)', fmtPesos(c.iva)) + ro('Perc. IIBB', fmtPesos(c.iibb)) + ro('Perc. IIBB BsAs', fmtPesos(c.iibbBsAs)) + ro('Control', fmtPesos(c.control))
+    + '</div>';
+  return '<tr class="cvw-det"><td data-label="" colspan="9" style="background:#f7faff;border-left:3px solid var(--vw-blue);padding:12px 14px">'
+    + detalle + ovs
+    + '<div style="margin-top:10px;text-align:right"><button onclick="borrarCompraVW(\'' + c.serie + '\')" style="background:none;border:1px solid #cc3300;color:#cc3300;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px">🗑 Eliminar</button></div>'
+    + '</td></tr>';
+}
+function toggleCompraVW(serie) {
+  comprasVWAbierta = (comprasVWAbierta === serie) ? '' : serie;
+  renderComprasVW();
 }
 function renderComprasVW() {
   const cont = document.getElementById('comprasVWContent');
@@ -2007,14 +2039,14 @@ function renderComprasVW() {
     + '<input type="text" placeholder="🔍 serie, modelo, FC…" value="' + escapeHtml(comprasVWBusca) + '" oninput="comprasVWBusca=this.value;renderComprasVW()" style="padding:7px 12px;border:1px solid var(--vw-grey-2);border-radius:8px;min-width:200px;font-size:13px">'
     + '<span style="font-size:12px;color:var(--vw-grey-3)">' + rows.length + ' facturas</span>'
     + '</div>';
-  h += '<div class="table-wrap"><div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:1200px">';
+  h += '<div class="table-wrap"><div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:760px">';
   h += '<thead style="white-space:nowrap"><tr>'
-    + '<th>Estado</th><th>Serie</th><th>Mes</th><th>Modelo (Valeria / Oversoft)</th><th>Color</th><th>N° FC</th><th>Fecha FC</th><th>Vence</th>'
-    + '<th>Neto</th><th>IVA</th><th>IIBB</th><th>IIBB BsAs</th><th>Control</th><th>Pago VW</th><th></th></tr></thead><tbody>';
-  for (const c of rows) h += _cvwRow(c);
-  if (!rows.length) h += '<tr><td colspan="15" class="empty">Sin facturas para ese filtro.</td></tr>';
+    + '<th style="text-align:left">Estado</th><th style="text-align:left">Serie</th><th style="text-align:left">Mes</th><th style="text-align:left">Modelo</th><th style="text-align:left">Color</th>'
+    + '<th style="text-align:right">Neto</th><th style="text-align:right">Control</th><th style="text-align:left">Pago VW</th><th></th></tr></thead><tbody>';
+  for (const c of rows) h += _cvwSummaryRow(c);
+  if (!rows.length) h += '<tr><td colspan="9" class="empty">Sin facturas para ese filtro.</td></tr>';
   h += '</tbody></table></div></div>';
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Valeria carga la unidad apenas VW factura (aún no está en Oversoft → 🟡). Cuando aparece en Oversoft (1-2 días, por serie) pasa a 🔵 y muestra el modelo de Oversoft para comparar; con "✓ Conciliar" se da el OK y queda el nombre de Oversoft (🟢). IVA, percepciones y Control se calculan solos sobre el neto. Se guarda solo al cambiar cada campo.</div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Tocá un renglón para ver/editar el detalle completo (impuestos, fechas, conciliación). Tocá afuera para cerrarlo. Valeria carga la unidad apenas VW factura (🟡 sin Oversoft); cuando aparece en Oversoft (1-2 días, por serie) pasa a 🔵 y, al "✓ Conciliar", queda el nombre de Oversoft (🟢). IVA, percepciones y Control se calculan solos.</div>';
   cont.innerHTML = h;
 }
 
