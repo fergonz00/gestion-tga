@@ -2002,7 +2002,7 @@ function _cvwSummaryRow(c) {
       + ' <button onclick="event.stopPropagation();cancelarPagoInline()" style="background:none;border:0;cursor:pointer;font-size:13px">✕</button></span>';
   } else {
     pagoCell = '<span style="color:#cc3300;font-weight:700">impaga</span>' + (c.vence ? ' <small style="color:#cc3300">· vto ' + escapeHtml(c.vence) + '</small>' : '')
-      + ' <button onclick="event.stopPropagation();iniciarPagoInline(\'' + c.serie + '\')" title="Registrar pago a VW" style="background:#0a7a30;color:#fff;border:0;border-radius:5px;padding:2px 7px;cursor:pointer;font-size:10px">💵 pagar</button>';
+      + ' <button onclick="event.stopPropagation();iniciarPagoInline(\'' + c.serie + '\')" title="Registrar pago a VW" style="background:#0a7a30;color:#fff;border:0;border-radius:5px;padding:2px 8px;cursor:pointer;font-size:10px">pagar</button>';
   }
   const onclickRow = hasPv ? ' onclick="toggleCompraVW(\'' + c.serie + '\')" style="cursor:pointer' + bg + '"' : ' style="cursor:default' + bg + '"';
   let h = '<tr class="cvw-sum"' + onclickRow + '>'
@@ -2084,7 +2084,7 @@ function toggleCompraVW(serie) {
 // --- selección para sumar deuda a VW ---
 function toggleSelCompra(serie, checked) {
   if (checked) comprasVWSel.add(serie); else comprasVWSel.delete(serie);
-  _cvwUpdateSumBar();
+  renderComprasVW();
 }
 function _cvwUpdateSumBar() {
   const bar = document.getElementById('cvwSumBar'); if (!bar) return;
@@ -2151,12 +2151,16 @@ function renderComprasVW() {
     + '</div>';
   // barra de selección/suma de deuda a VW
   window._cvwFiltradas = rows.map(r => r.serie);
-  let selTot = 0, selN = 0;
-  for (const c of comprasVWData.compras) if (comprasVWSel.has(c.serie)) { selTot += _cvwDebe(c); selN++; }
+  let selTot = 0, selN = 0, selImpagasN = 0;
+  for (const c of comprasVWData.compras) if (comprasVWSel.has(c.serie)) { selTot += _cvwDebe(c); selN++; if (c.impaga) selImpagasN++; }
   h += '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;background:#fff7e6;border:1px solid #f0d9a8;border-radius:10px;padding:8px 12px">'
     + '<span id="cvwSumBar" style="font-size:13px">Seleccionadas: <b>' + selN + '</b> · Total a pagar a VW: <b style="color:var(--vw-blue)">' + fmtPesos(selTot) + '</b></span>'
     + '<button onclick="seleccionarTodoCompra(window._cvwFiltradas||[])" style="background:var(--vw-blue);color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px">Seleccionar todo lo filtrado (' + rows.length + ')</button>'
     + '<button onclick="limpiarSelCompra()" style="background:none;border:1px solid var(--vw-grey-2);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px">Limpiar</button>'
+    + '<span style="width:1px;height:22px;background:#e0cfa0"></span>'
+    + '<label style="font-size:12px;color:var(--vw-grey-3)">Fecha pago:</label>'
+    + '<input type="date" id="cvwbulkfecha" value="' + _cvwHoyISO() + '" style="padding:6px 8px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:12px">'
+    + '<button onclick="pagarSeleccionadasCompraVW()"' + (selImpagasN ? '' : ' disabled') + ' style="background:' + (selImpagasN ? '#0a7a30' : '#9bbfa8') + ';color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:' + (selImpagasN ? 'pointer' : 'default') + ';font-size:12px;font-weight:600">Pagar seleccionadas' + (selImpagasN ? ' (' + selImpagasN + ')' : '') + '</button>'
     + '</div>';
   h += '<div class="table-wrap"><div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:840px">';
   h += '<thead style="white-space:nowrap"><tr>'
@@ -2201,6 +2205,21 @@ async function pagarCompraVW(serie) {
   c.fecha_pago_vw = fecha; c.impaga = false; comprasVWPagando = ''; renderComprasVW();
   try { const r = await _postCompraVW({ accion: 'setcompravw', serie: serie, campos: { fecha_pago_vw: fecha } }); if (r && r.error) throw new Error(r.error); }
   catch (e) { alert('No se pudo registrar el pago: ' + e.message); }
+}
+async function pagarSeleccionadasCompraVW() {
+  const el = document.getElementById('cvwbulkfecha');
+  const iso = (el && el.value) ? el.value : _cvwHoyISO();
+  const fecha = _cvwISOtoDDmmm(iso);
+  const series = [];
+  for (const c of (comprasVWData.compras || [])) if (comprasVWSel.has(c.serie) && c.impaga) series.push(c.serie);
+  if (!series.length) { alert('No hay impagas seleccionadas para pagar.'); return; }
+  if (!confirm('¿Marcar como pagadas ' + series.length + ' unidad(es) con fecha ' + fecha + '?')) return;
+  for (const c of comprasVWData.compras) if (series.indexOf(c.serie) >= 0) { c.fecha_pago_vw = fecha; c.impaga = false; }
+  renderComprasVW();
+  const results = await Promise.all(series.map(s =>
+    _postCompraVW({ accion: 'setcompravw', serie: s, campos: { fecha_pago_vw: fecha } }).then(r => (r && r.error) ? s : null).catch(() => s)));
+  const errs = results.filter(Boolean);
+  if (errs.length) alert('No se pudieron guardar ' + errs.length + ' (' + errs.join(', ') + '). Reintentá.');
 }
 async function conciliarCompraVW(serie) {
   try { const r = await _postCompraVW({ accion: 'setcompravw', serie: serie, campos: { conciliado: true } }); if (r && r.error) throw new Error(r.error); }
