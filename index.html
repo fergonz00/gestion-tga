@@ -1346,6 +1346,8 @@ const USUARIOS_PERMITIDOS = ['fngonzalez', 'fgonzalez'];
 // Usuarios que entran SOLO a la solapa "Adm. ventas" (la administrativa).
 // La completa Mónica Gerez (mgerez); 'admventas' ya NO tiene acceso.
 const USUARIOS_ADM_VENTAS = ['mgerez'];
+// Usuarios que entran SOLO a la solapa "Patentamientos" (consulta).
+const USUARIOS_PATENTAMIENTOS = ['cgonzalez'];
 
 // URL del Web App publicado desde el Apps Script de la planilla espejo.
 // Pendiente: pegar acá la URL que devuelve "Deploy → Web app" en el editor de Apps Script.
@@ -2266,6 +2268,13 @@ function enterApp(session) {
   if (USUARIOS_ADM_VENTAS.includes(session.usuario)) {
     document.querySelectorAll('.tab').forEach(t => { if (t.dataset.tab !== 'admventas') t.style.display = 'none'; });
     setTab('admventas');
+    return;
+  }
+  // Usuario de consulta de patentamientos: ve SOLO esa solapa.
+  if (USUARIOS_PATENTAMIENTOS.includes(session.usuario)) {
+    document.querySelectorAll('.tab').forEach(t => { if (t.dataset.tab !== 'patentamientos') t.style.display = 'none'; });
+    loadObjetivosPat();
+    setTab('patentamientos');
     return;
   }
   loadObjetivosPat();      // pisa el cache local con la verdad de la planilla
@@ -6135,7 +6144,7 @@ function escapeHtml(s) {
     showGate('Esta vista no permite sesiones impersonadas.');
     return;
   }
-  if (!USUARIOS_PERMITIDOS.includes(session.usuario) && !USUARIOS_ADM_VENTAS.includes(session.usuario)) {
+  if (!USUARIOS_PERMITIDOS.includes(session.usuario) && !USUARIOS_ADM_VENTAS.includes(session.usuario) && !USUARIOS_PATENTAMIENTOS.includes(session.usuario)) {
     showGate('Tu usuario no tiene acceso a esta vista.');
     return;
   }
