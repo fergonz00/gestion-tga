@@ -1170,6 +1170,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <button class="tab" data-tab="ventas" onclick="setTab('ventas')">Ventas</button>
       <button class="tab" data-tab="patentamientos" onclick="setTab('patentamientos')">Patentamientos</button>
       <button class="tab" data-tab="admventas" onclick="setTab('admventas')">Adm. ventas</button>
+      <button class="tab" data-tab="comprasvw" onclick="setTab('comprasvw')">Compras VW</button>
       <button class="tab" data-tab="trimestre" onclick="setTab('trimestre')">Trimestre</button>
       <button class="tab" data-tab="incentivos" onclick="setTab('incentivos')">Incentivos</button>
       <button class="tab" data-tab="precios" onclick="setTab('precios')">Baratito</button>
@@ -1316,6 +1317,17 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <div id="admVentasContent"><div class="empty">Cargando…</div></div>
     </section>
 
+    <!-- =================== COMPRAS VW (carga Valeria + conciliación Oversoft) =================== -->
+    <section class="panel" id="panelComprasVW">
+      <div class="toolbar">
+        <div class="updated" id="updatedAtComprasVW">Facturas de compra a VW: cargá la unidad (aparece en Oversoft 1-2 días después) y conciliá el modelo.</div>
+        <div class="actions">
+          <button class="refresh" onclick="loadComprasVW(true)">Actualizar</button>
+        </div>
+      </div>
+      <div id="comprasVWContent"><div class="empty">Cargando…</div></div>
+    </section>
+
     <!-- =================== OVERSOFT (admin / prueba de conexión) =================== -->
     <section class="panel" id="panelOversoft">
       <div class="toolbar">
@@ -1348,6 +1360,8 @@ const USUARIOS_PERMITIDOS = ['fngonzalez', 'fgonzalez', 'cgonzalez'];
 const USUARIOS_ADM_VENTAS = ['mgerez'];
 // Usuarios que entran SOLO a la solapa "Patentamientos" (consulta).
 const USUARIOS_PATENTAMIENTOS = [];
+// Usuarios que entran SOLO a la solapa "Compras VW" (Valeria, gerente de adm).
+const USUARIOS_COMPRAS = ['vreyna'];
 
 // URL del Web App publicado desde el Apps Script de la planilla espejo.
 // Pendiente: pegar acá la URL que devuelve "Deploy → Web app" en el editor de Apps Script.
@@ -1882,6 +1896,155 @@ async function guardarAdmVenta(preventa) {
 }
 
 // =======================================================================
+// COMPRAS VW — carga de Valeria + conciliación con Oversoft (reemplaza el Sheet)
+// =======================================================================
+let comprasVWData = null, comprasVWBusca = '', comprasVWFiltro = 'todas';
+
+function _cvwIva(modelo) {
+  const m = String(modelo || '').toUpperCase();
+  return (m.indexOf('AMAROK') >= 0 || m.indexOf('SAVEIRO') >= 0) ? 0.105 : 0.21;
+}
+function _cvwCalc(c) {
+  const neto = Number(c.neto) || 0;
+  const rate = (c.iva_rate != null && c.iva_rate !== '') ? Number(c.iva_rate) : _cvwIva(c.modeloOficial || c.modelo_valeria);
+  const iva = neto * rate, iibb = neto * 0.0005, iibbBsAs = neto * 0.0002;
+  const pIva = Number(c.percep_iva) || 0, pEr = Number(c.percep_iibb_er) || 0, impInt = Number(c.imp_internos) || 0;
+  c.ivaRate = rate; c.iva = Math.round(iva * 100) / 100; c.iibb = Math.round(iibb * 100) / 100;
+  c.iibbBsAs = Math.round(iibbBsAs * 100) / 100;
+  c.control = Math.round((neto + iva + iibb + iibbBsAs + pIva + pEr + impInt) * 100) / 100;
+}
+
+async function loadComprasVW(forzar) {
+  const cont = document.getElementById('comprasVWContent');
+  if (cont && !comprasVWData) cont.innerHTML = '<div class="empty">Cargando facturas (Oversoft)…</div>';
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=comprasvw' + (forzar ? '&fresh=1' : '');
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    comprasVWData = data;
+    const up = document.getElementById('updatedAtComprasVW');
+    if (up && data.updatedAt) up.textContent = 'Compras a VW · ' + data.total + ' facturas';
+    renderComprasVW();
+  } catch (e) { console.error('loadComprasVW:', e); if (cont) cont.innerHTML = '<div class="empty">Error cargando: ' + escapeHtml(e.message) + '</div>'; }
+}
+
+async function _postCompraVW(obj) {
+  const body = new URLSearchParams();
+  body.set('payload', JSON.stringify(Object.assign({ token: APPS_SCRIPT_TOKEN, usuario: window._tgaUser || '' }, obj)));
+  const res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return await res.json();
+}
+
+function _cvwInput(id, ph, w, type) {
+  return '<input type="' + (type || 'text') + '" id="' + id + '" placeholder="' + ph + '" style="width:' + w + 'px;padding:6px 8px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:12px">';
+}
+function _cvwRow(c) {
+  const k = c.serie.replace(/[^A-Za-z0-9]/g, '_');
+  const auto = ' onchange="guardarCompraVW(\'' + c.serie + '\')"';
+  const inp = (campo, val, w, type) => '<input type="' + (type || 'text') + '" id="cvw_' + campo + '_' + k + '" value="' + escapeHtml(val == null ? '' : String(val)) + '"' + auto + ' style="width:' + w + 'px;padding:3px 5px;border:1px solid var(--vw-grey-2);border-radius:5px;font-size:12px">';
+  let est, estCol, accion = '';
+  if (c.estado === 'cargada') { est = '🟡 sin Oversoft'; estCol = '#9a7d00'; }
+  else if (c.estado === 'sin_conciliar') { est = '🔵 a conciliar'; estCol = '#0a52a8'; accion = '<button onclick="conciliarCompraVW(\'' + c.serie + '\')" style="background:#0a7a30;color:#fff;border:0;border-radius:5px;padding:3px 8px;cursor:pointer;font-size:11px;margin-top:4px">✓ Conciliar</button>'; }
+  else { est = '🟢 conciliada'; estCol = '#0a7a30'; }
+  let modeloCell = inp('modelo_valeria', c.modelo_valeria, 150);
+  if (c.enOversoft && c.modeloOversoft) {
+    const dif = String(c.modeloOversoft).trim().toLowerCase() !== String(c.modelo_valeria || '').trim().toLowerCase();
+    const col = (c.estado === 'conciliada') ? '#0a7a30' : (dif ? '#cc6600' : '#0a7a30');
+    modeloCell += '<br><small style="color:' + col + '">OVS: ' + escapeHtml(c.modeloOversoft) + (dif && c.estado !== 'conciliada' ? ' ⚠' : '') + '</small>';
+  }
+  return '<tr>'
+    + '<td data-label="Estado" style="color:' + estCol + ';white-space:nowrap">' + est + (accion ? '<br>' + accion : '') + '</td>'
+    + '<td data-label="Serie"><b>' + escapeHtml(c.serie) + '</b>' + (c.preventaOversoft ? '<br><small style="color:var(--vw-grey-3)">PV ' + escapeHtml(c.preventaOversoft) + '</small>' : '') + '</td>'
+    + '<td data-label="Mes">' + inp('mes', c.mes, 88) + '</td>'
+    + '<td data-label="Modelo">' + modeloCell + '</td>'
+    + '<td data-label="Color">' + inp('color', c.color, 90) + (c.colorOversoft ? '<br><small style="color:var(--vw-grey-3)">OVS: ' + escapeHtml(c.colorOversoft) + '</small>' : '') + '</td>'
+    + '<td data-label="N° FC">' + inp('fc_numero', c.fc_numero, 88) + '</td>'
+    + '<td data-label="Fecha FC">' + inp('fecha_fc', c.fecha_fc, 70) + '</td>'
+    + '<td data-label="Vence">' + inp('vence', c.vence, 70) + '</td>'
+    + '<td data-label="Neto" style="text-align:right">' + inp('neto', c.neto, 100, 'number') + '</td>'
+    + '<td data-label="IVA" style="text-align:right;white-space:nowrap">' + fmtPesos(c.iva) + '<br><small style="color:var(--vw-grey-3)">' + (Math.round(c.ivaRate * 1000) / 10) + '%</small></td>'
+    + '<td data-label="IIBB" style="text-align:right">' + fmtPesos(c.iibb) + '</td>'
+    + '<td data-label="IIBB BsAs" style="text-align:right">' + fmtPesos(c.iibbBsAs) + '</td>'
+    + '<td data-label="Control" style="text-align:right;font-weight:700">' + fmtPesos(c.control) + '</td>'
+    + '<td data-label="Pago VW">' + inp('fecha_pago_vw', c.fecha_pago_vw, 78) + '</td>'
+    + '<td><button onclick="borrarCompraVW(\'' + c.serie + '\')" title="Eliminar" style="border:0;background:none;cursor:pointer;font-size:14px">🗑</button></td>'
+    + '</tr>';
+}
+function renderComprasVW() {
+  const cont = document.getElementById('comprasVWContent');
+  if (!cont) return;
+  if (!comprasVWData || !Array.isArray(comprasVWData.compras)) { cont.innerHTML = '<div class="empty">Sin datos.</div>'; return; }
+  const q = comprasVWBusca.trim().toLowerCase();
+  const rows = comprasVWData.compras.filter(c => {
+    if (comprasVWFiltro === 'cargadas' && c.estado !== 'cargada') return false;
+    if (comprasVWFiltro === 'sinconciliar' && c.estado !== 'sin_conciliar') return false;
+    if (comprasVWFiltro === 'conciliadas' && c.estado !== 'conciliada') return false;
+    if (q) { const blob = [c.serie, c.modelo_valeria, c.modeloOversoft, c.color, c.fc_numero, c.mes].join(' ').toLowerCase(); if (blob.indexOf(q) < 0) return false; }
+    return true;
+  });
+  let h = '<div style="background:#f0f6ff;border:1px solid #cfe0f5;border-radius:10px;padding:12px;margin-bottom:12px">'
+    + '<b style="font-size:13px">+ Nueva factura de compra a VW</b>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center">'
+    + _cvwInput('nuevo_serie', 'Serie', 90) + _cvwInput('nuevo_mes', 'Mes (junio-26)', 110)
+    + _cvwInput('nuevo_modelo', 'Modelo', 180) + _cvwInput('nuevo_color', 'Color', 90)
+    + _cvwInput('nuevo_fc', 'N° factura', 90) + _cvwInput('nuevo_fechafc', 'Fecha FC', 80)
+    + _cvwInput('nuevo_vence', 'Vence', 80) + _cvwInput('nuevo_neto', 'Neto $', 110, 'number')
+    + _cvwInput('nuevo_fechapago', 'Fecha pago VW', 100)
+    + '<button onclick="nuevaCompraVW()" style="background:var(--vw-blue);color:#fff;border:0;border-radius:6px;padding:7px 14px;cursor:pointer;font-weight:600">Agregar</button>'
+    + '</div></div>';
+  const chip = (val, lbl) => '<button onclick="comprasVWFiltro=\'' + val + '\';renderComprasVW()" style="padding:6px 12px;border:1px solid var(--vw-grey-2);border-radius:16px;cursor:pointer;font-size:13px;' + (comprasVWFiltro === val ? 'background:var(--vw-blue);color:#fff;border-color:var(--vw-blue);font-weight:700' : 'background:#fff;color:var(--vw-grey-3)') + '">' + lbl + '</button>';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'
+    + chip('todas', 'Todas') + chip('cargadas', '🟡 Sin Oversoft') + chip('sinconciliar', '🔵 A conciliar') + chip('conciliadas', '🟢 Conciliadas')
+    + '<input type="text" placeholder="🔍 serie, modelo, FC…" value="' + escapeHtml(comprasVWBusca) + '" oninput="comprasVWBusca=this.value;renderComprasVW()" style="padding:7px 12px;border:1px solid var(--vw-grey-2);border-radius:8px;min-width:200px;font-size:13px">'
+    + '<span style="font-size:12px;color:var(--vw-grey-3)">' + rows.length + ' facturas</span>'
+    + '</div>';
+  h += '<div class="table-wrap"><div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:1200px">';
+  h += '<thead style="white-space:nowrap"><tr>'
+    + '<th>Estado</th><th>Serie</th><th>Mes</th><th>Modelo (Valeria / Oversoft)</th><th>Color</th><th>N° FC</th><th>Fecha FC</th><th>Vence</th>'
+    + '<th>Neto</th><th>IVA</th><th>IIBB</th><th>IIBB BsAs</th><th>Control</th><th>Pago VW</th><th></th></tr></thead><tbody>';
+  for (const c of rows) h += _cvwRow(c);
+  if (!rows.length) h += '<tr><td colspan="15" class="empty">Sin facturas para ese filtro.</td></tr>';
+  h += '</tbody></table></div></div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Valeria carga la unidad apenas VW factura (aún no está en Oversoft → 🟡). Cuando aparece en Oversoft (1-2 días, por serie) pasa a 🔵 y muestra el modelo de Oversoft para comparar; con "✓ Conciliar" se da el OK y queda el nombre de Oversoft (🟢). IVA, percepciones y Control se calculan solos sobre el neto. Se guarda solo al cambiar cada campo.</div>';
+  cont.innerHTML = h;
+}
+
+async function guardarCompraVW(serie) {
+  const k = serie.replace(/[^A-Za-z0-9]/g, '_');
+  const c = (comprasVWData.compras || []).find(x => x.serie === serie); if (!c) return;
+  const campos = {};
+  for (const f of ['mes', 'modelo_valeria', 'color', 'fc_numero', 'fecha_fc', 'vence', 'neto', 'fecha_pago_vw']) {
+    const el = document.getElementById('cvw_' + f + '_' + k);
+    if (el) { campos[f] = el.value.trim(); c[f] = (f === 'neto') ? (el.value.trim() === '' ? null : Number(el.value)) : el.value.trim(); }
+  }
+  _cvwCalc(c); renderComprasVW();
+  try { const r = await _postCompraVW({ accion: 'setcompravw', serie: serie, campos: campos }); if (r && r.error) throw new Error(r.error); }
+  catch (e) { alert('No se pudo guardar ' + serie + ': ' + e.message); }
+}
+async function nuevaCompraVW() {
+  const g = id => ((document.getElementById(id) || {}).value || '').trim();
+  const serie = g('nuevo_serie').toUpperCase();
+  if (!serie) { alert('Falta la serie'); return; }
+  const campos = { mes: g('nuevo_mes'), modelo_valeria: g('nuevo_modelo'), color: g('nuevo_color'), fc_numero: g('nuevo_fc'), fecha_fc: g('nuevo_fechafc'), vence: g('nuevo_vence'), neto: g('nuevo_neto'), fecha_pago_vw: g('nuevo_fechapago') };
+  try { const r = await _postCompraVW({ accion: 'setcompravw', serie: serie, campos: campos }); if (r && r.error) throw new Error(r.error); }
+  catch (e) { alert('No se pudo agregar: ' + e.message); return; }
+  await loadComprasVW(true);
+}
+async function conciliarCompraVW(serie) {
+  try { const r = await _postCompraVW({ accion: 'setcompravw', serie: serie, campos: { conciliado: true } }); if (r && r.error) throw new Error(r.error); }
+  catch (e) { alert('No se pudo conciliar: ' + e.message); return; }
+  await loadComprasVW(true);
+}
+async function borrarCompraVW(serie) {
+  if (!confirm('¿Eliminar la factura de compra de la serie ' + serie + '?')) return;
+  try { const r = await _postCompraVW({ accion: 'delcompravw', serie: serie }); if (r && r.error) throw new Error(r.error); }
+  catch (e) { alert('No se pudo eliminar: ' + e.message); return; }
+  await loadComprasVW(true);
+}
+
+// =======================================================================
 // BARATITO — motor propio: precios Supabase + stock/ventas/colores Oversoft
 // (la vista "Planilla" se retiró el 11-jun una vez validado el motor; el
 //  endpoint tipo=precios sigue vivo en el backend por si hay que comparar)
@@ -2379,6 +2542,12 @@ function enterApp(session) {
     setTab('patentamientos');
     return;
   }
+  // Valeria (compras a VW): ve SOLO esa solapa.
+  if (USUARIOS_COMPRAS.includes(session.usuario)) {
+    document.querySelectorAll('.tab').forEach(t => { if (t.dataset.tab !== 'comprasvw') t.style.display = 'none'; });
+    setTab('comprasvw');
+    return;
+  }
   loadObjetivosPat();      // pisa el cache local con la verdad de la planilla
   loadObjetivosCompras();  // idem para objetivos de compras
   loadIndustria();         // idem para data de industria (TGA vs mercado)
@@ -2452,6 +2621,7 @@ function setTab(tab) {
     precios:        'panelPrecios',
     industria:      'panelIndustria',
     admventas:      'panelAdmVentas',
+    comprasvw:      'panelComprasVW',
     oversoft:       'panelOversoft',
   };
   const el = document.getElementById(map[tab]);
@@ -2468,6 +2638,7 @@ function setTab(tab) {
   if (tab === 'incentivos'     && !incentivosData) loadIncentivos(false);
   if (tab === 'precios'        && !preciosData)    loadPrecios(false);
   if (tab === 'admventas'      && !admVentasData)  loadAdmVentas(false);
+  if (tab === 'comprasvw'      && !comprasVWData)  loadComprasVW(false);
   if (tab === 'industria') {
     // Industria depende de patentData para contar TGA patentadas
     if (!patentData) loadPatentamientos(false);
@@ -6244,7 +6415,7 @@ function escapeHtml(s) {
   }
   // Sesión impersonada: se permite y se trata como el usuario impersonado
   // (mismas solapas que vería esa persona), que es el sentido de impersonar.
-  if (!USUARIOS_PERMITIDOS.includes(session.usuario) && !USUARIOS_ADM_VENTAS.includes(session.usuario) && !USUARIOS_PATENTAMIENTOS.includes(session.usuario)) {
+  if (!USUARIOS_PERMITIDOS.includes(session.usuario) && !USUARIOS_ADM_VENTAS.includes(session.usuario) && !USUARIOS_PATENTAMIENTOS.includes(session.usuario) && !USUARIOS_COMPRAS.includes(session.usuario)) {
     showGate('Tu usuario no tiene acceso a esta vista.');
     return;
   }
