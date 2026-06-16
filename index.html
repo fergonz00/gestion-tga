@@ -1893,6 +1893,7 @@ async function guardarAdmVenta(preventa) {
 let comprasVWData = null, comprasVWBusca = '', comprasVWFiltro = 'todas', comprasVWMes = '__todos__', comprasVWAbierta = '', comprasVWVence = '__todas__';
 let comprasVWSel = new Set();   // series seleccionadas para sumar deuda a VW
 let comprasVWPagando = '';      // serie con el pago inline abierto
+let comprasVWImpagas = false, comprasVWVendidas = false;   // toggles combinables
 
 const _CVW_MESNUM = { enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12 };
 function _cvwMesKey(mes) {
@@ -2110,8 +2111,8 @@ function renderComprasVW() {
     if (comprasVWFiltro === 'cargadas' && c.estado !== 'cargada') return false;
     if (comprasVWFiltro === 'sinconciliar' && c.estado !== 'sin_conciliar') return false;
     if (comprasVWFiltro === 'conciliadas' && c.estado !== 'conciliada') return false;
-    if (comprasVWFiltro === 'impagas' && !c.impaga) return false;
-    if (comprasVWFiltro === 'conpv' && !c.pv) return false;
+    if (comprasVWImpagas && !c.impaga) return false;     // toggle combinable
+    if (comprasVWVendidas && !c.pv) return false;        // toggle combinable
     if (q) { const blob = [c.serie, c.modelo_valeria, c.modeloOversoft, c.color, c.fc_numero, c.mes, (c.pv ? c.pv.numero + ' ' + c.pv.cliente : '')].join(' ').toLowerCase(); if (blob.indexOf(q) < 0) return false; }
     return true;
   }).sort((a, b) => _cvwVenceKey(a.vence) - _cvwVenceKey(b.vence));   // orden por vto de pago a VW
@@ -2129,6 +2130,8 @@ function renderComprasVW() {
     + '<button onclick="nuevaCompraVW()" style="background:var(--vw-blue);color:#fff;border:0;border-radius:6px;padding:7px 14px;cursor:pointer;font-weight:600">Agregar</button>'
     + '</div></div>';
   const chip = (val, lbl) => '<button onclick="comprasVWFiltro=\'' + val + '\';renderComprasVW()" style="padding:6px 12px;border:1px solid var(--vw-grey-2);border-radius:16px;cursor:pointer;font-size:13px;' + (comprasVWFiltro === val ? 'background:var(--vw-blue);color:#fff;border-color:var(--vw-blue);font-weight:700' : 'background:#fff;color:var(--vw-grey-3)') + '">' + lbl + '</button>';
+  // toggles combinables (impagas / vendidas) — independientes del estado
+  const tchip = (active, lbl, expr) => '<button onclick="' + expr + ';renderComprasVW()" style="padding:6px 12px;border:1px solid ' + (active ? '#cc6600' : 'var(--vw-grey-2)') + ';border-radius:16px;cursor:pointer;font-size:13px;' + (active ? 'background:#cc6600;color:#fff;font-weight:700' : 'background:#fff;color:var(--vw-grey-3)') + '">' + (active ? '✓ ' : '') + lbl + '</button>';
   let mesSel = '<select onchange="comprasVWMes=this.value;renderComprasVW()" style="padding:6px 10px;border:1px solid var(--vw-grey-2);border-radius:8px;font-size:13px">';
   mesSel += '<option value="__todos__"' + (comprasVWMes === '__todos__' ? ' selected' : '') + '>Todos los meses · ' + comprasVWData.compras.length + '</option>';
   for (const mk of meses) mesSel += '<option value="' + escapeHtml(mk) + '"' + (comprasVWMes === mk ? ' selected' : '') + '>' + escapeHtml(mk) + '</option>';
@@ -2140,7 +2143,9 @@ function renderComprasVW() {
   h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'
     + '<label style="font-size:13px;color:var(--vw-grey-3)">Mes:</label>' + mesSel
     + '<label style="font-size:13px;color:var(--vw-grey-3)">Vto VW:</label>' + vtoSel
-    + chip('todas', 'Todas') + chip('conpv', '🧾 Vendidas') + chip('impagas', '🔴 Impagas') + chip('conciliadas', '🟢 Conciliadas') + chip('sinconciliar', '🔵 A conciliar') + chip('cargadas', '🟡 Sin Oversoft')
+    + chip('todas', 'Todas') + chip('conciliadas', '🟢 Conciliadas') + chip('sinconciliar', '🔵 A conciliar') + chip('cargadas', '🟡 Sin Oversoft')
+    + '<span style="width:1px;height:22px;background:var(--vw-grey-2);margin:0 2px"></span>'
+    + tchip(comprasVWVendidas, '🧾 Vendidas', 'comprasVWVendidas=!comprasVWVendidas') + tchip(comprasVWImpagas, '🔴 Impagas', 'comprasVWImpagas=!comprasVWImpagas')
     + '<input type="text" placeholder="🔍 serie, modelo, FC…" value="' + escapeHtml(comprasVWBusca) + '" oninput="comprasVWBusca=this.value;renderComprasVW()" style="padding:7px 12px;border:1px solid var(--vw-grey-2);border-radius:8px;min-width:180px;font-size:13px">'
     + '<span style="font-size:12px;color:var(--vw-grey-3)">' + rows.length + ' facturas</span>'
     + '</div>';
