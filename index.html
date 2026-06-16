@@ -1909,6 +1909,7 @@ function _cvwVenceKey(v) {
   const m = _CVW_MESAB[(p[1] || '').slice(0, 3)] || 0;
   return m ? (m * 100 + d) : 999999;
 }
+function _cvwMesLabel(mesKey) { const m = String(mesKey || '').match(/^(\d{4})-(\d{2})/); return m ? (_mesLabelLargo(mesKey) + ' ' + m[1]) : String(mesKey || ''); }
 function _cvwHoyISO() { const d = new Date(); const p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
 function _cvwISOtoDDmmm(iso) { const ab = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']; const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? (String(parseInt(m[3], 10)) + '-' + ab[parseInt(m[2], 10) - 1]) : String(iso); }
 function _cvwIva(modelo) {
@@ -2017,6 +2018,33 @@ function _cvwDetailRow(c, k) {
     + fld('neto', 'Neto $', c.neto, 'number') + fld('fecha_pago_vw', 'Fecha pago VW', c.fecha_pago_vw)
     + ro('IVA (' + (Math.round(c.ivaRate * 1000) / 10) + '%)', fmtPesos(c.iva)) + ro('Perc. IIBB', fmtPesos(c.iibb)) + ro('Perc. IIBB BsAs', fmtPesos(c.iibbBsAs)) + ro('Control', fmtPesos(c.control))
     + '</div>';
+  let venta = '';
+  if (c.pv) {
+    const p = c.pv;
+    const mesPatTxt = p.fechaPat ? ('patentada ' + _fechaDMA(p.fechaPat)) : (p.mesPat ? ('a patentar ' + _cvwMesLabel(p.mesPat)) : 'a patentar: s/d');
+    const tipoTxt = p.tipo ? (p.tipo.replace('FINANCIA_', 'Financia ').replace('_', ' ') + (p.financia ? ' (' + p.financia + ')' : '')) : '';
+    let tbl = '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:7px">'
+      + '<tr style="color:var(--vw-grey-3)"><th style="text-align:left;padding:2px 4px">Concepto</th><th style="text-align:right;padding:2px 4px">Plan</th><th style="text-align:right;padding:2px 4px">Cobrado</th><th style="text-align:right;padding:2px 4px">Falta</th></tr>';
+    for (const x of (p.cuadro || [])) {
+      const falta = Math.round((x.plan || 0) - (x.cobrado || 0));
+      tbl += '<tr style="border-top:1px solid #e3ecf5"><td style="padding:2px 4px">' + escapeHtml(x.concepto) + '</td>'
+        + '<td style="text-align:right;padding:2px 4px">' + fmtPesos(x.plan) + '</td>'
+        + '<td style="text-align:right;padding:2px 4px">' + (x.cobrado ? fmtPesos(x.cobrado) : '—') + '</td>'
+        + '<td style="text-align:right;padding:2px 4px;color:' + (falta > 1 ? '#cc3300' : '#0a7a30') + '">' + (falta > 1 ? fmtPesos(falta) : '✓') + '</td></tr>';
+    }
+    tbl += '<tr style="border-top:2px solid var(--vw-blue);font-weight:700"><td style="padding:3px 4px">TOTAL</td>'
+      + '<td style="text-align:right;padding:3px 4px">' + fmtPesos(p.totalPlan) + '</td>'
+      + '<td style="text-align:right;padding:3px 4px">' + fmtPesos(p.totalCobrado) + '</td>'
+      + '<td style="text-align:right;padding:3px 4px;color:' + (p.falta > 1 ? '#cc3300' : '#0a7a30') + '">' + (p.falta > 1 ? fmtPesos(p.falta) : '✓ cobrado') + '</td></tr></table>';
+    venta = '<div style="margin-top:10px;padding:10px 12px;background:#fff;border:1px solid #cfe0f5;border-radius:8px">'
+      + '<div style="font-size:13px;font-weight:700;color:var(--vw-blue)">🧾 Venta · PV ' + escapeHtml(p.numero) + (tipoTxt ? ' · ' + escapeHtml(tipoTxt) : '') + '</div>'
+      + '<div style="font-size:12px;margin-top:3px">Cliente: <b>' + escapeHtml(p.cliente || '—') + '</b>' + (p.localidad ? ' · ' + escapeHtml(p.localidad) : '') + (p.vendedor ? ' · vend. ' + escapeHtml(p.vendedor) : '') + '</div>'
+      + '<div style="font-size:12px;color:#7a5b00;font-weight:600">' + escapeHtml(mesPatTxt) + '</div>'
+      + tbl
+      + '</div>';
+  } else if (c.enOversoft) {
+    venta = '<div style="margin-top:10px;font-size:12px;color:var(--vw-grey-3)">Esta unidad todavía no tiene preventa (es stock sin vender).</div>';
+  }
   let pago = '';
   if (c.impaga) {
     pago = '<div style="margin-top:10px;padding:10px 12px;background:#eafaf0;border:1px solid #b6e3c8;border-radius:8px">'
@@ -2028,7 +2056,7 @@ function _cvwDetailRow(c, k) {
       + '</div></div>';
   }
   return '<tr class="cvw-det"><td data-label="" colspan="11" style="background:#f7faff;border-left:3px solid var(--vw-blue);padding:12px 14px">'
-    + detalle + ovs + pago
+    + detalle + ovs + venta + pago
     + '<div style="margin-top:10px;text-align:right"><button onclick="borrarCompraVW(\'' + c.serie + '\')" style="background:none;border:1px solid #cc3300;color:#cc3300;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px">🗑 Eliminar</button></div>'
     + '</td></tr>';
 }
