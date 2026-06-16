@@ -1830,7 +1830,9 @@ function renderAdmVentas() {
          + (v.pagoVW
              ? (v.pagoVW.impaga
                  ? '<span style="color:#cc3300;font-weight:700">impaga</span>' + (v.pagoVW.vence ? '<br><small style="color:var(--vw-grey-3)">vence ' + escapeHtml(v.pagoVW.vence) + '</small>' : '')
-                 : '<b style="color:#0a7a30">' + escapeHtml(v.pagoVW.fecha || 'pagada') + '</b>')
+                 : (v.pagoVW.porAntiguedad
+                     ? '<b style="color:#0a7a30">paga</b><br><small style="color:var(--vw-grey-3)">por antigüedad</small>'
+                     : '<b style="color:#0a7a30">' + escapeHtml(v.pagoVW.fecha || 'pagada') + '</b>'))
              : '<span style="color:var(--vw-grey-3)">s/d</span>')
        + '</td>'
        + '<td data-label="Notas">' + inp(v.preventa, key, 'notas', m.notas, 92) + '</td>'
