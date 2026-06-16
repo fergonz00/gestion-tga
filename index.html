@@ -6140,10 +6140,8 @@ function escapeHtml(s) {
     showGate('Necesitás iniciar sesión en el portal.');
     return;
   }
-  if (session._impersonatedBy) {
-    showGate('Esta vista no permite sesiones impersonadas.');
-    return;
-  }
+  // Sesión impersonada: se permite y se trata como el usuario impersonado
+  // (mismas solapas que vería esa persona), que es el sentido de impersonar.
   if (!USUARIOS_PERMITIDOS.includes(session.usuario) && !USUARIOS_ADM_VENTAS.includes(session.usuario) && !USUARIOS_PATENTAMIENTOS.includes(session.usuario)) {
     showGate('Tu usuario no tiene acceso a esta vista.');
     return;
