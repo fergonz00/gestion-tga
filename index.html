@@ -1173,7 +1173,6 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <button class="tab" data-tab="comprasvw" onclick="setTab('comprasvw')">Compras VW</button>
       <button class="tab" data-tab="trimestre" onclick="setTab('trimestre')">Trimestre</button>
       <button class="tab" data-tab="incentivos" onclick="setTab('incentivos')">Incentivos</button>
-      <button class="tab" data-tab="precios" onclick="setTab('precios')">Baratito</button>
       <button class="tab" data-tab="industria" onclick="setTab('industria')">Industria</button>
       <!-- Tab discreta: solo aparece entrando con #oversoft en la URL (revealOversoftTab) -->
       <button class="tab hidden" id="tabOversoft" data-tab="oversoft" onclick="setTab('oversoft')">⚙ Oversoft</button>
@@ -1285,15 +1284,8 @@ table.patent-tbl.resumida .col-extra { display: none; }
     </section>
 
     <!-- =================== PRECIOS (espejo de "Actual BT") =================== -->
-    <section class="panel" id="panelPrecios">
-      <div class="toolbar">
-        <div class="updated" id="updatedAtPrecios">Baratito — espejo en vivo de "Actual BT": precio, stock, ventas, incentivos y simulador de dto.</div>
-        <div class="actions">
-          <button class="refresh" onclick="loadPrecios(true)">Actualizar</button>
-        </div>
-      </div>
-      <div id="preciosContent"></div>
-    </section>
+    <!-- Baratito migrado al portal de precios (precios.titogonzalez.online). El
+         backend getBaratitoMotor sigue vivo: lo consume el portal vía ?tipo=motor. -->
 
     <!-- =================== INDUSTRIA =================== -->
     <section class="panel" id="panelIndustria">
@@ -2651,7 +2643,6 @@ function setTab(tab) {
     else             renderTrimestre();
   }
   if (tab === 'incentivos'     && !incentivosData) loadIncentivos(false);
-  if (tab === 'precios'        && !preciosData)    loadPrecios(false);
   if (tab === 'admventas'      && !admVentasData)  loadAdmVentas(false);
   if (tab === 'comprasvw'      && !comprasVWData)  loadComprasVW(false);
   if (tab === 'industria') {
