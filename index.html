@@ -1915,6 +1915,14 @@ function _cvwIva(modelo) {
   const m = String(modelo || '').toUpperCase();
   return (m.indexOf('AMAROK') >= 0 || m.indexOf('SAVEIRO') >= 0) ? 0.105 : 0.21;
 }
+// Lo que se le DEBE a VW por esa unidad: el importe real de la factura
+// (importe_saldo, que viene de la planilla) si existe; si no, el Control
+// calculado para impagas; 0 si está paga.
+function _cvwDebe(c) {
+  const s = Number(c.importe_saldo) || 0;
+  if (s > 0) return s;
+  return c.impaga ? (Number(c.control) || 0) : 0;
+}
 function _cvwCalc(c) {
   const neto = Number(c.neto) || 0;
   const rate = (c.iva_rate != null && c.iva_rate !== '') ? Number(c.iva_rate) : _cvwIva(c.modeloOficial || c.modelo_valeria);
@@ -2036,7 +2044,7 @@ function toggleSelCompra(serie, checked) {
 function _cvwUpdateSumBar() {
   const bar = document.getElementById('cvwSumBar'); if (!bar) return;
   let total = 0, n = 0;
-  for (const c of (comprasVWData.compras || [])) if (comprasVWSel.has(c.serie)) { total += Number(c.control) || 0; n++; }
+  for (const c of (comprasVWData.compras || [])) if (comprasVWSel.has(c.serie)) { total += _cvwDebe(c); n++; }
   bar.innerHTML = 'Seleccionadas: <b>' + n + '</b> · Total a pagar a VW: <b style="color:var(--vw-blue)">' + fmtPesos(total) + '</b>';
 }
 function seleccionarTodoCompra(series) {
@@ -2094,7 +2102,7 @@ function renderComprasVW() {
   // barra de selección/suma de deuda a VW
   window._cvwFiltradas = rows.map(r => r.serie);
   let selTot = 0, selN = 0;
-  for (const c of comprasVWData.compras) if (comprasVWSel.has(c.serie)) { selTot += Number(c.control) || 0; selN++; }
+  for (const c of comprasVWData.compras) if (comprasVWSel.has(c.serie)) { selTot += _cvwDebe(c); selN++; }
   h += '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;background:#fff7e6;border:1px solid #f0d9a8;border-radius:10px;padding:8px 12px">'
     + '<span id="cvwSumBar" style="font-size:13px">Seleccionadas: <b>' + selN + '</b> · Total a pagar a VW: <b style="color:var(--vw-blue)">' + fmtPesos(selTot) + '</b></span>'
     + '<button onclick="seleccionarTodoCompra(window._cvwFiltradas||[])" style="background:var(--vw-blue);color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px">Seleccionar todo lo filtrado (' + rows.length + ')</button>'
