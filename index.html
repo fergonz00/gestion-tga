@@ -2042,7 +2042,7 @@ function renderComprasVW() {
   const q = comprasVWBusca.trim().toLowerCase();
   const rows = comprasVWData.compras.filter(c => {
     if (comprasVWMes && comprasVWMes !== '__todos__' && String(c.mes || '') !== comprasVWMes) return false;
-    if (comprasVWVence && comprasVWVence !== '__todas__' && String(c.vence || '') !== comprasVWVence) return false;
+    if (comprasVWVence && comprasVWVence !== '__todas__' && (String(c.vence || '') !== comprasVWVence || !c.impaga)) return false;
     if (comprasVWFiltro === 'cargadas' && c.estado !== 'cargada') return false;
     if (comprasVWFiltro === 'sinconciliar' && c.estado !== 'sin_conciliar') return false;
     if (comprasVWFiltro === 'conciliadas' && c.estado !== 'conciliada') return false;
@@ -2051,7 +2051,8 @@ function renderComprasVW() {
     return true;
   }).sort((a, b) => _cvwVenceKey(a.vence) - _cvwVenceKey(b.vence));   // orden por vto de pago a VW
   const meses = Array.from(new Set(comprasVWData.compras.map(c => c.mes).filter(Boolean))).sort((a, b) => _cvwMesKey(b) - _cvwMesKey(a));
-  const vtos = Array.from(new Set(comprasVWData.compras.map(c => c.vence).filter(Boolean))).sort((a, b) => _cvwVenceKey(a) - _cvwVenceKey(b));
+  // solo vtos de impagas (las pagadas no interesan y serían demasiadas opciones)
+  const vtos = Array.from(new Set(comprasVWData.compras.filter(c => c.impaga).map(c => c.vence).filter(Boolean))).sort((a, b) => _cvwVenceKey(a) - _cvwVenceKey(b));
   let h = '<div style="background:#f0f6ff;border:1px solid #cfe0f5;border-radius:10px;padding:12px;margin-bottom:12px">'
     + '<b style="font-size:13px">+ Nueva factura de compra a VW</b>'
     + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center">'
@@ -2068,7 +2069,7 @@ function renderComprasVW() {
   for (const mk of meses) mesSel += '<option value="' + escapeHtml(mk) + '"' + (comprasVWMes === mk ? ' selected' : '') + '>' + escapeHtml(mk) + '</option>';
   mesSel += '</select>';
   let vtoSel = '<select onchange="comprasVWVence=this.value;renderComprasVW()" style="padding:6px 10px;border:1px solid var(--vw-grey-2);border-radius:8px;font-size:13px">';
-  vtoSel += '<option value="__todas__"' + (comprasVWVence === '__todas__' ? ' selected' : '') + '>Todos los vtos</option>';
+  vtoSel += '<option value="__todas__"' + (comprasVWVence === '__todas__' ? ' selected' : '') + '>Vto (impagas)…</option>';
   for (const vk of vtos) vtoSel += '<option value="' + escapeHtml(vk) + '"' + (comprasVWVence === vk ? ' selected' : '') + '>' + escapeHtml(vk) + '</option>';
   vtoSel += '</select>';
   h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'
