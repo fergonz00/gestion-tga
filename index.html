@@ -1909,6 +1909,8 @@ function _cvwVenceKey(v) {
   const m = _CVW_MESAB[(p[1] || '').slice(0, 3)] || 0;
   return m ? (m * 100 + d) : 999999;
 }
+function _cvwHoyISO() { const d = new Date(); const p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
+function _cvwISOtoDDmmm(iso) { const ab = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']; const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? (String(parseInt(m[3], 10)) + '-' + ab[parseInt(m[2], 10) - 1]) : String(iso); }
 function _cvwIva(modelo) {
   const m = String(modelo || '').toUpperCase();
   return (m.indexOf('AMAROK') >= 0 || m.indexOf('SAVEIRO') >= 0) ? 0.105 : 0.21;
@@ -2007,8 +2009,18 @@ function _cvwDetailRow(c, k) {
     + fld('neto', 'Neto $', c.neto, 'number') + fld('fecha_pago_vw', 'Fecha pago VW', c.fecha_pago_vw)
     + ro('IVA (' + (Math.round(c.ivaRate * 1000) / 10) + '%)', fmtPesos(c.iva)) + ro('Perc. IIBB', fmtPesos(c.iibb)) + ro('Perc. IIBB BsAs', fmtPesos(c.iibbBsAs)) + ro('Control', fmtPesos(c.control))
     + '</div>';
+  let pago = '';
+  if (c.impaga) {
+    pago = '<div style="margin-top:10px;padding:10px 12px;background:#eafaf0;border:1px solid #b6e3c8;border-radius:8px">'
+      + '<label style="font-size:12px;color:#0a7a30;font-weight:700">💵 Pago de la unidad a VW</label>'
+      + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">'
+      + '<input type="date" id="cvwpagofecha_' + k + '" value="' + _cvwHoyISO() + '" style="padding:6px 8px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px">'
+      + '<button onclick="pagarCompraVW(\'' + c.serie + '\')" style="background:#0a7a30;color:#fff;border:0;border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px;font-weight:600">Confirmar pago</button>'
+      + '<small style="color:var(--vw-grey-3)">(por defecto: hoy)</small>'
+      + '</div></div>';
+  }
   return '<tr class="cvw-det"><td data-label="" colspan="11" style="background:#f7faff;border-left:3px solid var(--vw-blue);padding:12px 14px">'
-    + detalle + ovs
+    + detalle + ovs + pago
     + '<div style="margin-top:10px;text-align:right"><button onclick="borrarCompraVW(\'' + c.serie + '\')" style="background:none;border:1px solid #cc3300;color:#cc3300;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px">🗑 Eliminar</button></div>'
     + '</td></tr>';
 }
@@ -2119,6 +2131,16 @@ async function nuevaCompraVW() {
   try { const r = await _postCompraVW({ accion: 'setcompravw', serie: serie, campos: campos }); if (r && r.error) throw new Error(r.error); }
   catch (e) { alert('No se pudo agregar: ' + e.message); return; }
   await loadComprasVW(true);
+}
+async function pagarCompraVW(serie) {
+  const k = serie.replace(/[^A-Za-z0-9]/g, '_');
+  const el = document.getElementById('cvwpagofecha_' + k);
+  const iso = (el && el.value) ? el.value : _cvwHoyISO();
+  const fecha = _cvwISOtoDDmmm(iso);
+  const c = (comprasVWData.compras || []).find(x => x.serie === serie); if (!c) return;
+  c.fecha_pago_vw = fecha; c.impaga = false; renderComprasVW();
+  try { const r = await _postCompraVW({ accion: 'setcompravw', serie: serie, campos: { fecha_pago_vw: fecha } }); if (r && r.error) throw new Error(r.error); }
+  catch (e) { alert('No se pudo registrar el pago: ' + e.message); }
 }
 async function conciliarCompraVW(serie) {
   try { const r = await _postCompraVW({ accion: 'setcompravw', serie: serie, campos: { conciliado: true } }); if (r && r.error) throw new Error(r.error); }
