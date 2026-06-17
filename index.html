@@ -1128,6 +1128,54 @@ table.patent-tbl.resumida .col-extra { display: none; }
 .ovs-cmp-h { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
 .ovs-cmp-h.ok { color: #1a7f37; }
 .ovs-cmp-h.warn { color: #b00020; }
+
+/* ===== Reparto VW (panel operativo) ===== */
+.reparto-sep { height: 1px; background: var(--vw-grey-2); margin: 22px 0 14px; }
+.reparto-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.reparto-head h3 { font-size: 16px; margin: 0; color: var(--vw-grey-5, #1a1a1a); }
+.reparto-sub { font-size: 13px; color: var(--vw-grey-3); }
+.reparto-alerta { background: #fdeaea; border: 1px solid #e9a8a8; color: #93231f; border-radius: 10px; padding: 10px 14px; font-size: 13px; font-weight: 500; margin-bottom: 10px; }
+.reparto-card { background: #fff; border: 1px solid var(--vw-grey-2); border-radius: 10px; margin-bottom: 10px; padding: 0; }
+.reparto-card.reparto-amber { background: #fff8ec; border-color: #e8c887; padding: 12px 14px; }
+.reparto-toggle { width: 100%; text-align: left; background: none; border: 0; padding: 10px 14px; font-size: 13px; font-weight: 600; color: var(--vw-blue); cursor: pointer; }
+.reparto-toggle:hover { background: var(--vw-grey-1); border-radius: 10px; }
+.reparto-box { padding: 0 14px 14px; }
+.reparto-box.hidden { display: none; }
+.reparto-hint { font-size: 12px; color: var(--vw-grey-3); margin: 4px 0 8px; }
+.reparto-textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--vw-grey-3); border-radius: 8px; padding: 8px 10px; font: 12px/1.4 monospace; resize: vertical; }
+.reparto-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.reparto-between { justify-content: space-between; }
+.reparto-msg { font-size: 12px; color: var(--vw-grey-4); }
+.reparto-amber-ttl { font-size: 13px; font-weight: 600; color: #8a5a00; }
+.reparto-colores-grid { display: grid; grid-template-columns: 1fr; gap: 6px; margin: 8px 0; }
+@media (min-width: 560px) { .reparto-colores-grid { grid-template-columns: 1fr 1fr; } }
+.reparto-color-row { display: flex; align-items: center; gap: 8px; }
+.reparto-cod { font: 12px monospace; color: #8a5a00; width: 52px; flex: 0 0 auto; }
+.reparto-color-row input { flex: 1; border: 1px solid var(--vw-grey-3); border-radius: 6px; padding: 4px 8px; font-size: 13px; }
+.reparto-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+.reparto-search { flex: 1; min-width: 170px; border: 1px solid var(--vw-grey-3); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
+.reparto-meses { font-size: 13px; color: var(--vw-grey-4); display: flex; align-items: center; gap: 6px; }
+.reparto-meses select { border: 1px solid var(--vw-grey-3); border-radius: 8px; padding: 6px 8px; font-size: 13px; }
+.reparto-tabla th { text-align: left; background: var(--vw-grey-1); color: var(--vw-grey-4); font-weight: 500; padding: 8px 10px; font-size: 12px; }
+.reparto-tabla td { padding: 8px 10px; border-top: 1px solid var(--vw-grey-1); vertical-align: top; }
+.reparto-tabla th.num, .reparto-tabla td.num { text-align: right; }
+.reparto-tr-alerta { background: #fdeaea; }
+.reparto-tr-ovs { background: #eef7f0; }
+.reparto-modelo { font-weight: 600; color: var(--vw-grey-5, #1a1a1a); }
+.reparto-fam { font-size: 10px; color: var(--vw-grey-3); }
+.reparto-vin { font: 11px monospace; color: var(--vw-grey-3); }
+.reparto-est-ok { color: #1a7f37; font-weight: 600; font-size: 12px; }
+.reparto-est-alerta { color: #93231f; font-weight: 600; font-size: 12px; }
+.reparto-est-wait { color: #8a5a00; font-size: 12px; }
+.reparto-acc { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+.reparto-link { background: none; border: 0; color: var(--vw-grey-4); text-decoration: underline; cursor: pointer; font-size: 12px; }
+.reparto-link:hover { color: var(--vw-grey-5, #000); }
+.reparto-ok { background: #1a7f37 !important; padding: 4px 12px !important; font-size: 12px !important; }
+.reparto-foot { font-size: 11px; color: var(--vw-grey-3); margin: 10px 0 0; }
+.reparto-barra { position: sticky; bottom: 0; background: #fff; border-top: 1px solid var(--vw-grey-2); padding: 10px; margin-top: 12px; z-index: 5; }
+.reparto-barra-inner { display: flex; align-items: center; gap: 12px; }
+.reparto-barra-inner span { flex: 1; font-size: 14px; }
+.reparto-comprar { background: var(--vw-blue) !important; }
 </style>
 
 <!-- pdf.js para parsing client-side de los NCs -->
@@ -3200,54 +3248,111 @@ function renderCompras() {
 }
 
 // =======================================================================
-// REPARTO · objetivo de compra vs comprado por mes (solapa top-level)
+// REPARTO · panel operativo de compra + objetivo/comprado por mes
 // =======================================================================
 //
-// Misma data que "Stock → Compras" (comprado = unidad con fecha de FC en el mes)
-// pero como solapa propia y con un agregado: para el MES EN CURSO suma lo que
-// Fer marcó "comprado" en el reparto de precios y todavía no entró a Oversoft
-// (repartoComprado.pendientes, del endpoint tipo=repartocomprado). Cuando esas
-// unidades aparecen en Oversoft, ya las cuenta la facturación → sin duplicar.
-// Objetivos: compartidos con Stock→Compras (hoja objetivos_compras).
+// Movido desde precios.titogonzalez.online: pegar el mail de VW → cargar,
+// marcar comprado (arma texto para VW), cruce Oversoft por VIN + alerta a 2
+// días, colores (código→nombre), OK que saca del reparto. Arriba, la
+// estadística objetivo vs comprado vs % (comprado = facturado por VW por
+// fechaFcIso + reparto marcado-comprado que aún NO está en Oversoft → sin
+// duplicar). Datos: tipo=reparto (items en vivo) + stock + objetivos.
 
-let repartoComprado = { mesKey: null, pendientes: 0, vins: [] };
+let repartoData = { periodo: null, items: [], colores: {} };
+let repartoSel = {};      // vin -> true (selección para comprar)
+let repartoMeses = 3;     // "Vendido" últimos N meses
+let repartoNombres = {};  // edición de nombres de color (codigo -> nombre)
+let repartoCopia = '';    // texto armado para mandar a VW
+let repartoMsg = '';      // mensaje del cargador
+
+function _repMesesVentana(n) {
+  const out = []; const now = new Date();
+  for (let i = 0; i < n; i++) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); out.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')); }
+  return out;
+}
+function _repVendido(v, n) { if (!v) return null; return _repMesesVentana(n).reduce((a, mk) => a + (Number(v[mk]) || 0), 0); }
 
 async function loadReparto(forzar) {
-  // 1) Stock (da el comprado/facturado por mes vía fechaFcIso)
   if (!stockData || forzar) { try { await loadStock(forzar); } catch (e) {} }
-  // 2) Reparto de precios no facturado (marcadas y sin Oversoft) del mes en curso
   if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') !== 0) {
     try {
-      const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=repartocomprado';
-      const res = await fetch(url);
+      const res = await fetch(APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=reparto');
       const d = await res.json();
-      if (d && !d.error) repartoComprado = d;
-    } catch (e) { /* sin reparto, mostramos solo facturado */ }
+      if (d && !d.error) repartoData = d;
+    } catch (e) { /* sin reparto, mostramos solo la estadística */ }
   }
-  // 3) Objetivos al día
   try { await loadObjetivosCompras(); } catch (e) {}
   renderReparto();
+}
+
+async function _repartoPost(obj) {
+  const body = new URLSearchParams();
+  body.set('payload', JSON.stringify(Object.assign({ token: APPS_SCRIPT_TOKEN }, obj)));
+  const res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+  return res.json();
+}
+
+function repartoToggleSel(vin) { if (repartoSel[vin]) delete repartoSel[vin]; else repartoSel[vin] = true; repartoRenderBarra(); }
+function repartoRenderBarra() {
+  const bar = document.getElementById('repartoBarra'); if (!bar) return;
+  const n = Object.keys(repartoSel).length;
+  if (!n) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+  bar.style.display = 'block';
+  bar.innerHTML = '<div class="reparto-barra-inner"><span><strong>' + n + '</strong> unidad' + (n !== 1 ? 'es' : '') + ' seleccionada' + (n !== 1 ? 's' : '') + '</span>'
+    + '<button class="reparto-link" onclick="repartoSel={};renderReparto()">Limpiar</button>'
+    + '<button class="refresh reparto-comprar" onclick="repartoComprar()">Comprar seleccionadas (' + n + ')</button></div>';
+}
+function repartoToggleBox(id, btn) {
+  const el = document.getElementById(id); if (!el) return;
+  const oculto = el.classList.toggle('hidden');
+  if (btn) btn.textContent = (oculto ? '▸' : '▾') + btn.textContent.slice(1);
+}
+
+async function repartoCargar() {
+  const ta = document.getElementById('repartoTexto');
+  const btn = document.getElementById('repartoBtnCargar'); if (btn) btn.disabled = true;
+  repartoMsg = 'Cargando…'; const m = document.querySelector('.reparto-msg'); if (m) m.textContent = repartoMsg;
+  const r = await _repartoPost({ accion: 'cargarreparto', texto: ta ? ta.value : '' });
+  if (r && r.ok) { repartoMsg = '✓ ' + r.nuevos + ' nuevas, ' + r.total + ' en total'; await loadReparto(true); }
+  else { repartoMsg = 'Error: ' + ((r && r.error) || 'falló'); if (btn) btn.disabled = false; renderReparto(); }
+}
+async function repartoComprar() {
+  const vins = Object.keys(repartoSel); if (!vins.length) return;
+  const sel = repartoData.items.filter(i => repartoSel[i.vin]);
+  repartoCopia = ['Modelo\tChasis (VIN)\tColor'].concat(sel.map(i => i.descripcion + '\t' + i.vin + '\t' + i.color_nombre)).join('\n');
+  repartoSel = {};
+  await _repartoPost({ accion: 'comprarreparto', vins: vins });
+  await loadReparto(true);
+}
+async function repartoDeshacer(vin) { await _repartoPost({ accion: 'deshacerreparto', vin: vin }); await loadReparto(true); }
+async function repartoOk(vin) { await _repartoPost({ accion: 'okreparto', vin: vin }); await loadReparto(true); }
+async function repartoGuardarColores(codigos) {
+  const entries = codigos.map(c => ({ codigo: c, nombre: (repartoNombres[c] !== undefined ? repartoNombres[c] : (repartoData.colores[c] || '')) }));
+  await _repartoPost({ accion: 'guardarcoloresreparto', entries: entries });
+  repartoNombres = {};
+  await loadReparto(true);
+}
+function repartoCopiar() {
+  const ta = document.getElementById('repartoCopiaTa'); if (!ta) return;
+  ta.select();
+  try { navigator.clipboard.writeText(ta.value); } catch (e) { try { document.execCommand('copy'); } catch (e2) {} }
+  const b = document.getElementById('repartoBtnCopiar'); if (b) b.textContent = '✓ Copiado';
 }
 
 function renderReparto() {
   const wrap = document.getElementById('repartoContent');
   if (!wrap) return;
-  if (!stockData || !Array.isArray(stockData.unidades)) {
-    wrap.innerHTML = '<div class="empty">Cargando…</div>';
-    return;
-  }
-  // Comprado por mes = facturado por VW (unidad con fecha de FC en el mes).
+
+  // ---- Estadística: objetivo vs comprado por mes ----
   const porMes = {};
-  stockData.unidades.forEach(u => {
-    if (!u.fechaFcIso) return;
-    porMes[u.fechaFcIso.slice(0, 7)] = (porMes[u.fechaFcIso.slice(0, 7)] || 0) + 1;
-  });
+  if (stockData && Array.isArray(stockData.unidades)) {
+    stockData.unidades.forEach(u => { if (u.fechaFcIso) porMes[u.fechaFcIso.slice(0, 7)] = (porMes[u.fechaFcIso.slice(0, 7)] || 0) + 1; });
+  }
   const objetivos = getObjetivosCompras();
   const mesHoy = _mesKeyHoy();
-
-  // Mes en curso: facturado + reparto de precios pendiente (no en Oversoft).
+  const items = repartoData.items || [];
+  const repPend = items.filter(i => i.estado_compra === 'comprado' && !i.enOversoft).length;
   const facturadoActual = porMes[mesHoy] || 0;
-  const repPend = (repartoComprado && repartoComprado.mesKey === mesHoy) ? (repartoComprado.pendientes || 0) : 0;
   const comprasActual = facturadoActual + repPend;
   const objActual = objetivos[mesHoy] || 0;
   const pctActual = objActual ? (comprasActual / objActual * 100) : 0;
@@ -3255,31 +3360,22 @@ function renderReparto() {
 
   let html = '';
   html += '<div class="compras-mes-actual">';
-  html += '  <div class="titulo">Mes en curso</div>';
-  html += '  <div class="mes">' + _mesLabel(mesHoy) + '</div>';
-  html += '  <div class="compras-obj-row">';
-  html += '    <label>Objetivo de compra:</label>';
-  html += '    <input type="number" min="0" step="1" value="' + (objActual || '') + '" onchange="setObjetivoCompra(\'' + mesHoy + '\', this.value)" placeholder="—">';
-  html += '    <span style="font-size:12px;color:var(--vw-grey-3)">unidades</span>';
-  html += '  </div>';
+  html += '  <div class="titulo">Mes en curso</div><div class="mes">' + _mesLabel(mesHoy) + '</div>';
+  html += '  <div class="compras-obj-row"><label>Objetivo de compra:</label>';
+  html += '    <input type="number" min="0" step="1" value="' + (objActual || '') + '" onchange="setObjetivoCompra(\'' + mesHoy + '\', this.value)" placeholder="—"><span style="font-size:12px;color:var(--vw-grey-3)">unidades</span></div>';
   if (objActual > 0) {
-    const cls = _pctCls(pctActual);
-    const w = Math.min(100, pctActual);
-    html += '  <div class="compras-progress-block">';
-    html += '    <div class="compras-progress-line"><strong>' + comprasActual + '</strong> / ' + objActual + ' compras · <strong>' + pctActual.toFixed(1) + '%</strong></div>';
+    const cls = _pctCls(pctActual); const w = Math.min(100, pctActual);
+    html += '  <div class="compras-progress-block"><div class="compras-progress-line"><strong>' + comprasActual + '</strong> / ' + objActual + ' compras · <strong>' + pctActual.toFixed(1) + '%</strong></div>';
     html += '    <div class="compras-progress-bar"><div class="compras-progress-fill ' + cls + '" style="width:' + w + '%"></div></div>';
-    if (faltanActual > 0) html += '    <div class="compras-faltan">Faltan <strong>' + faltanActual + '</strong> compras para llegar al objetivo</div>';
-    else                  html += '    <div class="compras-faltan" style="color:#2d6a4f;font-weight:600">✓ Objetivo alcanzado · superado por ' + (comprasActual - objActual) + '</div>';
+    html += (faltanActual > 0 ? '    <div class="compras-faltan">Faltan <strong>' + faltanActual + '</strong> compras para llegar al objetivo</div>'
+                              : '    <div class="compras-faltan" style="color:#2d6a4f;font-weight:600">✓ Objetivo alcanzado · superado por ' + (comprasActual - objActual) + '</div>');
     html += '  </div>';
   } else {
     html += '  <div class="compras-progress-line"><strong>' + comprasActual + '</strong> compras este mes · Cargá el objetivo para ver el avance</div>';
   }
-  if (repPend > 0) {
-    html += '  <div class="compras-faltan" style="color:var(--vw-grey-3)">' + facturadoActual + ' facturadas + <strong>' + repPend + '</strong> marcada' + (repPend !== 1 ? 's' : '') + ' en el reparto (todavía sin entrar a Oversoft).</div>';
-  }
+  if (repPend > 0) html += '  <div class="compras-faltan" style="color:var(--vw-grey-3)">' + facturadoActual + ' facturadas + <strong>' + repPend + '</strong> marcada' + (repPend !== 1 ? 's' : '') + ' en el reparto (todavía sin entrar a Oversoft).</div>';
   html += '</div>';
 
-  // Histórico mensual desde marzo 2026 (cuando arrancamos a llevar objetivos).
   const MES_INICIO = '2026-03';
   const mesesUnicos = new Set([...Object.keys(porMes), ...Object.keys(objetivos)]);
   mesesUnicos.delete(mesHoy);
@@ -3287,20 +3383,105 @@ function renderReparto() {
   if (mesesHist.length) {
     html += '<div class="compras-historico-titulo">Histórico mensual</div>';
     mesesHist.forEach(mk => {
-      const compras = porMes[mk] || 0;
-      const obj = objetivos[mk] || 0;
+      const compras = porMes[mk] || 0; const obj = objetivos[mk] || 0;
       const pct = obj ? (compras / obj * 100) : null;
-      const pctCls = pct !== null ? _pctCls(pct) : 'none';
-      const pctTxt = pct !== null ? pct.toFixed(1) + '%' : 'sin obj.';
-      html += '<div class="compras-hist-row">';
-      html += '  <div class="compras-hist-mes">' + _mesLabel(mk) + '</div>';
-      html += '  <div class="compras-hist-num"><strong>' + compras + '</strong> / </div>';
-      html += '  <input class="compras-hist-input" type="number" min="0" step="1" value="' + (obj || '') + '" onchange="setObjetivoCompra(\'' + mk + '\', this.value)" placeholder="obj.">';
-      html += '  <div class="compras-hist-pct ' + pctCls + '">' + pctTxt + '</div>';
-      html += '</div>';
+      html += '<div class="compras-hist-row"><div class="compras-hist-mes">' + _mesLabel(mk) + '</div><div class="compras-hist-num"><strong>' + compras + '</strong> / </div>'
+        + '<input class="compras-hist-input" type="number" min="0" step="1" value="' + (obj || '') + '" onchange="setObjetivoCompra(\'' + mk + '\', this.value)" placeholder="obj.">'
+        + '<div class="compras-hist-pct ' + (pct !== null ? _pctCls(pct) : 'none') + '">' + (pct !== null ? pct.toFixed(1) + '%' : 'sin obj.') + '</div></div>';
     });
   }
+
+  // ---- Panel operativo ----
+  const pend = items.filter(i => i.estado_compra === 'pendiente').length;
+  const comprados = items.filter(i => i.estado_compra === 'comprado').length;
+  const alertas = items.filter(i => i.alerta).length;
+  const colores = repartoData.colores || {};
+  const codigos = [...new Set(items.map(i => i.color_codigo).filter(Boolean))];
+  const nuevos = codigos.filter(c => !colores[c]).sort();
+  const conocidos = codigos.filter(c => colores[c]).sort();
+
+  html += '<div class="reparto-sep"></div>';
+  html += '<div class="reparto-head"><h3>Reparto de VW · ' + _mesLabel(repartoData.periodo || mesHoy) + '</h3><span class="reparto-sub">' + pend + ' pendientes · ' + comprados + ' comprados</span></div>';
+  if (alertas > 0) html += '<div class="reparto-alerta">⚠ ' + alertas + ' unidad' + (alertas !== 1 ? 'es' : '') + ' comprada' + (alertas !== 1 ? 's' : '') + ' hace 2 días o más sin aparecer en Oversoft. Revisá con Valeria.</div>';
+
+  // Cargar mail
+  html += '<div class="reparto-card"><button class="reparto-toggle" onclick="repartoToggleBox(\'repartoCargarBox\', this)">▸ Cargar reparto (pegá la tabla del mail de VW)</button>';
+  html += '<div id="repartoCargarBox" class="reparto-box hidden"><p class="reparto-hint">Se suman las nuevas; los VIN repetidos se ignoran. Al cambiar de mes, se renueva.</p>';
+  html += '<textarea id="repartoTexto" rows="5" class="reparto-textarea" placeholder="Canal&#9;Zona&#9;C. Entrega&#9;Modelo&#9;MY&#9;Familia&#9;Descripción&#9;Color&#9;VIN&#9;Comisión&#9;Status"></textarea>';
+  html += '<div class="reparto-row"><button id="repartoBtnCargar" class="refresh" onclick="repartoCargar()">Cargar reparto</button><span class="reparto-msg">' + escapeHtml(repartoMsg) + '</span></div></div></div>';
+
+  // Colores nuevos
+  if (nuevos.length) {
+    html += '<div class="reparto-card reparto-amber"><div class="reparto-amber-ttl">🎨 ' + nuevos.length + ' color' + (nuevos.length !== 1 ? 'es nuevos' : ' nuevo') + ' sin identificar</div><p class="reparto-hint">Poné el nombre y queda guardado. Mientras tanto se muestra el código.</p><div class="reparto-colores-grid">';
+    nuevos.forEach(c => { html += '<div class="reparto-color-row"><span class="reparto-cod">' + escapeHtml(c) + '</span><input value="' + escapeHtml(repartoNombres[c] !== undefined ? repartoNombres[c] : '') + '" placeholder="nombre del color" oninput="repartoNombres[\'' + c + '\']=this.value"></div>'; });
+    html += '</div><button class="refresh" onclick=\'repartoGuardarColores(' + JSON.stringify(nuevos) + ')\'>Guardar colores nuevos</button></div>';
+  }
+  // Colores conocidos
+  if (conocidos.length) {
+    html += '<div class="reparto-card"><button class="reparto-toggle" onclick="repartoToggleBox(\'repartoColoresBox\', this)">▸ Editar colores ya cargados (' + conocidos.length + ')</button><div id="repartoColoresBox" class="reparto-box hidden"><p class="reparto-hint">Corregí un nombre si hace falta. Vacío = borra el mapeo guardado.</p><div class="reparto-colores-grid">';
+    conocidos.forEach(c => { html += '<div class="reparto-color-row"><span class="reparto-cod">' + escapeHtml(c) + '</span><input value="' + escapeHtml(repartoNombres[c] !== undefined ? repartoNombres[c] : (colores[c] || '')) + '" placeholder="nombre del color" oninput="repartoNombres[\'' + c + '\']=this.value"></div>'; });
+    html += '</div><button class="refresh" onclick=\'repartoGuardarColores(' + JSON.stringify(conocidos) + ')\'>Guardar cambios</button></div></div>';
+  }
+  // Copia para VW
+  if (repartoCopia) {
+    html += '<div class="reparto-card reparto-amber"><div class="reparto-row reparto-between"><span class="reparto-amber-ttl">Unidades para mandar a VW (modelo · chasis · color)</span><button class="reparto-link" onclick="repartoCopia=\'\';renderReparto()">cerrar ✕</button></div>';
+    html += '<textarea id="repartoCopiaTa" readonly rows="' + Math.min(10, repartoCopia.split('\n').length) + '" class="reparto-textarea">' + escapeHtml(repartoCopia) + '</textarea>';
+    html += '<button id="repartoBtnCopiar" class="refresh" onclick="repartoCopiar()">Copiar</button></div>';
+  }
+
+  // Toolbar + tabla
+  html += '<div class="reparto-toolbar"><input type="search" id="repartoBusqueda" placeholder="Buscar modelo..." oninput="repartoFiltrar()" class="reparto-search">';
+  html += '<label class="reparto-meses">Vendido: <select onchange="repartoMeses=Number(this.value);repartoFiltrar()">'
+    + '<option value="3"' + (repartoMeses === 3 ? ' selected' : '') + '>últ. 3 meses</option>'
+    + '<option value="2"' + (repartoMeses === 2 ? ' selected' : '') + '>últ. 2 meses</option>'
+    + '<option value="1"' + (repartoMeses === 1 ? ' selected' : '') + '>mes actual</option></select></label></div>';
+  html += '<div id="repartoTablaWrap"></div>';
+  html += '<p class="reparto-foot">Tildá las unidades a comprar y "Comprar seleccionadas": se marcan como compradas y te arma el texto para VW. Quedan acá hasta aparecer en Oversoft (cruce por VIN); si no aparecen en 2 días, en rojo; cuando aparecen, "OK" y salen.</p>';
+  html += '<div id="repartoBarra" class="reparto-barra" style="display:none"></div>';
+
   wrap.innerHTML = html;
+  repartoFiltrar();
+  repartoRenderBarra();
+}
+
+function repartoFiltrar() {
+  const wrap = document.getElementById('repartoTablaWrap'); if (!wrap) return;
+  const qEl = document.getElementById('repartoBusqueda');
+  const q = (qEl ? qEl.value : '').trim().toLowerCase();
+  const all = repartoData.items || [];
+  const items = all.filter(i => !q || (i.descripcion || '').toLowerCase().includes(q) || (i.familia || '').toLowerCase().includes(q));
+  if (!items.length) {
+    wrap.innerHTML = '<div class="empty">' + (all.length === 0 ? 'Todavía no hay reparto cargado para este mes. Pegá el mail de VW arriba.' : 'No hay unidades que coincidan.') + '</div>';
+    return;
+  }
+  let h = '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
+    + '<th></th><th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num">Vendido</th><th>Estado</th><th class="num">Acción</th></tr></thead><tbody>';
+  items.forEach(it => {
+    const rowCls = it.alerta ? 'reparto-tr-alerta' : (it.enOversoft ? 'reparto-tr-ovs' : '');
+    const vend = _repVendido(it.ventasPorMes, repartoMeses);
+    h += '<tr class="' + rowCls + '">';
+    h += '<td>' + (it.estado_compra === 'pendiente' ? '<input type="checkbox" ' + (repartoSel[it.vin] ? 'checked' : '') + ' onchange="repartoToggleSel(\'' + it.vin + '\')">' : '') + '</td>';
+    h += '<td><div class="reparto-modelo">' + escapeHtml((it.descripcion || '').replace(/^VW /, '')) + '</div><div class="reparto-fam">' + escapeHtml(it.familia || '') + '</div></td>';
+    h += '<td>' + escapeHtml(it.color_nombre || '') + (it.color_nombre === it.color_codigo ? ' <span class="reparto-fam">(sin nombre)</span>' : '') + '</td>';
+    h += '<td class="reparto-vin">' + escapeHtml(it.vin) + '</td>';
+    h += '<td class="num">' + (it.stockActual == null ? '<span class="reparto-fam">s/d</span>' : it.stockActual) + '</td>';
+    h += '<td class="num">' + (vend == null ? '<span class="reparto-fam">s/d</span>' : vend) + '</td>';
+    let estado;
+    if (it.estado_compra === 'pendiente') estado = '<span class="reparto-fam">' + escapeHtml(it.status || 'pendiente') + '</span>';
+    else if (it.alerta) estado = '<span class="reparto-est-alerta">⚠ comprado hace ' + it.diasComprado + 'd · sin Oversoft</span>';
+    else if (it.enOversoft) estado = '<span class="reparto-est-ok">✓ en Oversoft' + (it.oversoft && it.oversoft.serie ? ' · serie ' + escapeHtml(it.oversoft.serie) : '') + (it.oversoft && it.oversoft.fechaRecepcion ? ' · ' + it.oversoft.fechaRecepcion : '') + '</span>';
+    else estado = '<span class="reparto-est-wait">comprado · esperando Oversoft' + (it.diasComprado != null ? ' (' + it.diasComprado + 'd)' : '') + '</span>';
+    h += '<td>' + estado + '</td>';
+    let acc = '';
+    if (it.estado_compra !== 'pendiente') {
+      acc = '<div class="reparto-acc">';
+      if (it.enOversoft) acc += '<button class="refresh reparto-ok" onclick="repartoOk(\'' + it.vin + '\')" title="Cruce OK: sale del reparto">OK</button>';
+      acc += '<button class="reparto-link" onclick="repartoDeshacer(\'' + it.vin + '\')">Deshacer</button></div>';
+    }
+    h += '<td class="num">' + acc + '</td></tr>';
+  });
+  h += '</tbody></table></div></div>';
+  wrap.innerHTML = h;
 }
 
 // =======================================================================

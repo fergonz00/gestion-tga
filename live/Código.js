@@ -69,6 +69,7 @@ function doGet(e) {
     if (tipo === 'objetivos')         return jsonResponse(getObjetivosPat());       // sin cache (es chico)
     if (tipo === 'objetivoscompras')  return jsonResponse(getObjetivosCompras());   // sin cache (es chico)
     if (tipo === 'repartocomprado')   return jsonResponse(getRepartoComprado());     // sin cache (en vivo): reparto de precios no facturado aún
+    if (tipo === 'reparto')           return jsonResponse(getReparto());             // sin cache (en vivo): panel operativo de reparto VW
     if (tipo === 'industria')         return jsonResponse(getIndustria());          // sin cache (es chico)
     if (tipo === 'ventasdebug')     return jsonResponse(getVentasDebug(params));  // sin cache
     if (tipo === 'oversoft')        return jsonResponse(getOversoft(params));     // proxy a la réplica Supabase
@@ -1264,6 +1265,11 @@ function doPost(e) {
     if (accion === 'eliminar')             return jsonResponse(deletePagoVW(body.ncNum));
     if (accion === 'setobjetivo')          return jsonResponse(setObjetivoPat(body));
     if (accion === 'setobjetivocompra')    return jsonResponse(setObjetivoCompra(body));
+    if (accion === 'cargarreparto')        return jsonResponse(cargarReparto(body));
+    if (accion === 'comprarreparto')       return jsonResponse(marcarComprado(body));
+    if (accion === 'deshacerreparto')      return jsonResponse(desmarcarComprado(body));
+    if (accion === 'okreparto')            return jsonResponse(darOkReparto(body));
+    if (accion === 'guardarcoloresreparto') return jsonResponse(guardarColoresReparto(body));
     if (accion === 'setindustria')         return jsonResponse(setIndustria(body));
     if (accion === 'setbaratitosnapshot')  return jsonResponse(saveBaratitoSnapshots(body.snapshots || []));
     if (accion === 'resetbaratito')        return jsonResponse(resetBaratitoBaseline());
@@ -2635,6 +2641,197 @@ function getRepartoComprado() {
   }
   var pend = vins.filter(function (v) { return !enOvs[v]; });
   return { mesKey: mesKey, pendientes: pend.length, vins: pend };
+}
+
+// =======================================================================
+// REPARTO VW — panel operativo de compra (movido desde precios.titogonzalez)
+// =======================================================================
+// VW manda por mail las unidades ofrecidas (una fila por VIN). Flujo:
+//   pendiente → [Comprar] → comprado → aparece en Oversoft (cruce por VIN,
+//   1-2 días vía Valeria) → [OK] → sale del reparto. Comprado y sin Oversoft a
+//   2 días = alerta. Dedup por VIN. periodo = mes (la vista filtra el actual).
+//   El estado_compra se PRESERVA al re-pegar (no va en el upsert).
+// Tabla reparto_vw (wjfgl). Colores: reparto_colores. Lectura con anon
+// (_supaGet); escritura con la service key (headers _repartoWHeaders, hW).
+
+// Nombres de color "horneados": códigos de VW ya conocidos. El panel solo
+// pregunta por códigos que no estén acá ni en reparto_colores. La DB pisa esto.
+var REPARTO_COLORES_BASE = {
+  '0Q0Q':'Blanco puro','0Q2T':'Blanco Cristal / Negro Universal','1B1B':'Beige Mojawe Metalizado',
+  '1B2T':'Beige Mojawe Metalizado / Negro Profundo efecto perla','2R2R':'Gris Platino',
+  '2RA1':'Gris platino / negro','2T2T':'Negro Profundo efecto perla','3X3X':'Gris Salvia',
+  '3XA1':'Gris salvia techo negro','5T5T':'Azul Egeo','6K6K':'Rojo Sunset','6U6U':'Blanco Marfil',
+  '6UA1':'Marfil / negro universal (bitono)','7Z7Z':'Plata Sirius','9711':'Gris Artico',
+  '9728':'Gris Artico','A1A1':'Negro Universal','B4A1':'Blanco Cristal / Negro Universal',
+  'B4B4':'Blanco Cristal','C2A1':'Gris volcán / Negro Universal','C2C2':'Gris Volcán','D7':'Azul',
+  'D7A1':'Azul Turbo / Negro Universal','D7D7':'Azul Turbo','H7H7':'Azul Atlántico metalizado',
+  'I8A1':'Titanio techo negro','I8I8':'Gris Titanio','K22T':'Plata pirita techo negro',
+  'K2A1':'Plata Pirita / Negro','K2K2':'Plata Pirita','L0L0':'Rojo hypernova',
+  'L4A1':'Azul con techo negro','L4L4':'Azul Malibu','R4A1':'gris Alba','R4R4':'gris alba',
+  'U1U1':'Azul Pacifico','X3X3':'Gris Indy'
+};
+
+function _repartoPeriodo() { return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM'); }
+function _repartoWHeaders() {
+  var svc = PropertiesService.getScriptProperties().getProperty('SUPA_SERVICE');
+  return { apikey: svc, Authorization: 'Bearer ' + svc, 'Content-Type': 'application/json' };
+}
+function _repartoInList(arr) { return arr.map(function (s) { return '"' + String(s).trim().toUpperCase() + '"'; }).join(','); }
+// Réplica del _ntrim del motor (para cruzar por NOMBRE el reparto con ventas/stock).
+function _repartoNtrim(s) {
+  s = String(s || '').toLowerCase();
+  s = s.replace(/bi[\s-]*tono/g, 'bitono').replace(/\b(vw|nuevo)\b/g, '').replace(/\bmtg([123])\b/g, 'mt');
+  s = s.replace(/\bmy2[0-9]\b/g, '').replace(/\b20[0-9][0-9]\b/g, '').replace(/\bg[123]\b/g, '');
+  s = s.replace(/\bph[ag]\b/g, '').replace(/\b(se|cd|l)\b/g, '');
+  return s.replace(/[^a-z0-9]/g, '');
+}
+
+function parseReparto(texto) {
+  var out = [], vistos = {};
+  var lineas = String(texto || '').split(/\r?\n/);
+  for (var i = 0; i < lineas.length; i++) {
+    if (!lineas[i].trim()) continue;
+    var f = lineas[i].split('\t').map(function (x) { return x.trim(); });
+    if (f.length < 9) continue;
+    if ((f[0] || '').toLowerCase() === 'canal') continue;
+    var vin = (f[8] || '').toUpperCase();
+    if (!vin || vin.length < 11 || vin === 'VIN') continue;
+    if (vistos[vin]) continue;
+    vistos[vin] = true;
+    var com = Number((f[9] || '').replace(/[^\d.-]/g, ''));
+    out.push({
+      canal: f[0] || '', zona: f[1] || '', centrega: f[2] || '', modelo_codigo: f[3] || '',
+      my: f[4] || '', familia: f[5] || '', descripcion: f[6] || '', color_codigo: f[7] || '',
+      vin: vin, comision: (isFinite(com) && com > 0) ? com : null, status: f[10] || ''
+    });
+  }
+  return out;
+}
+
+function cargarReparto(body) {
+  var rows = parseReparto(body && body.texto);
+  var periodo = _repartoPeriodo();
+  if (!rows.length) return { ok: false, error: 'No se reconoció ninguna fila (¿pegaste la tabla con tabulaciones?)', nuevos: 0, total: 0, periodo: periodo };
+  var vins = rows.map(function (r) { return r.vin; });
+  var ya = {};
+  try { (_supaGet('/reparto_vw?select=vin&vin=in.(' + _repartoInList(vins) + ')') || []).forEach(function (r) { ya[r.vin] = true; }); } catch (e) {}
+  var nuevos = rows.filter(function (r) { return !ya[r.vin]; }).length;
+  var ahora = new Date().toISOString();
+  var payload = rows.map(function (r) { return Object.assign({}, r, { periodo: periodo, actualizado_at: ahora }); });
+  // NO incluimos estado_compra/comprado_at → se preservan en los repetidos.
+  var res = UrlFetchApp.fetch(SUPA_URL + '/reparto_vw?on_conflict=vin', {
+    method: 'post', headers: Object.assign(_repartoWHeaders(), { Prefer: 'resolution=merge-duplicates,return=minimal' }),
+    payload: JSON.stringify(payload), muteHttpExceptions: true });
+  if (res.getResponseCode() >= 300) return { ok: false, error: 'supa ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 160), nuevos: 0, total: rows.length, periodo: periodo };
+  return { ok: true, nuevos: nuevos, total: rows.length, periodo: periodo };
+}
+
+function marcarComprado(body) {
+  var vins = (body && body.vins) || [];
+  if (!vins.length) return { ok: true };
+  var res = UrlFetchApp.fetch(SUPA_URL + '/reparto_vw?vin=in.(' + _repartoInList(vins) + ')', {
+    method: 'patch', headers: Object.assign(_repartoWHeaders(), { Prefer: 'return=minimal' }),
+    payload: JSON.stringify({ estado_compra: 'comprado', comprado_at: new Date().toISOString() }), muteHttpExceptions: true });
+  return res.getResponseCode() < 300 ? { ok: true } : { ok: false, error: 'supa ' + res.getResponseCode() };
+}
+function desmarcarComprado(body) {
+  var vin = String((body && body.vin) || '').trim().toUpperCase();
+  if (!vin) return { ok: false, error: 'falta vin' };
+  var res = UrlFetchApp.fetch(SUPA_URL + '/reparto_vw?vin=eq.' + encodeURIComponent(vin), {
+    method: 'patch', headers: Object.assign(_repartoWHeaders(), { Prefer: 'return=minimal' }),
+    payload: JSON.stringify({ estado_compra: 'pendiente', comprado_at: null }), muteHttpExceptions: true });
+  return res.getResponseCode() < 300 ? { ok: true } : { ok: false, error: 'supa ' + res.getResponseCode() };
+}
+function darOkReparto(body) {
+  var vin = String((body && body.vin) || '').trim().toUpperCase();
+  if (!vin) return { ok: false, error: 'falta vin' };
+  var res = UrlFetchApp.fetch(SUPA_URL + '/reparto_vw?vin=eq.' + encodeURIComponent(vin), {
+    method: 'patch', headers: Object.assign(_repartoWHeaders(), { Prefer: 'return=minimal' }),
+    payload: JSON.stringify({ estado_compra: 'ok' }), muteHttpExceptions: true });
+  return res.getResponseCode() < 300 ? { ok: true } : { ok: false, error: 'supa ' + res.getResponseCode() };
+}
+
+function guardarColoresReparto(body) {
+  var entries = (body && body.entries) || [];
+  var aGuardar = [], aBorrar = [];
+  entries.forEach(function (e) {
+    var cod = String(e.codigo || '').trim(), nom = String(e.nombre || '').trim();
+    if (!cod) return;
+    if (nom) aGuardar.push({ codigo: cod, nombre: nom, actualizado_at: new Date().toISOString() });
+    else aBorrar.push(cod);
+  });
+  if (aBorrar.length) {
+    var rd = UrlFetchApp.fetch(SUPA_URL + '/reparto_colores?codigo=in.(' + aBorrar.map(function (c) { return '"' + c + '"'; }).join(',') + ')',
+      { method: 'delete', headers: _repartoWHeaders(), muteHttpExceptions: true });
+    if (rd.getResponseCode() >= 300) return { ok: false, error: 'supa del ' + rd.getResponseCode() };
+  }
+  if (aGuardar.length) {
+    var ru = UrlFetchApp.fetch(SUPA_URL + '/reparto_colores?on_conflict=codigo',
+      { method: 'post', headers: Object.assign(_repartoWHeaders(), { Prefer: 'resolution=merge-duplicates,return=minimal' }), payload: JSON.stringify(aGuardar), muteHttpExceptions: true });
+    if (ru.getResponseCode() >= 300) return { ok: false, error: 'supa up ' + ru.getResponseCode() };
+  }
+  return { ok: true };
+}
+
+// Reparto del mes (sin los OK) enriquecido con cruce Oversoft + nombres de color
+// + ventas/stock por modelo (motor). Lo consume el panel operativo de gestión.
+function getReparto() {
+  var periodo = _repartoPeriodo();
+  var rows = [];
+  try {
+    rows = _supaGet('/reparto_vw?select=vin,canal,zona,centrega,modelo_codigo,my,familia,descripcion,color_codigo,comision,status,estado_compra,comprado_at&periodo=eq.' + periodo + '&estado_compra=neq.ok') || [];
+  } catch (e) {}
+
+  var coloresDb = {};
+  try { (_supaGet('/reparto_colores?select=codigo,nombre') || []).forEach(function (c) { coloresDb[c.codigo] = c.nombre; }); } catch (e) {}
+  var colores = Object.assign({}, REPARTO_COLORES_BASE, coloresDb);
+
+  // Ventas + stock por modelo (cruce por NOMBRE con el motor).
+  var motorByNorm = {};
+  try {
+    var motor = _cached('motor', CACHE_TTL_SEC, false, getBaratitoMotor);
+    (motor.modelos || []).forEach(function (m) {
+      var v = { ventasPorMes: m.ventasPorMes, stock: m.stock };
+      if (m.modelo) motorByNorm[_repartoNtrim(m.modelo)] = v;
+      if (m.nombreCorto) motorByNorm[_repartoNtrim(m.nombreCorto)] = v;
+    });
+  } catch (e) {}
+
+  // Cruce Oversoft (por VIN) para las compradas.
+  var compradoVins = rows.filter(function (r) { return r.estado_compra === 'comprado'; }).map(function (r) { return r.vin; });
+  var cruce = {};
+  if (compradoVins.length) {
+    var h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
+    for (var i = 0; i < compradoVins.length; i += 60) {
+      var lote = compradoVins.slice(i, i + 60).map(function (s) { return '"' + s + '"'; }).join(',');
+      var res = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=serie,vin,fechaderecepcion,preventa&vin=in.(' + encodeURIComponent(lote) + ')', h);
+      if (res.getResponseCode() < 300) {
+        JSON.parse(res.getContentText()).forEach(function (u) {
+          cruce[String(u.vin || '').toUpperCase()] = {
+            serie: String(u.serie || '').trim(),
+            fechaRecepcion: u.fechaderecepcion ? String(u.fechaderecepcion).slice(0, 10) : null,
+            preventa: u.preventa ? String(u.preventa) : null
+          };
+        });
+      }
+    }
+  }
+
+  rows.sort(function (a, b) { return (a.familia || '').localeCompare(b.familia || '') || (a.descripcion || '').localeCompare(b.descripcion || ''); });
+  var now = Date.now();
+  var items = rows.map(function (r) {
+    var ov = cruce[String(r.vin).toUpperCase()] || null;
+    var dias = r.comprado_at ? Math.floor((now - new Date(r.comprado_at).getTime()) / 86400000) : null;
+    var mm = motorByNorm[_repartoNtrim(r.descripcion)];
+    return Object.assign({}, r, {
+      color_nombre: colores[r.color_codigo] || r.color_codigo,
+      ventasPorMes: mm ? mm.ventasPorMes : null,
+      stockActual: mm ? mm.stock : null,
+      enOversoft: !!ov, oversoft: ov, diasComprado: dias,
+      alerta: r.estado_compra === 'comprado' && !ov && dias !== null && dias >= 2
+    });
+  });
+  return { periodo: periodo, items: items, colores: colores };
 }
 
 // =======================================================================
