@@ -1172,8 +1172,11 @@ table.patent-tbl.resumida .col-extra { display: none; }
 .reparto-link:hover { color: var(--vw-grey-5, #000); }
 .reparto-ok { background: #1a7f37 !important; padding: 4px 12px !important; font-size: 12px !important; }
 .reparto-foot { font-size: 11px; color: var(--vw-grey-3); margin: 10px 0 0; }
-.reparto-barra { position: sticky; bottom: 0; background: #fff; border-top: 1px solid var(--vw-grey-2); padding: 10px; margin-top: 12px; z-index: 5; }
-.reparto-barra-inner { display: flex; align-items: center; gap: 12px; }
+.reparto-barra { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-top: 1px solid var(--vw-grey-2); padding: 10px 14px; z-index: 50; box-shadow: 0 -2px 12px rgba(0,0,0,.10); }
+.reparto-barra-inner { display: flex; align-items: center; gap: 12px; max-width: 1100px; margin: 0 auto; }
+.reparto-concil { font-size: 11px; color: var(--vw-grey-4); margin-top: 4px; line-height: 1.5; }
+.reparto-concil .ok { color: #1a7f37; font-weight: 600; }
+.reparto-concil .warn { color: #b00020; font-weight: 600; }
 .reparto-barra-inner span { flex: 1; font-size: 14px; }
 .reparto-comprar { background: var(--vw-blue) !important; }
 .reparto-stock-btn { background: none; border: 0; color: var(--vw-blue); font-weight: 600; cursor: pointer; font-size: 13px; padding: 0; }
@@ -1992,11 +1995,35 @@ function _cvwMesKey(mes) {
 // vto "26-mar" / "08-ene" → clave ordenable (mes*100+día). Sin fecha → al final.
 const _CVW_MESAB = { ene: 1, feb: 2, mar: 3, abr: 4, may: 5, jun: 6, jul: 7, ago: 8, sep: 9, set: 9, oct: 10, nov: 11, dic: 12 };
 function _cvwVenceKey(v) {
-  const p = String(v || '').toLowerCase().trim().split('-');
-  if (p.length < 2) return 999999;
-  const d = parseInt(p[0], 10) || 0;
-  const m = _CVW_MESAB[(p[1] || '').slice(0, 3)] || 0;
-  return m ? (m * 100 + d) : 999999;
+  const iso = _cvwToISO(v);
+  return iso ? Number(iso.replace(/-/g, '')) : 999999999;   // yyyymmdd: ordena bien y entre años
+}
+// Mes actual en formato "junio-26" (para precargar la carga de Valeria; al cambiar
+// de mes toma el nuevo solo, porque se evalúa con new Date() en cada render).
+function _cvwMesActual() {
+  const meses = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  const d = new Date();
+  return meses[d.getMonth()] + '-' + String(d.getFullYear()).slice(-2);
+}
+// Normaliza una fecha guardada (ISO yyyy-mm-dd ó vieja "DD-mmm[-AA]") a ISO.
+// Las viejas sin año se asumen 2026 (toda la data migrada es de 2026).
+function _cvwToISO(v) {
+  const s = String(v || '').trim();
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const p = s.toLowerCase().split('-');
+  if (p.length < 2) return '';
+  const d = parseInt(p[0], 10), m = _CVW_MESAB[(p[1] || '').slice(0, 3)];
+  if (!d || !m) return '';
+  const y = p[2] ? (p[2].length === 2 ? 2000 + parseInt(p[2], 10) : parseInt(p[2], 10)) : 2026;
+  const pad = n => String(n).padStart(2, '0');
+  return y + '-' + pad(m) + '-' + pad(d);
+}
+// ISO (ó DD-mmm) → "DD/MM/AA" legible para la grilla.
+function _cvwFechaDisp(v) {
+  const iso = _cvwToISO(v);
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? (m[3] + '/' + m[2] + '/' + m[1].slice(-2)) : String(v || '');
 }
 function _cvwMesLabel(mesKey) { const m = String(mesKey || '').match(/^(\d{4})-(\d{2})/); return m ? (_mesLabelLargo(mesKey) + ' ' + m[1]) : String(mesKey || ''); }
 function _cvwHoyISO() { const d = new Date(); const p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
@@ -2057,8 +2084,8 @@ async function _postCompraVW(obj) {
   return await res.json();
 }
 
-function _cvwInput(id, ph, w, type) {
-  return '<input type="' + (type || 'text') + '" id="' + id + '" placeholder="' + ph + '" style="width:' + w + 'px;padding:6px 8px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:12px">';
+function _cvwInput(id, ph, w, type, val) {
+  return '<input type="' + (type || 'text') + '" id="' + id + '"' + (val != null ? ' value="' + escapeHtml(String(val)) + '"' : '') + ' placeholder="' + ph + '" style="width:' + w + 'px;padding:6px 8px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:12px">';
 }
 // Renglón SIMPLIFICADO (solo lectura, legible). Solo las VENDIDAS (con PV) se
 // despliegan al tocarlas. Las acciones (conciliar / pagar) van inline para que
@@ -2082,13 +2109,13 @@ function _cvwSummaryRow(c) {
   // celda Pago VW: pagada (verde) / inline para registrar pago / impaga + botón 💵
   let pagoCell;
   if (!c.impaga) {
-    pagoCell = '<span style="color:#0a7a30">' + escapeHtml(c.fecha_pago_vw || 'pagada') + '</span>';
+    pagoCell = '<span style="color:#0a7a30">' + escapeHtml(c.fecha_pago_vw ? _cvwFechaDisp(c.fecha_pago_vw) : 'pagada') + '</span>';
   } else if (pagando) {
     pagoCell = '<span onclick="event.stopPropagation()"><input type="date" id="cvwpagoinline_' + k + '" value="' + _cvwHoyISO() + '" onclick="event.stopPropagation()" style="padding:3px 5px;border:1px solid var(--vw-grey-2);border-radius:5px;font-size:12px">'
       + ' <button onclick="event.stopPropagation();pagarCompraVW(\'' + c.serie + '\')" style="background:#0a7a30;color:#fff;border:0;border-radius:5px;padding:3px 8px;cursor:pointer;font-size:11px">✓</button>'
       + ' <button onclick="event.stopPropagation();cancelarPagoInline()" style="background:none;border:0;cursor:pointer;font-size:13px">✕</button></span>';
   } else {
-    pagoCell = '<span style="color:#cc3300;font-weight:700">impaga</span>' + (c.vence ? ' <small style="color:#cc3300">· vto ' + escapeHtml(c.vence) + '</small>' : '')
+    pagoCell = '<span style="color:#cc3300;font-weight:700">impaga</span>' + (c.vence ? ' <small style="color:#cc3300">· vto ' + escapeHtml(_cvwFechaDisp(c.vence)) + '</small>' : '')
       + ' <button onclick="event.stopPropagation();iniciarPagoInline(\'' + c.serie + '\')" title="Registrar pago a VW" style="background:#0a7a30;color:#fff;border:0;border-radius:5px;padding:2px 8px;cursor:pointer;font-size:10px">pagar</button>';
   }
   const onclickRow = hasPv ? ' onclick="toggleCompraVW(\'' + c.serie + '\')" style="cursor:pointer' + bg + '"' : ' style="cursor:default' + bg + '"';
@@ -2099,7 +2126,7 @@ function _cvwSummaryRow(c) {
     + '<td data-label="Mes">' + escapeHtml(c.mes || '—') + '</td>'
     + '<td data-label="Modelo">' + escapeHtml(c.modeloOficial || c.modelo_valeria || '—') + '</td>'
     + '<td data-label="Color">' + escapeHtml(c.color || '—') + '</td>'
-    + '<td data-label="Vto VW" style="white-space:nowrap">' + escapeHtml(c.vence || '—') + '</td>'
+    + '<td data-label="Vto VW" style="white-space:nowrap">' + escapeHtml(c.vence ? _cvwFechaDisp(c.vence) : '—') + '</td>'
     + '<td data-label="Neto" style="text-align:right;white-space:nowrap">' + fmtPesos(c.neto || 0) + '</td>'
     + '<td data-label="Control" style="text-align:right;white-space:nowrap;font-weight:700">' + fmtPesos(c.control || 0) + '</td>'
     + '<td data-label="Pago VW" style="white-space:nowrap">' + pagoCell + '</td>'
@@ -2335,12 +2362,7 @@ function _flujoSemanaKey(iso) {
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
 }
 function _flujoVenceISO(v) {
-  const p = String(v || '').toLowerCase().trim().split('-');
-  if (p.length < 2) return null;
-  const d = parseInt(p[0], 10), m = _CVW_MESAB[(p[1] || '').slice(0, 3)];
-  if (!m || !d) return null;
-  const pad = n => String(n).padStart(2, '0');
-  return '2026-' + pad(m) + '-' + pad(d);
+  return _cvwToISO(v) || null;
 }
 function _flujoSemLabel(iso) {
   const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -3483,13 +3505,20 @@ function repartoFiltrar() {
     let estado;
     if (it.estado_compra === 'pendiente') estado = '<span class="reparto-fam">' + escapeHtml(it.status || 'pendiente') + '</span>';
     else if (it.alerta) estado = '<span class="reparto-est-alerta">⚠ comprado hace ' + it.diasComprado + 'd · sin Oversoft</span>';
-    else if (it.enOversoft) estado = '<span class="reparto-est-ok">✓ en Oversoft' + (it.oversoft && it.oversoft.serie ? ' · serie ' + escapeHtml(it.oversoft.serie) : '') + (it.oversoft && it.oversoft.fechaRecepcion ? ' · ' + it.oversoft.fechaRecepcion : '') + '</span>';
+    else if (it.enOversoft) {
+      const ov = it.oversoft || {};
+      estado = '<span class="reparto-est-ok">✓ en Oversoft' + (ov.serie ? ' · serie ' + escapeHtml(ov.serie) : '') + (ov.fechaRecepcion ? ' · ' + ov.fechaRecepcion : '') + '</span>';
+      estado += '<div class="reparto-concil">';
+      estado += 'Modelo: ' + escapeHtml(ov.modelo || '?') + ' ' + (it.modeloMatch ? '<span class="ok">✓ coincide</span>' : '<span class="warn">⚠ revisá</span>');
+      estado += '<br>Color: ' + escapeHtml(ov.color || '?') + ' ' + (it.colorMatch ? '<span class="ok">✓ coincide</span>' : '<span class="warn">⚠ revisá</span>');
+      estado += '</div>';
+    }
     else estado = '<span class="reparto-est-wait">comprado · esperando Oversoft' + (it.diasComprado != null ? ' (' + it.diasComprado + 'd)' : '') + '</span>';
     h += '<td>' + estado + '</td>';
     let acc = '';
     if (it.estado_compra !== 'pendiente') {
       acc = '<div class="reparto-acc">';
-      if (it.enOversoft) acc += '<button class="refresh reparto-ok" onclick="repartoOk(\'' + it.vin + '\')" title="Cruce OK: sale del reparto">OK</button>';
+      if (it.enOversoft) acc += '<button class="refresh reparto-ok" onclick="repartoOk(\'' + it.vin + '\')" title="Confirmar conciliación: queda comprado oficial y sale del reparto">OK</button>';
       acc += '<button class="reparto-link" onclick="repartoDeshacer(\'' + it.vin + '\')">Deshacer</button></div>';
     }
     h += '<td class="num">' + acc + '</td></tr>';

@@ -2804,25 +2804,40 @@ function getReparto() {
     });
   } catch (e) {}
 
-  // Cruce Oversoft (por VIN) para las compradas.
+  // Cruce Oversoft (por VIN) para las compradas: presencia + modelo + color
+  // (para que Fer chequee que coincida lo que cargó el sistema antes del OK).
   var compradoVins = rows.filter(function (r) { return r.estado_compra === 'comprado'; }).map(function (r) { return r.vin; });
   var cruce = {};
   if (compradoVins.length) {
     var h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
+    var ovGet = function (path) { var res = UrlFetchApp.fetch(OVERSOFT_URL + path, h); return res.getResponseCode() < 300 ? JSON.parse(res.getContentText()) : []; };
+    var rawu = [];
     for (var i = 0; i < compradoVins.length; i += 60) {
       var lote = compradoVins.slice(i, i + 60).map(function (s) { return '"' + s + '"'; }).join(',');
-      var res = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=serie,vin,fechaderecepcion,preventa&vin=in.(' + encodeURIComponent(lote) + ')', h);
-      if (res.getResponseCode() < 300) {
-        JSON.parse(res.getContentText()).forEach(function (u) {
-          cruce[String(u.vin || '').toUpperCase()] = {
-            serie: String(u.serie || '').trim(),
-            fechaRecepcion: u.fechaderecepcion ? String(u.fechaderecepcion).slice(0, 10) : null,
-            preventa: u.preventa ? String(u.preventa) : null
-          };
-        });
-      }
+      rawu = rawu.concat(ovGet('/unidades?select=serie,vin,modelo,color,fechaderecepcion,preventa&vin=in.(' + encodeURIComponent(lote) + ')'));
     }
+    // mapas modelo (codigodecompra -> descripcion) y color (colorid -> descripcion)
+    var descOvs = {}, off = 0;
+    for (var k = 0; k < 12; k++) {
+      var ch = ovGet('/modelos?select=codigodecompra,descripcionoperativa&order=modeloid&limit=1000&offset=' + off);
+      for (var j = 0; j < ch.length; j++) if (ch[j].codigodecompra) descOvs[String(ch[j].codigodecompra).trim()] = ch[j].descripcionoperativa;
+      if (ch.length < 1000) break; off += 1000;
+    }
+    var colOvs = {};
+    ovGet('/colores?select=colorid,descripcion&limit=2000').forEach(function (c) { colOvs[c.colorid] = String(c.descripcion || '').trim(); });
+    rawu.forEach(function (u) {
+      cruce[String(u.vin || '').toUpperCase()] = {
+        serie: String(u.serie || '').trim(),
+        fechaRecepcion: u.fechaderecepcion ? String(u.fechaderecepcion).slice(0, 10) : null,
+        preventa: u.preventa ? String(u.preventa) : null,
+        modelo: descOvs[String(u.modelo || '').trim()] || String(u.modelo || ''),
+        color: colOvs[u.color] || ''
+      };
+    });
   }
+
+  var norm = function (s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); };
+  var incl = function (a, b) { a = norm(a); b = norm(b); return !!a && !!b && (a === b || a.indexOf(b) >= 0 || b.indexOf(a) >= 0); };
 
   rows.sort(function (a, b) { return (a.familia || '').localeCompare(b.familia || '') || (a.descripcion || '').localeCompare(b.descripcion || ''); });
   var now = Date.now();
@@ -2830,12 +2845,15 @@ function getReparto() {
     var ov = cruce[String(r.vin).toUpperCase()] || null;
     var dias = r.comprado_at ? Math.floor((now - new Date(r.comprado_at).getTime()) / 86400000) : null;
     var mm = motorByNorm[_repartoNtrim(r.descripcion)];
+    var colorNom = colores[r.color_codigo] || r.color_codigo;
     return Object.assign({}, r, {
-      color_nombre: colores[r.color_codigo] || r.color_codigo,
+      color_nombre: colorNom,
       ventasPorMes: mm ? mm.ventasPorMes : null,
       stockActual: mm ? mm.stock : null,
       coloresStock: mm ? (mm.colores || []) : null,
       enOversoft: !!ov, oversoft: ov, diasComprado: dias,
+      modeloMatch: ov ? (_repartoNtrim(ov.modelo) === _repartoNtrim(r.descripcion) || incl(ov.modelo, r.descripcion)) : null,
+      colorMatch: ov ? incl(ov.color, colorNom) : null,
       alerta: r.estado_compra === 'comprado' && !ov && dias !== null && dias >= 2
     });
   });
