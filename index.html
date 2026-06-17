@@ -2036,22 +2036,32 @@ function _cvwIva(modelo) {
   const m = String(modelo || '').toUpperCase();
   return (m.indexOf('AMAROK') >= 0 || m.indexOf('SAVEIRO') >= 0) ? 0.105 : 0.21;
 }
-// Lo que se le DEBE a VW por esa unidad: el importe real de la factura
-// (importe_saldo, que viene de la planilla) si existe; si no, el Control
-// calculado para impagas; 0 si está paga.
-function _cvwDebe(c) {
+// BRUTO de la unidad (total con impuestos) = lo que Valeria carga / lo que se le
+// debe a VW. Se guarda en importe_saldo. Para filas viejas que solo tienen el
+// neto gravado, lo reconstruyo (neto × (1+IVA+IIBB)) como fallback.
+function _cvwBruto(c) {
   const s = Number(c.importe_saldo) || 0;
   if (s > 0) return s;
-  return c.impaga ? (Number(c.control) || 0) : 0;
-}
-function _cvwCalc(c) {
   const neto = Number(c.neto) || 0;
+  if (!neto) return 0;
   const rate = (c.iva_rate != null && c.iva_rate !== '') ? Number(c.iva_rate) : _cvwIva(c.modeloOficial || c.modelo_valeria);
-  const iva = neto * rate, iibb = neto * 0.0005, iibbBsAs = neto * 0.0002;
-  const pIva = Number(c.percep_iva) || 0, pEr = Number(c.percep_iibb_er) || 0, impInt = Number(c.imp_internos) || 0;
-  c.ivaRate = rate; c.iva = Math.round(iva * 100) / 100; c.iibb = Math.round(iibb * 100) / 100;
-  c.iibbBsAs = Math.round(iibbBsAs * 100) / 100;
-  c.control = Math.round((neto + iva + iibb + iibbBsAs + pIva + pEr + impInt) * 100) / 100;
+  return Math.round(neto * (1 + rate + 0.0005 + 0.0002) * 100) / 100;
+}
+// Lo que se le DEBE a VW por esa unidad: el bruto si está impaga; 0 si está paga.
+function _cvwDebe(c) {
+  return c.impaga ? _cvwBruto(c) : 0;
+}
+// El campo cargable es el BRUTO (total c/impuestos). Saco el IVA CONTENIDO hacia
+// atrás: neto = bruto / (1+IVA) ; IVA = bruto − neto.
+function _cvwCalc(c) {
+  const rate = (c.iva_rate != null && c.iva_rate !== '') ? Number(c.iva_rate) : _cvwIva(c.modeloOficial || c.modelo_valeria);
+  const bruto = _cvwBruto(c);
+  const neto = (1 + rate) > 0 ? bruto / (1 + rate) : 0;
+  c.brutoCalc = Math.round(bruto * 100) / 100;
+  c.netoGravado = Math.round(neto * 100) / 100;
+  c.ivaRate = rate;
+  c.iva = Math.round((bruto - neto) * 100) / 100;   // IVA contenido
+  c.control = c.brutoCalc;   // "Control" pasa a ser el bruto (== total con impuestos)
 }
 
 async function loadComprasVW(forzar) {
@@ -2074,6 +2084,10 @@ async function loadComprasVW(forzar) {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     comprasVWData = data;
+    // El campo cargable es el BRUTO (total c/imp.). Recalculo neto/IVA hacia atrás
+    // en cada fila para que el desglose sea consistente con el bruto, no con el
+    // neto que devuelve el backend.
+    (comprasVWData.compras || []).forEach(_cvwCalc);
     const up = document.getElementById('updatedAtComprasVW');
     if (up && data.updatedAt) up.textContent = 'Compras a VW · ' + data.total + ' facturas';
     renderComprasVW();
@@ -2089,7 +2103,8 @@ async function _postCompraVW(obj) {
 }
 
 function _cvwInput(id, ph, w, type, val) {
-  return '<input type="' + (type || 'text') + '" id="' + id + '"' + (val != null ? ' value="' + escapeHtml(String(val)) + '"' : '') + ' placeholder="' + ph + '" style="width:' + w + 'px;padding:6px 8px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:12px">';
+  return '<div style="display:flex;flex-direction:column;gap:2px"><label style="font-size:10px;color:var(--vw-grey-3)">' + ph + '</label>'
+    + '<input type="' + (type || 'text') + '" id="' + id + '"' + (val != null ? ' value="' + escapeHtml(String(val)) + '"' : '') + ' placeholder="' + ph + '" style="width:' + w + 'px;padding:6px 8px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:12px"></div>';
 }
 // Renglón SIMPLIFICADO (solo lectura, legible). Solo las VENDIDAS (con PV) se
 // despliegan al tocarlas. Las acciones (conciliar / pagar) van inline para que
@@ -2131,8 +2146,8 @@ function _cvwSummaryRow(c) {
     + '<td data-label="Modelo">' + escapeHtml(c.modeloOficial || c.modelo_valeria || '—') + '</td>'
     + '<td data-label="Color">' + escapeHtml(c.color || '—') + '</td>'
     + '<td data-label="Vto VW" style="white-space:nowrap">' + escapeHtml(c.vence ? _cvwFechaDisp(c.vence) : '—') + '</td>'
-    + '<td data-label="Bruto" style="text-align:right;white-space:nowrap">' + fmtPesos(c.neto || 0) + '</td>'
-    + '<td data-label="Control" style="text-align:right;white-space:nowrap;font-weight:700">' + fmtPesos(c.control || 0) + '</td>'
+    + '<td data-label="Neto grav." style="text-align:right;white-space:nowrap">' + fmtPesos(c.netoGravado || 0) + '</td>'
+    + '<td data-label="Bruto" style="text-align:right;white-space:nowrap;font-weight:700">' + fmtPesos(_cvwBruto(c)) + '</td>'
     + '<td data-label="Pago VW" style="white-space:nowrap">' + pagoCell + '</td>'
     + '<td data-label="" style="text-align:center;color:var(--vw-grey-3)">' + (hasPv ? (abierta ? '▲' : '🧾 ▼') : '') + '</td>'
     + '</tr>';
@@ -2161,8 +2176,8 @@ function _cvwDetailRow(c, k) {
   const detalle = '<div style="display:flex;flex-wrap:wrap;gap:10px">'
     + fld('mes', 'Mes', c.mes) + fld('modelo_valeria', 'Modelo', c.modelo_valeria) + fld('color', 'Color', c.color)
     + fld('fc_numero', 'N° factura', c.fc_numero) + fldD('fecha_fc', 'Fecha FC', c.fecha_fc) + fldD('vence', 'Vence', c.vence)
-    + fld('neto', 'Bruto $', c.neto, 'number') + fldD('fecha_pago_vw', 'Fecha pago VW', c.fecha_pago_vw)
-    + ro('IVA (' + (Math.round(c.ivaRate * 1000) / 10) + '%)', fmtPesos(c.iva)) + ro('Perc. IIBB', fmtPesos(c.iibb)) + ro('Perc. IIBB BsAs', fmtPesos(c.iibbBsAs)) + ro('Control', fmtPesos(c.control))
+    + fld('importe_saldo', 'Bruto $ (c/imp.)', _cvwBruto(c), 'number') + fldD('fecha_pago_vw', 'Fecha pago VW', c.fecha_pago_vw)
+    + ro('Neto (s/IVA)', fmtPesos(c.netoGravado)) + ro('IVA contenido (' + (Math.round(c.ivaRate * 1000) / 10) + '%)', fmtPesos(c.iva))
     + '</div>';
   let venta = '';
   if (c.pv) {
@@ -2242,7 +2257,7 @@ function renderComprasVW() {
   const vtos = Array.from(new Set(comprasVWData.compras.filter(c => c.impaga).map(c => _cvwToISO(c.vence)).filter(Boolean))).sort((a, b) => _cvwVenceKey(a) - _cvwVenceKey(b));
   let h = '<div style="background:#f0f6ff;border:1px solid #cfe0f5;border-radius:10px;padding:12px;margin-bottom:12px">'
     + '<b style="font-size:13px">+ Nueva factura de compra a VW</b>'
-    + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center">'
+    + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:flex-end">'
     + _cvwInput('nuevo_serie', 'Serie', 90) + _cvwInput('nuevo_mes', 'Mes', 110, 'text', _cvwMesActual())
     + _cvwInput('nuevo_modelo', 'Modelo', 180) + _cvwInput('nuevo_color', 'Color', 90)
     + _cvwInput('nuevo_fc', 'N° factura', 90) + _cvwInput('nuevo_fechafc', 'Fecha FC', 140, 'date')
@@ -2286,7 +2301,7 @@ function renderComprasVW() {
   h += '<div class="table-wrap"><div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:840px">';
   h += '<thead style="white-space:nowrap"><tr>'
     + '<th></th><th style="text-align:left">Estado</th><th style="text-align:left">Serie</th><th style="text-align:left">Mes</th><th style="text-align:left">Modelo</th><th style="text-align:left">Color</th>'
-    + '<th style="text-align:left">Vto VW</th><th style="text-align:right">Bruto</th><th style="text-align:right">Control</th><th style="text-align:left">Pago VW</th><th></th></tr></thead><tbody>';
+    + '<th style="text-align:left">Vto VW</th><th style="text-align:right">Neto grav.</th><th style="text-align:right">Bruto</th><th style="text-align:left">Pago VW</th><th></th></tr></thead><tbody>';
   for (const c of rows) h += _cvwSummaryRow(c);
   if (!rows.length) h += '<tr><td colspan="11" class="empty">Sin facturas para ese filtro.</td></tr>';
   h += '</tbody></table></div></div>';
@@ -2298,9 +2313,9 @@ async function guardarCompraVW(serie) {
   const k = serie.replace(/[^A-Za-z0-9]/g, '_');
   const c = (comprasVWData.compras || []).find(x => x.serie === serie); if (!c) return;
   const campos = {};
-  for (const f of ['mes', 'modelo_valeria', 'color', 'fc_numero', 'fecha_fc', 'vence', 'neto', 'fecha_pago_vw']) {
+  for (const f of ['mes', 'modelo_valeria', 'color', 'fc_numero', 'fecha_fc', 'vence', 'importe_saldo', 'fecha_pago_vw']) {
     const el = document.getElementById('cvw_' + f + '_' + k);
-    if (el) { campos[f] = el.value.trim(); c[f] = (f === 'neto') ? (el.value.trim() === '' ? null : Number(el.value)) : el.value.trim(); }
+    if (el) { campos[f] = el.value.trim(); c[f] = (f === 'importe_saldo') ? (el.value.trim() === '' ? null : Number(el.value)) : el.value.trim(); }
   }
   _cvwCalc(c); renderComprasVW();
   try { const r = await _postCompraVW({ accion: 'setcompravw', serie: serie, campos: campos }); if (r && r.error) throw new Error(r.error); }
@@ -2310,7 +2325,7 @@ async function nuevaCompraVW() {
   const g = id => ((document.getElementById(id) || {}).value || '').trim();
   const serie = g('nuevo_serie').toUpperCase();
   if (!serie) { alert('Falta la serie'); return; }
-  const campos = { mes: g('nuevo_mes'), modelo_valeria: g('nuevo_modelo'), color: g('nuevo_color'), fc_numero: g('nuevo_fc'), fecha_fc: g('nuevo_fechafc'), vence: g('nuevo_vence'), neto: g('nuevo_neto'), fecha_pago_vw: g('nuevo_fechapago') };
+  const campos = { mes: g('nuevo_mes'), modelo_valeria: g('nuevo_modelo'), color: g('nuevo_color'), fc_numero: g('nuevo_fc'), fecha_fc: g('nuevo_fechafc'), vence: g('nuevo_vence'), importe_saldo: g('nuevo_neto'), fecha_pago_vw: g('nuevo_fechapago') };
   try { const r = await _postCompraVW({ accion: 'setcompravw', serie: serie, campos: campos }); if (r && r.error) throw new Error(r.error); }
   catch (e) { alert('No se pudo agregar: ' + e.message); return; }
   await loadComprasVW(true);
