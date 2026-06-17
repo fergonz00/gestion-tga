@@ -68,6 +68,7 @@ function doGet(e) {
     if (tipo === 'pagosvw')         return jsonResponse(getPagosVW(params));      // sin cache
     if (tipo === 'objetivos')         return jsonResponse(getObjetivosPat());       // sin cache (es chico)
     if (tipo === 'objetivoscompras')  return jsonResponse(getObjetivosCompras());   // sin cache (es chico)
+    if (tipo === 'repartocomprado')   return jsonResponse(getRepartoComprado());     // sin cache (en vivo): reparto de precios no facturado aún
     if (tipo === 'industria')         return jsonResponse(getIndustria());          // sin cache (es chico)
     if (tipo === 'ventasdebug')     return jsonResponse(getVentasDebug(params));  // sin cache
     if (tipo === 'oversoft')        return jsonResponse(getOversoft(params));     // proxy a la réplica Supabase
@@ -2598,6 +2599,42 @@ function setObjetivoCompra(body) {
   }
   sh.appendRow(["'" + mesKey, valor, ahora]);  // ' fuerza texto en col A
   return { ok: true, mesKey: mesKey, valor: valor, accion: 'insert' };
+}
+
+// =======================================================================
+// REPARTO (precios) → comprado del mes EN CURSO no facturado todavía
+// =======================================================================
+// El "Reparto" vive en precios (tabla reparto_vw, base wjfgl): Fer marca ahí
+// las unidades que le compra a VW. Para el avance del mes en la solapa Reparto
+// de gestión sumamos esas marcas, PERO solo mientras NO estén en Oversoft:
+// cuando la unidad aparece en Oversoft ya la cuenta la facturación (stock por
+// fecha de FC), así que sacarla de acá evita el doble conteo. Cruce por VIN
+// (= chasis). Devuelve la cantidad pendiente (marcadas y todavía sin Oversoft).
+function getRepartoComprado() {
+  var mesKey = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM');
+  var rows = [];
+  try {
+    rows = _supaGet('/reparto_vw?select=vin&periodo=eq.' + mesKey
+      + '&estado_compra=eq.comprado') || [];
+  } catch (e) {}
+  var vins = rows.map(function (r) { return String(r.vin || '').trim().toUpperCase(); })
+                 .filter(Boolean);
+  if (!vins.length) return { mesKey: mesKey, pendientes: 0, vins: [] };
+
+  // ¿Cuáles ya están en Oversoft? Esas NO se cuentan acá (las cuenta la FC).
+  var h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
+  var enOvs = {};
+  for (var i = 0; i < vins.length; i += 60) {
+    var lote = vins.slice(i, i + 60).map(function (s) { return '"' + s + '"'; }).join(',');
+    var res = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=vin&vin=in.(' + encodeURIComponent(lote) + ')', h);
+    if (res.getResponseCode() < 300) {
+      JSON.parse(res.getContentText()).forEach(function (u) {
+        enOvs[String(u.vin || '').trim().toUpperCase()] = true;
+      });
+    }
+  }
+  var pend = vins.filter(function (v) { return !enOvs[v]; });
+  return { mesKey: mesKey, pendientes: pend.length, vins: pend };
 }
 
 // =======================================================================

@@ -1170,6 +1170,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <button class="tab" data-tab="ventas" onclick="setTab('ventas')">Ventas</button>
       <button class="tab" data-tab="patentamientos" onclick="setTab('patentamientos')">Patentamientos</button>
       <button class="tab" data-tab="admventas" onclick="setTab('admventas')">Adm. ventas</button>
+      <button class="tab" data-tab="reparto" onclick="setTab('reparto')">Reparto</button>
       <button class="tab" data-tab="comprasvw" onclick="setTab('comprasvw')">Compras VW</button>
       <button class="tab" data-tab="flujo" onclick="setTab('flujo')">Flujo financiero</button>
       <button class="tab" data-tab="trimestre" onclick="setTab('trimestre')">Trimestre</button>
@@ -1308,6 +1309,17 @@ table.patent-tbl.resumida .col-extra { display: none; }
         </div>
       </div>
       <div id="admVentasContent"><div class="empty">Cargando…</div></div>
+    </section>
+
+    <!-- =================== REPARTO (objetivo de compra vs comprado por mes) =================== -->
+    <section class="panel" id="panelReparto">
+      <div class="toolbar">
+        <div class="updated" id="updatedAtReparto">Objetivo de compra a VW por mes vs lo comprado. Comprado = facturado por VW + lo marcado en el reparto de precios que todavía no entró a Oversoft (cuando entra, ya lo cuenta la factura).</div>
+        <div class="actions">
+          <button class="refresh" onclick="loadReparto(true)">Actualizar</button>
+        </div>
+      </div>
+      <div id="repartoContent"><div class="empty">Cargando…</div></div>
     </section>
 
     <!-- =================== COMPRAS VW (carga Valeria + conciliación Oversoft) =================== -->
@@ -1543,6 +1555,10 @@ async function loadObjetivosCompras() {
       // Re-render si la sub-tab compras está visible
       if (document.getElementById('subpanelCompras') && document.getElementById('subpanelCompras').classList.contains('active')) {
         renderCompras();
+      }
+      // Re-render la solapa Reparto si está activa
+      if (document.getElementById('panelReparto') && document.getElementById('panelReparto').classList.contains('active')) {
+        renderReparto();
       }
     }
   } catch (e) { console.error('loadObjetivosCompras:', e); }
@@ -2882,6 +2898,8 @@ function startAutoRefresh() {
       _fetchIncentivosSilent();
     } else if (activo === 'industria') {
       _fetchPatentSilent();  // TGA patentadas se cuenta del lado patent
+    } else if (activo === 'reparto') {
+      loadReparto(false);    // refresca stock + reparto pendiente + objetivos
     }
   }, AUTO_REFRESH_MS);
 }
@@ -2907,6 +2925,7 @@ function setTab(tab) {
     precios:        'panelPrecios',
     industria:      'panelIndustria',
     admventas:      'panelAdmVentas',
+    reparto:        'panelReparto',
     comprasvw:      'panelComprasVW',
     flujo:          'panelFlujo',
     oversoft:       'panelOversoft',
@@ -2924,6 +2943,7 @@ function setTab(tab) {
   }
   if (tab === 'incentivos'     && !incentivosData) loadIncentivos(false);
   if (tab === 'admventas'      && !admVentasData)  loadAdmVentas(false);
+  if (tab === 'reparto')                           loadReparto(false);
   if (tab === 'comprasvw'      && !comprasVWData)  loadComprasVW(false);
   if (tab === 'flujo'          && !flujoData)      loadFlujo(false);
   if (tab === 'industria') {
@@ -3094,6 +3114,7 @@ function setObjetivoCompra(mesKey, valor) {
   saveObjetivosComprasCache();
   saveObjetivoCompraRemote(mesKey, n);  // optimista: pintamos primero, persistimos atrás
   renderCompras();
+  if (document.getElementById('repartoContent')) renderReparto();
 }
 function _pctCls(pct) {
   if (pct >= 100) return 'good';
@@ -3175,6 +3196,110 @@ function renderCompras() {
     });
   }
 
+  wrap.innerHTML = html;
+}
+
+// =======================================================================
+// REPARTO · objetivo de compra vs comprado por mes (solapa top-level)
+// =======================================================================
+//
+// Misma data que "Stock → Compras" (comprado = unidad con fecha de FC en el mes)
+// pero como solapa propia y con un agregado: para el MES EN CURSO suma lo que
+// Fer marcó "comprado" en el reparto de precios y todavía no entró a Oversoft
+// (repartoComprado.pendientes, del endpoint tipo=repartocomprado). Cuando esas
+// unidades aparecen en Oversoft, ya las cuenta la facturación → sin duplicar.
+// Objetivos: compartidos con Stock→Compras (hoja objetivos_compras).
+
+let repartoComprado = { mesKey: null, pendientes: 0, vins: [] };
+
+async function loadReparto(forzar) {
+  // 1) Stock (da el comprado/facturado por mes vía fechaFcIso)
+  if (!stockData || forzar) { try { await loadStock(forzar); } catch (e) {} }
+  // 2) Reparto de precios no facturado (marcadas y sin Oversoft) del mes en curso
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') !== 0) {
+    try {
+      const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=repartocomprado';
+      const res = await fetch(url);
+      const d = await res.json();
+      if (d && !d.error) repartoComprado = d;
+    } catch (e) { /* sin reparto, mostramos solo facturado */ }
+  }
+  // 3) Objetivos al día
+  try { await loadObjetivosCompras(); } catch (e) {}
+  renderReparto();
+}
+
+function renderReparto() {
+  const wrap = document.getElementById('repartoContent');
+  if (!wrap) return;
+  if (!stockData || !Array.isArray(stockData.unidades)) {
+    wrap.innerHTML = '<div class="empty">Cargando…</div>';
+    return;
+  }
+  // Comprado por mes = facturado por VW (unidad con fecha de FC en el mes).
+  const porMes = {};
+  stockData.unidades.forEach(u => {
+    if (!u.fechaFcIso) return;
+    porMes[u.fechaFcIso.slice(0, 7)] = (porMes[u.fechaFcIso.slice(0, 7)] || 0) + 1;
+  });
+  const objetivos = getObjetivosCompras();
+  const mesHoy = _mesKeyHoy();
+
+  // Mes en curso: facturado + reparto de precios pendiente (no en Oversoft).
+  const facturadoActual = porMes[mesHoy] || 0;
+  const repPend = (repartoComprado && repartoComprado.mesKey === mesHoy) ? (repartoComprado.pendientes || 0) : 0;
+  const comprasActual = facturadoActual + repPend;
+  const objActual = objetivos[mesHoy] || 0;
+  const pctActual = objActual ? (comprasActual / objActual * 100) : 0;
+  const faltanActual = Math.max(0, objActual - comprasActual);
+
+  let html = '';
+  html += '<div class="compras-mes-actual">';
+  html += '  <div class="titulo">Mes en curso</div>';
+  html += '  <div class="mes">' + _mesLabel(mesHoy) + '</div>';
+  html += '  <div class="compras-obj-row">';
+  html += '    <label>Objetivo de compra:</label>';
+  html += '    <input type="number" min="0" step="1" value="' + (objActual || '') + '" onchange="setObjetivoCompra(\'' + mesHoy + '\', this.value)" placeholder="—">';
+  html += '    <span style="font-size:12px;color:var(--vw-grey-3)">unidades</span>';
+  html += '  </div>';
+  if (objActual > 0) {
+    const cls = _pctCls(pctActual);
+    const w = Math.min(100, pctActual);
+    html += '  <div class="compras-progress-block">';
+    html += '    <div class="compras-progress-line"><strong>' + comprasActual + '</strong> / ' + objActual + ' compras · <strong>' + pctActual.toFixed(1) + '%</strong></div>';
+    html += '    <div class="compras-progress-bar"><div class="compras-progress-fill ' + cls + '" style="width:' + w + '%"></div></div>';
+    if (faltanActual > 0) html += '    <div class="compras-faltan">Faltan <strong>' + faltanActual + '</strong> compras para llegar al objetivo</div>';
+    else                  html += '    <div class="compras-faltan" style="color:#2d6a4f;font-weight:600">✓ Objetivo alcanzado · superado por ' + (comprasActual - objActual) + '</div>';
+    html += '  </div>';
+  } else {
+    html += '  <div class="compras-progress-line"><strong>' + comprasActual + '</strong> compras este mes · Cargá el objetivo para ver el avance</div>';
+  }
+  if (repPend > 0) {
+    html += '  <div class="compras-faltan" style="color:var(--vw-grey-3)">' + facturadoActual + ' facturadas + <strong>' + repPend + '</strong> marcada' + (repPend !== 1 ? 's' : '') + ' en el reparto (todavía sin entrar a Oversoft).</div>';
+  }
+  html += '</div>';
+
+  // Histórico mensual desde marzo 2026 (cuando arrancamos a llevar objetivos).
+  const MES_INICIO = '2026-03';
+  const mesesUnicos = new Set([...Object.keys(porMes), ...Object.keys(objetivos)]);
+  mesesUnicos.delete(mesHoy);
+  const mesesHist = [...mesesUnicos].filter(mk => mk >= MES_INICIO).sort((a, b) => b.localeCompare(a));
+  if (mesesHist.length) {
+    html += '<div class="compras-historico-titulo">Histórico mensual</div>';
+    mesesHist.forEach(mk => {
+      const compras = porMes[mk] || 0;
+      const obj = objetivos[mk] || 0;
+      const pct = obj ? (compras / obj * 100) : null;
+      const pctCls = pct !== null ? _pctCls(pct) : 'none';
+      const pctTxt = pct !== null ? pct.toFixed(1) + '%' : 'sin obj.';
+      html += '<div class="compras-hist-row">';
+      html += '  <div class="compras-hist-mes">' + _mesLabel(mk) + '</div>';
+      html += '  <div class="compras-hist-num"><strong>' + compras + '</strong> / </div>';
+      html += '  <input class="compras-hist-input" type="number" min="0" step="1" value="' + (obj || '') + '" onchange="setObjetivoCompra(\'' + mk + '\', this.value)" placeholder="obj.">';
+      html += '  <div class="compras-hist-pct ' + pctCls + '">' + pctTxt + '</div>';
+      html += '</div>';
+    });
+  }
   wrap.innerHTML = html;
 }
 
