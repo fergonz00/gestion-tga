@@ -1741,12 +1741,25 @@ const TIPO_CHIP = {
 // Fila desplegable con el detalle del cuadro financiero de una PV.
 function _admFinRow(key, v, fs) {
   const abierto = admVentasFinAbiertos.has(key);
+  const up = v.usadoParte;
   let t = '<tr id="admfin_' + key + '"' + (abierto ? '' : ' style="display:none"') + '>'
     + '<td colspan="17" style="background:#f0f6ff;border-left:3px solid #001e50;padding:10px 14px;text-align:left">'
     + '<div style="font-weight:700;font-size:12px;margin-bottom:6px">💵 Cuadro financiero · PV ' + escapeHtml(v.preventa)
-    + (v.usadoParte ? ' · <span style="color:#7a5b00">usado ' + escapeHtml(v.usadoParte.marca + ' ' + v.usadoParte.modelo) + ' (' + fmtPesosCompact(v.usadoParte.toma) + ')</span>' : '')
+    + (up ? ' · <span style="color:#7a5b00">usado en parte de pago (' + fmtPesosCompact(up.toma) + ')</span>' : '')
     + (v.creditoCobrado ? ' · <span style="color:' + (v.creditoCobrado.ok ? '#0a7a30' : '#cc6600') + '">' + (v.creditoCobrado.ok ? 'Crédito cobrado ' + _fechaDMA(v.creditoCobrado.fecha) : 'Crédito pendiente') + '</span>' : '')
     + '</div>'
+    // Ficha del usado tomado (dominio, marca/modelo+versión, año, kms, color)
+    + (up ? '<div style="background:#fff8e6;border:1px solid #e8d48a;border-radius:6px;padding:7px 10px;margin-bottom:8px;font-size:12px;color:#5a4500">'
+        + '🚗 <b>Usado en parte de pago</b>'
+        + ' &nbsp;·&nbsp; Dominio: <b>' + (up.patente ? escapeHtml(up.patente) : '—') + '</b>'
+        + ' &nbsp;·&nbsp; ' + escapeHtml([up.marca, up.modelo].filter(Boolean).join(' ') || '—')
+        + (up.anio ? ' &nbsp;·&nbsp; Año ' + escapeHtml(String(up.anio)) : '')
+        + (up.km ? ' &nbsp;·&nbsp; ' + Number(up.km).toLocaleString('es-AR') + ' km' : '')
+        + (up.color ? ' &nbsp;·&nbsp; ' + escapeHtml(up.color) : '')
+        + (up.combustible ? ' &nbsp;·&nbsp; ' + escapeHtml(up.combustible) : '')
+        + '<br>Valor de toma: <b>' + fmtPesos(up.toma) + '</b>'
+        + (up.vin ? ' &nbsp;·&nbsp; <span style="color:#8a7330">Chasis ' + escapeHtml(up.vin) + '</span>' : '')
+        + '</div>' : '')
     + '<table style="width:100%;border-collapse:collapse;font-size:12px">'
     + '<tr style="color:var(--vw-grey-3)"><th style="text-align:left;padding:2px 6px">Concepto</th><th style="text-align:right;padding:2px 6px">Planificado</th><th style="text-align:right;padding:2px 6px">Cobrado</th><th style="padding:2px 6px">Vto</th><th style="padding:2px 6px">Recibo</th><th style="text-align:left;padding:2px 6px">Estado</th></tr>';
   for (const c of fs.lineas) {
@@ -1763,10 +1776,23 @@ function _admFinRow(key, v, fs) {
       + '<td style="padding:3px 6px;color:' + col + '">' + est + '</td>'
       + '</tr>';
   }
+  // El usado tomado es una forma de pago más → lo muestro como línea del cash.
+  // Plan = cobrado = toma (ya está tomado), así no altera el "falta".
+  if (up && up.toma) {
+    t += '<tr style="border-top:1px solid #dbe7f5;background:#fffdf5">'
+      + '<td style="padding:3px 6px">🚗 Usado en parte de pago' + (up.patente ? ' (' + escapeHtml(up.patente) + ')' : '') + '</td>'
+      + '<td style="text-align:right;padding:3px 6px">' + fmtPesos(up.toma) + '</td>'
+      + '<td style="text-align:right;padding:3px 6px">' + fmtPesos(up.toma) + '</td>'
+      + '<td style="text-align:center;padding:3px 6px">—</td>'
+      + '<td style="text-align:center;padding:3px 6px">usado</td>'
+      + '<td style="padding:3px 6px;color:#0a7a30">✓</td>'
+      + '</tr>';
+  }
+  const tomaToma = (up && up.toma) ? up.toma : 0;
   t += '<tr style="border-top:2px solid #001e50;font-weight:700">'
     + '<td style="padding:4px 6px">TOTAL</td>'
-    + '<td style="text-align:right;padding:4px 6px">' + fmtPesos(v.totalPlan) + '</td>'
-    + '<td style="text-align:right;padding:4px 6px">' + fmtPesos(v.totalCobrado) + '</td>'
+    + '<td style="text-align:right;padding:4px 6px">' + fmtPesos(v.totalPlan + tomaToma) + '</td>'
+    + '<td style="text-align:right;padding:4px 6px">' + fmtPesos(v.totalCobrado + tomaToma) + '</td>'
     + '<td colspan="3" style="padding:4px 6px;color:' + (v.falta > 1 ? '#cc3300' : '#0a7a30') + '">' + (v.falta > 1 ? 'Falta ' + fmtPesos(v.falta) : 'Todo cobrado ✓') + '</td>'
     + '</tr></table></td></tr>';
   return t;
