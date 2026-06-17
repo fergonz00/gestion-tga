@@ -2683,7 +2683,9 @@ function _repartoRead(path) {
   var res = UrlFetchApp.fetch(SUPA_URL + path, { headers: { apikey: svc, Authorization: 'Bearer ' + svc }, muteHttpExceptions: true });
   return res.getResponseCode() < 300 ? JSON.parse(res.getContentText()) : [];
 }
-function _repartoInList(arr) { return arr.map(function (s) { return '"' + String(s).trim().toUpperCase() + '"'; }).join(','); }
+// in.(...) para UrlFetchApp: SIN comillas (UrlFetchApp las rechaza) y encodeado.
+// Los VIN/códigos son alfanuméricos, así que no necesitan comillas en PostgREST.
+function _repartoInList(arr) { return arr.map(function (s) { return encodeURIComponent(String(s).trim()); }).join(','); }
 // Réplica del _ntrim del motor (para cruzar por NOMBRE el reparto con ventas/stock).
 function _repartoNtrim(s) {
   s = String(s || '').toLowerCase();
@@ -2768,7 +2770,7 @@ function guardarColoresReparto(body) {
     else aBorrar.push(cod);
   });
   if (aBorrar.length) {
-    var rd = UrlFetchApp.fetch(SUPA_URL + '/reparto_colores?codigo=in.(' + aBorrar.map(function (c) { return '"' + c + '"'; }).join(',') + ')',
+    var rd = UrlFetchApp.fetch(SUPA_URL + '/reparto_colores?codigo=in.(' + _repartoInList(aBorrar) + ')',
       { method: 'delete', headers: _repartoWHeaders(), muteHttpExceptions: true });
     if (rd.getResponseCode() >= 300) return { ok: false, error: 'supa del ' + rd.getResponseCode() };
   }
