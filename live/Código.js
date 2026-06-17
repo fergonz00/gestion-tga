@@ -78,6 +78,9 @@ function doGet(e) {
     if (tipo === 'snapshotbt')      return jsonResponse(snapshotBTMensual(String(params.mes || '') || null)); // sync manual de la BT vigente a Supabase
     if (tipo === 'admventas')       return jsonResponse(_cached('admventas', CACHE_TTL_SEC, fresh, getAdmVentas)); // adm de ventas: Oversoft + campos manuales
     if (tipo === 'migraradmventas') return jsonResponse(migrarAdmVentasDesdeHoja()); // una-vez: vuelca lo ya cargado en la hoja a adm_ventas
+    if (tipo === 'comprasvw')       return jsonResponse(_cached('comprasvw', CACHE_TTL_SEC, fresh, getComprasVW)); // compras a VW: carga Valeria + conciliación Oversoft
+    if (tipo === 'migrarcomprasvw') return jsonResponse(migrarComprasVW()); // una-vez: vuelca lo de saldos (>=2026) a compras_vw, conciliado con Oversoft
+    if (tipo === 'flujo')           return jsonResponse(_cached('flujo', CACHE_TTL_SEC, fresh, getFlujoFinanciero)); // flujo de caja: cobros pendientes (ingresos) vs pagos a VW (egresos)
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
@@ -367,6 +370,95 @@ function _normPv(s) {
   return (p[0].replace(/^0+/, '') || '0') + (p[1] ? '/' + p[1] : '');
 }
 
+// ---- Cuadro financiero (formas de pago + recibos, desde detcash) ----------
+// detcash es el libro mayor por PV: filas origen VTOKM/VTPDA = lo PLANIFICADO
+// (importe>0, con vencimiento) y origen RC = los RECIBOS hechos (importe<0, con
+// cobranzanro = nro de recibo y fecha = cuándo se cobró). Una PV financia con
+// UNA sola entidad (es prendario). Mapeo motivo→financiador verificado 1:1
+// contra el texto del recibo en datos 2026.
+var FIN_MAP = {
+  'FIN0KMBBVA': { grupo: 'VW',    nombre: 'VW Credit' },
+  'FIN0KMFG':   { grupo: 'TG',    nombre: 'TG (propio)' },
+  'FIN0KM':     { grupo: 'OTROS', nombre: 'Galicia' },
+  'FIN0KMNAC':  { grupo: 'OTROS', nombre: 'Banco Nacion' },
+  'FIN0KMBIND': { grupo: 'OTROS', nombre: 'BIND' },
+  'FINOKMRIO':  { grupo: 'OTROS', nombre: 'Santander' },
+  'FIN0KMRIO':  { grupo: 'OTROS', nombre: 'Santander' },
+};
+function _finInfo(motivo) {
+  var m = FIN_MAP[motivo];
+  if (m) return m;
+  if (/^FIN/.test(String(motivo))) return { grupo: 'OTROS', nombre: String(motivo).replace(/^FIN0?KM/, '') || 'Otro' };
+  return null;
+}
+function _concNombre(motivo) {
+  var fi = _finInfo(motivo);
+  if (fi) return 'Financia ' + fi.nombre;
+  var k = String(motivo || '').replace(/Ñ/g, 'N').toUpperCase().trim();
+  var M = { 'SENA': 'Sena', 'SENASIMP': 'Sena', 'REFUESENA': 'Refuerzo sena',
+    'CANCOKM': 'Cancela unidad', 'GASTADM': 'Gastos adm.', 'ALTAPLANES': 'Cuota plan' };
+  return M[k] || String(motivo || '');
+}
+// Agrupa las filas detcash de UNA pv por concepto y calcula plan vs cobrado,
+// totales, tipo de operación y financiador.
+function _cuadroDePv(rows) {
+  var g = {}, hasVTPDA = false;
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i], mot = String(r.motivo || '').trim(), imp = Number(r.importe) || 0;
+    if (r.origen === 'VTPDA') hasVTPDA = true;
+    if (!g[mot]) g[mot] = { motivo: mot, concepto: _concNombre(mot), plan: 0, cobrado: 0, vto: '', fechaCobro: '', recibos: [] };
+    if (r.origen === 'RC') {
+      g[mot].cobrado += -imp;
+      var nro = String(r.cobranzanro || '').replace(/;/g, ' ').trim().split(/\s+/).pop();
+      if (nro) g[mot].recibos.push(nro);
+      var f = String(r.fecha || '').slice(0, 10);
+      if (f > g[mot].fechaCobro) g[mot].fechaCobro = f;
+    } else {
+      g[mot].plan += imp;
+      var v = String(r.vencimiento || '').slice(0, 10);
+      if (v && (!g[mot].vto || v < g[mot].vto)) g[mot].vto = v;
+    }
+  }
+  var lineas = [];
+  for (var k in g) {
+    var c = g[k];
+    if (c.plan <= 0 && c.cobrado <= 0) continue;
+    c.saldo = Math.round((c.plan - c.cobrado) * 100) / 100;
+    lineas.push(c);
+  }
+  lineas.sort(function (a, b) { return (a.vto || '9999').localeCompare(b.vto || '9999'); });
+  var totalPlan = 0, totalCobrado = 0, finLine = null;
+  for (var j = 0; j < lineas.length; j++) {
+    totalPlan += lineas[j].plan; totalCobrado += lineas[j].cobrado;
+    if (!finLine && _finInfo(lineas[j].motivo)) finLine = lineas[j];
+  }
+  var tipo = 'CONTADO', financia = '';
+  if (finLine) { var fi = _finInfo(finLine.motivo); tipo = 'FINANCIA_' + fi.grupo; financia = fi.nombre; }
+  return {
+    cuadro: lineas, hasVTPDA: hasVTPDA,
+    totalPlan: Math.round(totalPlan * 100) / 100,
+    totalCobrado: Math.round(totalCobrado * 100) / 100,
+    falta: Math.round((totalPlan - totalCobrado) * 100) / 100,
+    tipo: tipo, financia: financia,
+    creditoCobrado: finLine ? { ok: (finLine.saldo <= 1), fecha: finLine.fechaCobro } : null,
+  };
+}
+// Meses transcurridos desde una fecha ISO hasta hoy (null si fecha inválida).
+function _mesesDesde(iso) {
+  const s = String(iso || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  return (Date.now() - new Date(s).getTime()) / (86400000 * 30.4);
+}
+// pagoVW: si está en saldos uso ese dato; si NO está pero la unidad tiene +3
+// meses (recepción, o la venta si falta), la doy por paga por antigüedad.
+function _pagoVWdeVenta(sld, fechaRecepcion, fechaVenta) {
+  if (sld) return { fecha: String(sld.fechaPago || '').trim(), impaga: !!sld.impaga, vence: String(sld.vence || '').trim() };
+  const ref = (String(fechaRecepcion || '').slice(0, 10)) || (String(fechaVenta || '').slice(0, 10));
+  const meses = _mesesDesde(ref);
+  if (meses !== null && meses >= 3) return { fecha: '', impaga: false, vence: '', porAntiguedad: true };
+  return null;
+}
+
 function getAdmVentas() {
   const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
   const get = (path) => {
@@ -385,7 +477,7 @@ function getAdmVentas() {
   const uids = Object.keys(uidSet);
   const unis = {};
   for (let i = 0; i < uids.length; i += 100) {
-    for (const u of get('/unidades?select=unidadid,serie,vin,patente,fechapatentamiento&unidadid=in.(' + uids.slice(i, i + 100).join(',') + ')')) unis[u.unidadid] = u;
+    for (const u of get('/unidades?select=unidadid,serie,vin,patente,fechapatentamiento,fechaderecepcion&unidadid=in.(' + uids.slice(i, i + 100).join(',') + ')')) unis[u.unidadid] = u;
   }
 
   // 3) vendedores y clientes (nombre + localidad, por CUIT)
@@ -399,6 +491,17 @@ function getAdmVentas() {
     const lote = cuits.slice(i, i + 80).map(c => '"' + c + '"').join(',');
     for (const c of get('/clientes?select=cuit_cuil,nombre,localidad&cuit_cuil=in.(' + encodeURIComponent(lote) + ')')) {
       clis[String(c.cuit_cuil).trim()] = c;
+    }
+  }
+  // Fallback por DNI: algunas preventas guardan el cliente como DNI suelto
+  // (sin formato CUIT "XX-DDDDDDDD-X") y no matchean arriba. Para esos, busco
+  // en clientes por el campo dni. (Si tampoco está, la ficha no existe en Oversoft.)
+  const dniPend = cuits.filter(c => !clis[c] && /^\d{6,9}$/.test(c));
+  for (let i = 0; i < dniPend.length; i += 80) {
+    const lote = dniPend.slice(i, i + 80).map(c => '"' + c + '"').join(',');
+    for (const c of get('/clientes?select=dni,nombre,localidad&dni=in.(' + encodeURIComponent(lote) + ')')) {
+      const d = String(c.dni || '').trim();
+      if (d && !clis[d]) clis[d] = c;
     }
   }
 
@@ -418,11 +521,35 @@ function getAdmVentas() {
     for (const m of _supaGet('/adm_ventas?select=*')) man[m.preventa] = m;
   } catch (e) {}
 
+  // 6) detcash (formas de pago + recibos) y usados en parte de pago, por nº PV.
+  // OJO: la réplica capea respuestas en 1000 filas → lotes chicos (50 PVs).
+  const dcByPv = {};
+  const usByPv = {};
+  const nums = pvs.map(p => p.numero).filter(Boolean);
+  for (let i = 0; i < nums.length; i += 50) {
+    const lote = nums.slice(i, i + 50).map(n => '"' + n + '"').join(',');
+    const dc = get('/detcash?select=referencia,fecha,vencimiento,importe,motivo,origen,cobranzanro&origen=in.(VTOKM,VTPDA,RC)&referencia=in.(' + encodeURIComponent(lote) + ')&limit=1000');
+    for (const r of dc) (dcByPv[r.referencia] = dcByPv[r.referencia] || []).push(r);
+    const us = get('/usados?select=preventaorigen,marca,modelo,patente,anio,preciodetoma&preventaorigen=in.(' + encodeURIComponent(lote) + ')&limit=1000');
+    for (const x of us) (usByPv[x.preventaorigen] = usByPv[x.preventaorigen] || []).push(x);
+  }
+
+  // 7) saldos de compras a VW (paga/impaga + fecha de pago) por serie — de saldos-tga
+  const saldoBySerie = {};
+  try {
+    const sc = getSaldosCompras();
+    for (const x of (sc.unidades || [])) if (x.serie) saldoBySerie[String(x.serie).trim()] = x;
+  } catch (e) {}
+
   const ventas = pvs.map(p => {
     const u = unis[p.unidadid] || {};
     const cli = clis[String(p.cliente || '').trim()] || {};
     const key = _normPv(p.numero);
     const m = man[key] || {};
+    const fin = _cuadroDePv(dcByPv[p.numero] || []);
+    const esAA = (String(p.numero).split('/')[1] === '8') || fin.hasVTPDA;
+    const us = (usByPv[p.numero] || [])[0];
+    const sld = saldoBySerie[String(u.serie || '').trim()];
     return {
       preventa: key,
       pvId: Number(p.prevtaid) || 0,   // orden de creación (id secuencial Oversoft)
@@ -438,12 +565,26 @@ function getAdmVentas() {
       usado: (Number(p.usadoid) || 0) > 0,
       montoFinanciado: Number(p.financiacion_importe) || 0,
       patentaCliente: !!p.patentacliente,
+      // --- cuadro financiero (detcash) ---
+      tipo: esAA ? 'AA' : fin.tipo,           // AA | CONTADO | FINANCIA_VW | FINANCIA_TG | FINANCIA_OTROS
+      financia: fin.financia,                  // nombre del financiador (si aplica)
+      cuadro: fin.cuadro,                      // líneas: concepto/plan/cobrado/saldo/vto/fechaCobro/recibos
+      totalPlan: fin.totalPlan,
+      totalCobrado: fin.totalCobrado,
+      falta: fin.falta,
+      creditoCobrado: fin.creditoCobrado,      // {ok, fecha} si hay financiación
+      usadoParte: us ? { marca: String(us.marca || '').trim(), modelo: String(us.modelo || '').trim(), patente: String(us.patente || '').trim(), anio: us.anio || '', toma: Number(us.preciodetoma) || 0 } : null,
+      // pago de la unidad a VW (de saldos-tga, por serie): fecha + paga/impaga.
+      // Si saldos NO la detecta pero la unidad tiene +3 meses (por fecha de
+      // recepción, o la venta si falta) → por defecto PAGA (obvio que ya se pagó).
+      pagoVW: _pagoVWdeVenta(sld, u.fechaderecepcion, p.fecha),
       comentario: [String(p.comentario || '').trim(), String(p.comentarioaux || '').trim()].filter(Boolean).join('\n'),
       manual: {
         mes_patentamiento:  m.mes_patentamiento || '',
         patenta:            m.patenta || '',
         admin:              m.admin || '',
         tipo_carpeta:       m.tipo_carpeta || '',
+        credito_liquidado:  m.credito_liquidado || '',   // SI/NO que pone la adm (fecha sale del recibo)
         fecha_liquidacion:  m.fecha_liquidacion || '',
         reventa_particular: m.reventa_particular || '',
         fecha_pago_vw:      m.fecha_pago_vw || '',
@@ -524,7 +665,7 @@ function migrarAdmVentasDesdeHoja() {
 function saveAdmVenta(body) {
   const pv = String(body.preventa || '').trim();
   if (!pv) return { error: 'falta preventa' };
-  const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'notas'];
+  const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'credito_liquidado', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'notas'];
   const row = { preventa: pv, updated_at: new Date().toISOString(), updated_by: String(body.usuario || '') };
   const campos = body.campos || {};
   for (const k of permitidos) if (campos[k] !== undefined) row[k] = (campos[k] === '' ? null : campos[k]);
@@ -534,6 +675,224 @@ function saveAdmVenta(body) {
   // patentamientos se arma desde adm_ventas → invalidar ambos caches
   try { CacheService.getScriptCache().removeAll(['admventas', 'patentamientos']); } catch (e) {}
   return { ok: true, preventa: pv };
+}
+
+// =======================================================================
+// COMPRAS VW — reemplazo del Sheet de Valeria.
+// Flujo: Valeria carga primero (serie/modelo/color/fc/neto/...). La unidad
+// aparece en Oversoft 1-2 días después → detectamos por serie y mostramos el
+// modelo de Oversoft para conciliar. Al tildar "conciliado", el nombre oficial
+// pasa a ser el de Oversoft. Impuestos calculados (IVA por modelo + percep.).
+// =======================================================================
+function _ivaRateCompra(modelo) {
+  const m = String(modelo || '').toUpperCase();
+  // utilitarios → IVA 10,5%; autos → 21%
+  return (m.indexOf('AMAROK') >= 0 || m.indexOf('SAVEIRO') >= 0) ? 0.105 : 0.21;
+}
+function _impuestosCompra(neto, modelo, row) {
+  neto = Number(neto) || 0;
+  const rate = (row && row.iva_rate != null && row.iva_rate !== '') ? Number(row.iva_rate) : _ivaRateCompra(modelo);
+  const iva = neto * rate;
+  const iibb = neto * 0.0005;       // Percepción IIBB 0,05%
+  const iibbBsAs = neto * 0.0002;   // Percepción IIBB Bs As 0,02%
+  const pIva = Number(row && row.percep_iva) || 0;
+  const pEr = Number(row && row.percep_iibb_er) || 0;
+  const impInt = Number(row && row.imp_internos) || 0;
+  const r2 = function (n) { return Math.round(n * 100) / 100; };
+  return {
+    iva: r2(iva), ivaRate: rate, iibb: r2(iibb), iibbBsAs: r2(iibbBsAs),
+    control: r2(neto + iva + iibb + iibbBsAs + pIva + pEr + impInt),
+  };
+}
+function getComprasVW() {
+  let rows = [];
+  try { rows = _supaGet('/compras_vw?select=*&order=created_at.desc') || []; } catch (e) {}
+  const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
+  const get = (path) => { const res = UrlFetchApp.fetch(OVERSOFT_URL + path, h); return (res.getResponseCode() < 300) ? JSON.parse(res.getContentText()) : []; };
+  // Oversoft: unidades por serie (para detectar presencia + modelo/color/preventa)
+  const series = rows.map(r => String(r.serie || '').trim()).filter(Boolean);
+  const uni = {};
+  for (let i = 0; i < series.length; i += 60) {
+    const lote = series.slice(i, i + 60).map(s => '"' + s + '"').join(',');
+    for (const u of get('/unidades?select=serie,modelo,color,fechaderecepcion,certificado,preventa&serie=in.(' + encodeURIComponent(lote) + ')')) uni[String(u.serie).trim()] = u;
+  }
+  // mapa de modelo (código → descripción) y color (id → descripción)
+  const desc = {}; let off = 0;
+  if (series.length) for (let i = 0; i < 12; i++) {
+    const ch = get('/modelos?select=codigodecompra,descripcionoperativa&order=modeloid&limit=1000&offset=' + off);
+    for (const m of ch) if (m.codigodecompra) desc[String(m.codigodecompra).trim()] = m.descripcionoperativa;
+    if (ch.length < 1000) break; off += 1000;
+  }
+  const col = {};
+  if (series.length) for (const c of get('/colores?select=colorid,descripcion&limit=2000')) col[c.colorid] = String(c.descripcion || '').trim();
+
+  // Datos de la venta (Adm. ventas) por preventa: cliente, localidad, mes a
+  // patentar y el cuadro financiero (qué se cobró / qué falta). Reusa getAdmVentas.
+  const admByPv = {};
+  try { const adm = getAdmVentas(); for (const v of (adm.ventas || [])) admByPv[v.preventa] = v; } catch (e) {}
+
+  const out = rows.map(r => {
+    const u = uni[String(r.serie || '').trim()];
+    const enOversoft = !!u;
+    const modeloOversoft = u ? (desc[String(u.modelo || '').trim()] || String(u.modelo || '')) : '';
+    const conc = (r.conciliado === true);
+    const modeloOficial = (conc && modeloOversoft) ? modeloOversoft : String(r.modelo_valeria || '');
+    const imp = _impuestosCompra(r.neto, modeloOficial, r);
+    let estado = 'cargada';
+    if (enOversoft && conc) estado = 'conciliada';
+    else if (enOversoft) estado = 'sin_conciliar';
+    const pvNum = u ? String(u.preventa || '').trim() : '';
+    const av = pvNum ? admByPv[_normPv(pvNum)] : null;
+    const pv = av ? {
+      numero: pvNum,
+      cliente: av.cliente || '', localidad: av.localidad || '', vendedor: av.vendedor || '',
+      mesPat: (av.manual && av.manual.mes_patentamiento) || '', fechaPat: av.fechaPatentamiento || '',
+      tipo: av.tipo || '', financia: av.financia || '',
+      cuadro: av.cuadro || [], totalPlan: av.totalPlan || 0, totalCobrado: av.totalCobrado || 0,
+      falta: av.falta || 0, creditoCobrado: av.creditoCobrado || null,
+    } : null;
+    return Object.assign({}, r, {
+      enOversoft: enOversoft,
+      modeloOversoft: modeloOversoft,
+      colorOversoft: u ? (col[u.color] || '') : '',
+      preventaOversoft: pvNum,
+      modeloOficial: modeloOficial,
+      estado: estado,
+      impaga: !String(r.fecha_pago_vw || '').trim(),   // sin fecha de pago a VW = impaga
+      iva: imp.iva, ivaRate: imp.ivaRate, iibb: imp.iibb, iibbBsAs: imp.iibbBsAs, control: imp.control,
+      pv: pv,
+    });
+  });
+  return { compras: out, total: out.length, updatedAt: new Date().toISOString() };
+}
+
+// MIGRACIÓN una-vez (re-ejecutable, ignore-duplicates → no pisa lo que cargó
+// Valeria): vuelca lo de la planilla de saldos (hoja "compras" del espejo) a
+// compras_vw, SOLO desde 2026, con modelo+color de Oversoft por serie y
+// conciliado=true (como si Valeria ya lo hubiese cargado y chequeado).
+function migrarComprasVW() {
+  const ss = SpreadsheetApp.openById('19hKf6VaOsjGlk9s-biZtql5AW0oIV8oBlfqYGEfMH8I');
+  const sh = ss.getSheetByName('compras');
+  if (!sh) return { error: 'no existe la hoja compras del espejo' };
+  const range = sh.getRange(1, 1, sh.getLastRow(), Math.max(sh.getLastColumn(), 26));
+  const display = range.getDisplayValues();
+  const raw = range.getValues();
+  let headerRow = -1;
+  for (let i = 0; i < display.length; i++) { if (String(display[i][2] || '').toLowerCase().trim() === 'preventa') { headerRow = i; break; } }
+  if (headerRow < 0) return { error: 'no encontré header (col C=preventa)' };
+  const ESP = ['linea de credito floor plan', 'deuda floor plan', 'disponible floor plan', 'total disp real para pagar'];
+  const items = [], seriesSet = {};
+  for (let i = headerRow + 1; i < display.length; i++) {
+    const d = display[i], r = raw[i];
+    const modeloSheet = String(d[8] || '').trim();
+    if (ESP.indexOf(modeloSheet.toLowerCase()) >= 0) continue;
+    const serie = String(d[7] || '').trim().toUpperCase();
+    if (!serie) continue;
+    const mes = String(d[1] || '').trim();
+    const mm = mes.match(/-(\d{2})\s*$/);
+    if (!mm || Number(mm[1]) < 26) continue;           // solo 2026 en adelante
+    items.push({
+      serie: serie, mes: mes, modelo_sheet: modeloSheet, color_sheet: String(d[11] || '').trim(),
+      fc_numero: String(d[9] || '').trim(), fecha_fc: String(d[12] || '').trim(),
+      vence: String(d[13] || '').trim(), fecha_pago_vw: String(d[14] || '').trim(),
+      fecha_certif: String(d[16] || '').trim(), importe_saldo: Number(r[10]) || 0, neto: Number(r[19]) || 0,
+    });
+    seriesSet[serie] = true;
+  }
+  // Oversoft: modelo (desc) + color (desc) por serie
+  const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
+  const get = (path) => { const res = UrlFetchApp.fetch(OVERSOFT_URL + path, h); return (res.getResponseCode() < 300) ? JSON.parse(res.getContentText()) : []; };
+  const series = Object.keys(seriesSet);
+  const uni = {};
+  for (let i = 0; i < series.length; i += 60) {
+    const lote = series.slice(i, i + 60).map(s => '"' + s + '"').join(',');
+    for (const u of get('/unidades?select=serie,modelo,color&serie=in.(' + encodeURIComponent(lote) + ')')) uni[String(u.serie).trim()] = u;
+  }
+  const desc = {}; let off = 0;
+  for (let i = 0; i < 12; i++) { const ch = get('/modelos?select=codigodecompra,descripcionoperativa&order=modeloid&limit=1000&offset=' + off); for (const m of ch) if (m.codigodecompra) desc[String(m.codigodecompra).trim()] = m.descripcionoperativa; if (ch.length < 1000) break; off += 1000; }
+  const col = {};
+  for (const c of get('/colores?select=colorid,descripcion&limit=2000')) col[c.colorid] = String(c.descripcion || '').trim();
+  const now = new Date().toISOString();
+  const rows = items.map(it => {
+    const u = uni[it.serie];
+    const modeloOvs = u ? (desc[String(u.modelo || '').trim()] || '') : '';
+    const colorOvs = u ? (col[u.color] || '') : '';
+    return {
+      serie: it.serie, mes: it.mes,
+      modelo_valeria: modeloOvs || it.modelo_sheet, color: colorOvs || it.color_sheet,
+      conciliado: !!u,
+      fc_numero: it.fc_numero || null, fecha_fc: it.fecha_fc || null, vence: it.vence || null,
+      fecha_pago_vw: it.fecha_pago_vw || null, fecha_certif: it.fecha_certif || null,
+      importe_saldo: it.importe_saldo || null, neto: it.neto || null,
+      updated_at: now, updated_by: 'migracion',
+    };
+  });
+  const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates' };
+  let insertados = 0;
+  for (let i = 0; i < rows.length; i += 100) {
+    const lote = rows.slice(i, i + 100);
+    const res = UrlFetchApp.fetch(SUPA_URL + '/compras_vw?on_conflict=serie', { method: 'post', headers: hh, payload: JSON.stringify(lote), muteHttpExceptions: true });
+    if (res.getResponseCode() >= 300) return { error: 'insert falló: ' + res.getContentText().slice(0, 300), insertados: insertados };
+    insertados += lote.length;
+  }
+  try { CacheService.getScriptCache().remove('comprasvw'); } catch (e) {}
+  return { ok: true, candidatos: rows.length, conciliados: rows.filter(r => r.conciliado).length };
+}
+function saveCompraVW(body) {
+  const serie = String(body.serie || '').trim().toUpperCase();
+  if (!serie) return { error: 'falta serie' };
+  const permitidos = ['mes', 'modelo_valeria', 'color', 'fc_numero', 'fecha_fc', 'vence', 'fecha_pago_vw', 'neto', 'percep_iva', 'percep_iibb_er', 'imp_internos', 'importe_saldo', 'fecha_certif', 'notas', 'conciliado', 'iva_rate'];
+  const numericos = ['neto', 'percep_iva', 'percep_iibb_er', 'imp_internos', 'importe_saldo', 'iva_rate'];
+  const row = { serie: serie, updated_at: new Date().toISOString(), updated_by: String(body.usuario || '') };
+  const campos = body.campos || {};
+  for (const k of permitidos) if (campos[k] !== undefined) {
+    let v = campos[k];
+    if (numericos.indexOf(k) >= 0) v = (v === '' || v === null) ? null : Number(v);
+    else if (k === 'conciliado') v = (v === true || v === 'true' || v === 1);
+    else v = (v === '' ? null : v);
+    row[k] = v;
+  }
+  const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
+  const res = UrlFetchApp.fetch(SUPA_URL + '/compras_vw?on_conflict=serie', { method: 'post', headers: hh, payload: JSON.stringify(row), muteHttpExceptions: true });
+  if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200) };
+  try { CacheService.getScriptCache().remove('comprasvw'); } catch (e) {}
+  return { ok: true, serie: serie };
+}
+// FLUJO FINANCIERO: junta los cobros pendientes de las ventas vigentes
+// (ingresos esperados, de getAdmVentas: cada concepto no cobrado con su vto) y
+// los pagos pendientes a VW (egresos, de compras_vw impagas con su vence).
+// El front agrupa por semana y arma la línea de tiempo.
+function getFlujoFinanciero() {
+  const ingresos = [];
+  try {
+    const adm = getAdmVentas();
+    for (const v of (adm.ventas || [])) {
+      for (const c of (v.cuadro || [])) {
+        const saldo = Math.round(((c.plan || 0) - (c.cobrado || 0)));
+        if (saldo > 1) ingresos.push({ fecha: c.vto || '', monto: saldo, pv: v.preventa, cliente: v.cliente || '', localidad: v.localidad || '', concepto: c.concepto || '', modelo: v.modelo || '' });
+      }
+    }
+  } catch (e) {}
+  const egresos = [];
+  try {
+    const rows = _supaGet('/compras_vw?select=serie,vence,fecha_pago_vw,importe_saldo,modelo_valeria,mes') || [];
+    for (const r of rows) {
+      const impaga = !String(r.fecha_pago_vw || '').trim();
+      const monto = Number(r.importe_saldo) || 0;
+      if (impaga && monto > 0) egresos.push({ vence: String(r.vence || ''), monto: monto, serie: r.serie, modelo: r.modelo_valeria || '', mes: r.mes || '' });
+    }
+  } catch (e) {}
+  return { ingresos: ingresos, egresos: egresos, updatedAt: new Date().toISOString() };
+}
+
+function delCompraVW(body) {
+  const serie = String(body.serie || '').trim().toUpperCase();
+  if (!serie) return { error: 'falta serie' };
+  const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON };
+  const res = UrlFetchApp.fetch(SUPA_URL + '/compras_vw?serie=eq.' + encodeURIComponent(serie), { method: 'delete', headers: hh, muteHttpExceptions: true });
+  if (res.getResponseCode() >= 300) return { error: 'borrar falló: ' + res.getContentText().slice(0, 200) };
+  try { CacheService.getScriptCache().remove('comprasvw'); } catch (e) {}
+  return { ok: true, serie: serie };
 }
 
 // =======================================================================
@@ -911,6 +1270,8 @@ function doPost(e) {
     if (accion === 'setajustecolor')       return jsonResponse(saveAjusteColor(body));
     if (accion === 'setsecret')            return jsonResponse(_setSecret(body));
     if (accion === 'setadmventa')          return jsonResponse(saveAdmVenta(body));
+    if (accion === 'setcompravw')          return jsonResponse(saveCompraVW(body));
+    if (accion === 'delcompravw')          return jsonResponse(delCompraVW(body));
     if (accion === 'instalartriggersnapshot') return jsonResponse(_instalarTriggerSnapshot());
     return jsonResponse({ error: 'accion desconocida: ' + accion });
   } catch (err) {
