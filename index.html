@@ -1176,12 +1176,13 @@ table.patent-tbl.resumida .col-extra { display: none; }
 .reparto-barra-inner { display: flex; align-items: center; gap: 10px; max-width: 1100px; margin: 0 auto; flex-wrap: wrap; }
 .reparto-barra-inner span { flex: 1 1 auto; font-size: 14px; min-width: 110px; }
 .reparto-comprar { white-space: nowrap; }
-#repartoContent { padding-bottom: 96px; }
+#repartoContent { padding-bottom: 24px; }
 .reparto-concil { font-size: 11px; color: var(--vw-grey-4); margin-top: 4px; line-height: 1.5; }
 .reparto-concil .ok { color: #1a7f37; font-weight: 600; }
 .reparto-concil .warn { color: #b00020; font-weight: 600; }
 .reparto-barra-inner span { flex: 1; font-size: 14px; }
-.reparto-comprar { background: var(--vw-blue) !important; }
+.reparto-comprar { background: var(--vw-blue) !important; color: #fff !important; white-space: nowrap; font-weight: 600; }
+.reparto-comprar:disabled { opacity: .4; cursor: not-allowed; }
 .reparto-stock-btn { background: none; border: 0; color: var(--vw-blue); font-weight: 600; cursor: pointer; font-size: 13px; padding: 0; }
 .reparto-stock-btn:hover { text-decoration: underline; }
 .reparto-chev { font-size: 9px; }
@@ -3329,15 +3330,12 @@ async function _repartoPost(obj) {
   return res.json();
 }
 
-function repartoToggleSel(vin) { if (repartoSel[vin]) delete repartoSel[vin]; else repartoSel[vin] = true; repartoRenderBarra(); }
-function repartoRenderBarra() {
-  const bar = document.getElementById('repartoBarra'); if (!bar) return;
+function repartoToggleSel(vin) { if (repartoSel[vin]) delete repartoSel[vin]; else repartoSel[vin] = true; repartoUpdBtn(); }
+function repartoUpdBtn() {
   const n = Object.keys(repartoSel).length;
-  if (!n) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
-  bar.style.display = 'block';
-  bar.innerHTML = '<div class="reparto-barra-inner"><span><strong>' + n + '</strong> unidad' + (n !== 1 ? 'es' : '') + ' seleccionada' + (n !== 1 ? 's' : '') + '</span>'
-    + '<button class="reparto-link" onclick="repartoSel={};renderReparto()">Limpiar</button>'
-    + '<button class="refresh reparto-comprar" onclick="repartoComprar()">Comprar seleccionadas (' + n + ')</button></div>';
+  const b = document.getElementById('repartoBtnComprar');
+  if (b) { b.textContent = 'Comprar seleccionadas (' + n + ')'; b.disabled = n === 0; }
+  const l = document.getElementById('repartoBtnLimpiar'); if (l) l.style.display = n ? '' : 'none';
 }
 function repartoToggleBox(id, btn) {
   const el = document.getElementById(id); if (!el) return;
@@ -3471,18 +3469,18 @@ function renderReparto() {
   html += '<label class="reparto-meses">Vendido: <select onchange="repartoMeses=Number(this.value);repartoFiltrar()">'
     + '<option value="3"' + (repartoMeses === 3 ? ' selected' : '') + '>últ. 3 meses</option>'
     + '<option value="2"' + (repartoMeses === 2 ? ' selected' : '') + '>últ. 2 meses</option>'
-    + '<option value="1"' + (repartoMeses === 1 ? ' selected' : '') + '>mes actual</option></select></label></div>';
+    + '<option value="1"' + (repartoMeses === 1 ? ' selected' : '') + '>mes actual</option></select></label>'
+    + '<button id="repartoBtnComprar" class="refresh reparto-comprar" disabled onclick="repartoComprar()">Comprar seleccionadas (' + Object.keys(repartoSel).length + ')</button>'
+    + '<button id="repartoBtnLimpiar" class="reparto-link" style="display:none" onclick="repartoSel={};renderReparto()">Limpiar selección</button></div>';
   html += '<div id="repartoTablaWrap"></div>';
-  html += '<p class="reparto-foot">Tildá las unidades a comprar y "Comprar seleccionadas": te arma el texto para VW y pasan a la sección "Comprado · a conciliar" de abajo.</p>';
+  html += '<p class="reparto-foot">Tildá las unidades a comprar y dale "Comprar seleccionadas" (arriba): te arma el texto para VW y pasan a la sección "Comprado · a conciliar" de abajo.</p>';
 
   // Sección "Comprado · a conciliar" (abajo de todo): todo lo marcado comprado.
   html += repartoCompradoSec(items);
 
-  html += '<div id="repartoBarra" class="reparto-barra" style="display:none"></div>';
-
   wrap.innerHTML = html;
   repartoFiltrar();
-  repartoRenderBarra();
+  repartoUpdBtn();
 }
 
 // Sección con las unidades marcadas "comprado" (a conciliar contra Oversoft).
