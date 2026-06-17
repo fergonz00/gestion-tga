@@ -753,10 +753,13 @@ function getComprasVW() {
       cuadro: av.cuadro || [], totalPlan: av.totalPlan || 0, totalCobrado: av.totalCobrado || 0,
       falta: av.falta || 0, creditoCobrado: av.creditoCobrado || null,
     } : null;
+    const colorOversoft = u ? (col[u.color] || '') : '';
     return Object.assign({}, r, {
       enOversoft: enOversoft,
       modeloOversoft: modeloOversoft,
-      colorOversoft: u ? (col[u.color] || '') : '',
+      colorOversoft: colorOversoft,
+      // color oficial: el de Oversoft cuando está conciliada; si no, el de VW.
+      color: (conc && colorOversoft) ? colorOversoft : String(r.color || ''),
       preventaOversoft: pvNum,
       modeloOficial: modeloOficial,
       estado: estado,
@@ -2741,7 +2744,55 @@ function marcarComprado(body) {
   var res = UrlFetchApp.fetch(SUPA_URL + '/reparto_vw?vin=in.(' + _repartoInList(vins) + ')', {
     method: 'patch', headers: Object.assign(_repartoWHeaders(), { Prefer: 'return=minimal' }),
     payload: JSON.stringify({ estado_compra: 'comprado', comprado_at: new Date().toISOString() }), muteHttpExceptions: true });
-  return res.getResponseCode() < 300 ? { ok: true } : { ok: false, error: 'supa ' + res.getResponseCode() };
+  if (res.getResponseCode() >= 300) return { ok: false, error: 'supa ' + res.getResponseCode() };
+  // Que aparezcan YA en Compras VW de Valeria, antes de entrar a Oversoft.
+  var sembradas = 0;
+  try { sembradas = _sembrarComprasVWdesdeReparto(vins); } catch (e) {}
+  return { ok: true, comprasVW: sembradas };
+}
+
+// serie = últimos 8 del VIN (ej 8AWJD62H6TA012322 → TA012322); así matchea la
+// serie de Oversoft cuando la unidad entra, y concilia por serie en Compras VW.
+function _serieDeVin(vin) {
+  var s = String(vin || '').trim().toUpperCase();
+  return s.length >= 8 ? s.slice(-8) : s;
+}
+// periodo "2026-06" → "junio-26" (formato mes de compras_vw).
+function _mesNombrePeriodo(periodo) {
+  var m = String(periodo || '').match(/^(\d{4})-(\d{2})/);
+  if (!m) return '';
+  var nombres = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  return nombres[parseInt(m[2], 10) - 1] + '-' + m[1].slice(-2);
+}
+// Crea/asegura filas en compras_vw para los VIN comprados en reparto. serie =
+// últimos 8 del VIN; modelo/color = los de VW (default). El modelo/color de
+// Oversoft pisa al conciliar. NO pisa filas existentes (ignore-duplicates), así
+// no borra lo que Valeria ya cargó (factura, vto, bruto). Devuelve cuántas mandó.
+function _sembrarComprasVWdesdeReparto(vins) {
+  if (!vins || !vins.length) return 0;
+  var rows = _repartoRead('/reparto_vw?select=vin,descripcion,my,familia,color_codigo,periodo&vin=in.(' + _repartoInList(vins) + ')') || [];
+  if (!rows.length) return 0;
+  var coloresDb = {};
+  try { (_repartoRead('/reparto_colores?select=codigo,nombre') || []).forEach(function (c) { coloresDb[c.codigo] = c.nombre; }); } catch (e) {}
+  var colores = Object.assign({}, REPARTO_COLORES_BASE, coloresDb);
+  var now = new Date().toISOString();
+  var payload = rows.map(function (r) {
+    var serie = _serieDeVin(r.vin);
+    var desc = String(r.descripcion || '').trim();
+    var my = String(r.my || '').replace(/^my/i, '').trim();
+    if (/^20\d\d$/.test(my)) my = my.slice(-2);   // "2026" → "26"
+    var modelo = ('VW ' + desc + (my ? ' MY' + my : '')).replace(/\s+/g, ' ').trim();
+    return {
+      serie: serie, mes: _mesNombrePeriodo(r.periodo),
+      modelo_valeria: modelo, color: colores[r.color_codigo] || String(r.color_codigo || ''),
+      conciliado: false, updated_at: now, updated_by: 'reparto'
+    };
+  }).filter(function (x) { return x.serie; });
+  if (!payload.length) return 0;
+  var hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' };
+  var r2 = UrlFetchApp.fetch(SUPA_URL + '/compras_vw?on_conflict=serie', { method: 'post', headers: hh, payload: JSON.stringify(payload), muteHttpExceptions: true });
+  try { CacheService.getScriptCache().remove('comprasvw'); } catch (e) {}
+  return (r2.getResponseCode() < 300) ? payload.length : 0;
 }
 function desmarcarComprado(body) {
   var vin = String((body && body.vin) || '').trim().toUpperCase();
@@ -2757,7 +2808,16 @@ function darOkReparto(body) {
   var res = UrlFetchApp.fetch(SUPA_URL + '/reparto_vw?vin=eq.' + encodeURIComponent(vin), {
     method: 'patch', headers: Object.assign(_repartoWHeaders(), { Prefer: 'return=minimal' }),
     payload: JSON.stringify({ estado_compra: 'ok' }), muteHttpExceptions: true });
-  return res.getResponseCode() < 300 ? { ok: true } : { ok: false, error: 'supa ' + res.getResponseCode() };
+  if (res.getResponseCode() >= 300) return { ok: false, error: 'supa ' + res.getResponseCode() };
+  // Dar OK = ya conciliado con Oversoft → marco la compra como conciliada para que
+  // en Compras VW tome modelo/color de Oversoft en vez del default de VW.
+  try {
+    var hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
+    UrlFetchApp.fetch(SUPA_URL + '/compras_vw?serie=eq.' + encodeURIComponent(_serieDeVin(vin)), {
+      method: 'patch', headers: hh, payload: JSON.stringify({ conciliado: true }), muteHttpExceptions: true });
+    CacheService.getScriptCache().remove('comprasvw');
+  } catch (e) {}
+  return { ok: true };
 }
 
 function guardarColoresReparto(body) {
