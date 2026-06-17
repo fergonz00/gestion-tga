@@ -1176,6 +1176,17 @@ table.patent-tbl.resumida .col-extra { display: none; }
 .reparto-barra-inner { display: flex; align-items: center; gap: 12px; }
 .reparto-barra-inner span { flex: 1; font-size: 14px; }
 .reparto-comprar { background: var(--vw-blue) !important; }
+.reparto-stock-btn { background: none; border: 0; color: var(--vw-blue); font-weight: 600; cursor: pointer; font-size: 13px; padding: 0; }
+.reparto-stock-btn:hover { text-decoration: underline; }
+.reparto-chev { font-size: 9px; }
+.reparto-detalle.hidden { display: none; }
+.reparto-detalle > td { background: var(--vw-grey-1); padding: 10px 14px !important; }
+.reparto-det-ttl { font-size: 12px; font-weight: 600; color: var(--vw-grey-4); margin-bottom: 6px; }
+.reparto-det-cols { display: flex; flex-wrap: wrap; gap: 6px; }
+.reparto-det-col { background: #fff; border: 1px solid var(--vw-grey-2); border-radius: 6px; padding: 3px 8px; font-size: 12px; }
+.reparto-det-col.match { border-color: var(--vw-blue); background: #eef3fc; font-weight: 600; }
+.reparto-det-buy { margin-top: 6px; font-size: 12px; color: #93231f; font-weight: 500; }
+.reparto-det-ok { margin-top: 6px; font-size: 12px; color: #1a7f37; }
 </style>
 
 <!-- pdf.js para parsing client-side de los NCs -->
@@ -3464,7 +3475,10 @@ function repartoFiltrar() {
     h += '<td><div class="reparto-modelo">' + escapeHtml((it.descripcion || '').replace(/^VW /, '')) + '</div><div class="reparto-fam">' + escapeHtml(it.familia || '') + '</div></td>';
     h += '<td>' + escapeHtml(it.color_nombre || '') + (it.color_nombre === it.color_codigo ? ' <span class="reparto-fam">(sin nombre)</span>' : '') + '</td>';
     h += '<td class="reparto-vin">' + escapeHtml(it.vin) + '</td>';
-    h += '<td class="num">' + (it.stockActual == null ? '<span class="reparto-fam">s/d</span>' : it.stockActual) + '</td>';
+    const stockCell = (it.stockActual == null)
+      ? '<span class="reparto-fam">s/d</span>'
+      : '<button class="reparto-stock-btn" onclick="repartoToggleDetalle(\'' + it.vin + '\')" title="Ver stock por color">' + it.stockActual + ' <span class="reparto-chev">▾</span></button>';
+    h += '<td class="num">' + stockCell + '</td>';
     h += '<td class="num">' + (vend == null ? '<span class="reparto-fam">s/d</span>' : vend) + '</td>';
     let estado;
     if (it.estado_compra === 'pendiente') estado = '<span class="reparto-fam">' + escapeHtml(it.status || 'pendiente') + '</span>';
@@ -3479,9 +3493,36 @@ function repartoFiltrar() {
       acc += '<button class="reparto-link" onclick="repartoDeshacer(\'' + it.vin + '\')">Deshacer</button></div>';
     }
     h += '<td class="num">' + acc + '</td></tr>';
+
+    // Fila de detalle (oculta): desglose de stock por color del modelo.
+    const cs = it.coloresStock || [];
+    const ofrecido = (it.color_nombre || '').trim().toLowerCase();
+    let det = '<div class="reparto-det-ttl">Stock actual por color:</div>';
+    if (!cs.length) {
+      det += '<div class="reparto-fam">No tenés stock de este modelo.</div>';
+    } else {
+      det += '<div class="reparto-det-cols">';
+      cs.forEach(c => {
+        const match = (c.color || '').trim().toLowerCase() === ofrecido;
+        det += '<span class="reparto-det-col' + (match ? ' match' : '') + '">' + escapeHtml(c.color) + ': <strong>' + c.stock + '</strong></span>';
+      });
+      det += '</div>';
+    }
+    const tiene = cs.some(c => (c.color || '').trim().toLowerCase() === ofrecido && (c.stock || 0) > 0);
+    if (it.stockActual != null) {
+      det += tiene
+        ? '<div class="reparto-det-ok">Ya tenés stock del color ofrecido (' + escapeHtml(it.color_nombre) + ').</div>'
+        : '<div class="reparto-det-buy">⚠ No tenés <strong>' + escapeHtml(it.color_nombre) + '</strong> en stock → conviene comprar.</div>';
+    }
+    h += '<tr id="repdet-' + it.vin + '" class="reparto-detalle hidden"><td colspan="8">' + det + '</td></tr>';
   });
   h += '</tbody></table></div></div>';
   wrap.innerHTML = h;
+}
+
+function repartoToggleDetalle(vin) {
+  const el = document.getElementById('repdet-' + vin);
+  if (el) el.classList.toggle('hidden');
 }
 
 // =======================================================================

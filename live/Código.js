@@ -2620,7 +2620,7 @@ function getRepartoComprado() {
   var mesKey = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM');
   var rows = [];
   try {
-    rows = _supaGet('/reparto_vw?select=vin&periodo=eq.' + mesKey
+    rows = _repartoRead('/reparto_vw?select=vin&periodo=eq.' + mesKey
       + '&estado_compra=eq.comprado') || [];
   } catch (e) {}
   var vins = rows.map(function (r) { return String(r.vin || '').trim().toUpperCase(); })
@@ -2676,6 +2676,13 @@ function _repartoWHeaders() {
   var svc = PropertiesService.getScriptProperties().getProperty('SUPA_SERVICE');
   return { apikey: svc, Authorization: 'Bearer ' + svc, 'Content-Type': 'application/json' };
 }
+// reparto_vw / reparto_colores tienen RLS que bloquea la anon (precios las lee con
+// service_role) → leemos con la service key, no con _supaGet (anon).
+function _repartoRead(path) {
+  var svc = PropertiesService.getScriptProperties().getProperty('SUPA_SERVICE');
+  var res = UrlFetchApp.fetch(SUPA_URL + path, { headers: { apikey: svc, Authorization: 'Bearer ' + svc }, muteHttpExceptions: true });
+  return res.getResponseCode() < 300 ? JSON.parse(res.getContentText()) : [];
+}
 function _repartoInList(arr) { return arr.map(function (s) { return '"' + String(s).trim().toUpperCase() + '"'; }).join(','); }
 // Réplica del _ntrim del motor (para cruzar por NOMBRE el reparto con ventas/stock).
 function _repartoNtrim(s) {
@@ -2714,7 +2721,7 @@ function cargarReparto(body) {
   if (!rows.length) return { ok: false, error: 'No se reconoció ninguna fila (¿pegaste la tabla con tabulaciones?)', nuevos: 0, total: 0, periodo: periodo };
   var vins = rows.map(function (r) { return r.vin; });
   var ya = {};
-  try { (_supaGet('/reparto_vw?select=vin&vin=in.(' + _repartoInList(vins) + ')') || []).forEach(function (r) { ya[r.vin] = true; }); } catch (e) {}
+  try { (_repartoRead('/reparto_vw?select=vin&vin=in.(' + _repartoInList(vins) + ')') || []).forEach(function (r) { ya[r.vin] = true; }); } catch (e) {}
   var nuevos = rows.filter(function (r) { return !ya[r.vin]; }).length;
   var ahora = new Date().toISOString();
   var payload = rows.map(function (r) { return Object.assign({}, r, { periodo: periodo, actualizado_at: ahora }); });
@@ -2779,19 +2786,19 @@ function getReparto() {
   var periodo = _repartoPeriodo();
   var rows = [];
   try {
-    rows = _supaGet('/reparto_vw?select=vin,canal,zona,centrega,modelo_codigo,my,familia,descripcion,color_codigo,comision,status,estado_compra,comprado_at&periodo=eq.' + periodo + '&estado_compra=neq.ok') || [];
+    rows = _repartoRead('/reparto_vw?select=vin,canal,zona,centrega,modelo_codigo,my,familia,descripcion,color_codigo,comision,status,estado_compra,comprado_at&periodo=eq.' + periodo + '&estado_compra=neq.ok') || [];
   } catch (e) {}
 
   var coloresDb = {};
-  try { (_supaGet('/reparto_colores?select=codigo,nombre') || []).forEach(function (c) { coloresDb[c.codigo] = c.nombre; }); } catch (e) {}
+  try { (_repartoRead('/reparto_colores?select=codigo,nombre') || []).forEach(function (c) { coloresDb[c.codigo] = c.nombre; }); } catch (e) {}
   var colores = Object.assign({}, REPARTO_COLORES_BASE, coloresDb);
 
-  // Ventas + stock por modelo (cruce por NOMBRE con el motor).
+  // Ventas + stock por modelo (cruce por NOMBRE con el motor) + desglose por color.
   var motorByNorm = {};
   try {
     var motor = _cached('motor', CACHE_TTL_SEC, false, getBaratitoMotor);
     (motor.modelos || []).forEach(function (m) {
-      var v = { ventasPorMes: m.ventasPorMes, stock: m.stock };
+      var v = { ventasPorMes: m.ventasPorMes, stock: m.stock, colores: m.colores || [] };
       if (m.modelo) motorByNorm[_repartoNtrim(m.modelo)] = v;
       if (m.nombreCorto) motorByNorm[_repartoNtrim(m.nombreCorto)] = v;
     });
@@ -2827,6 +2834,7 @@ function getReparto() {
       color_nombre: colores[r.color_codigo] || r.color_codigo,
       ventasPorMes: mm ? mm.ventasPorMes : null,
       stockActual: mm ? mm.stock : null,
+      coloresStock: mm ? (mm.colores || []) : null,
       enOversoft: !!ov, oversoft: ov, diasComprado: dias,
       alerta: r.estado_compra === 'comprado' && !ov && dias !== null && dias >= 2
     });
