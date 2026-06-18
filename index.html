@@ -362,6 +362,18 @@ tbody tr.expo:hover { background: linear-gradient(to right, rgba(139,92,246,0.12
 }
 .admv-scroll tbody tr:hover td:first-child { background: var(--vw-grey-1); }
 
+/* Barra de scroll horizontal DUPLICADA, fija arriba de la tabla y sincronizada
+   por JS con la tabla — para correrse a los costados sin bajar al final. */
+.admv-topbar {
+  overflow-x: auto; overflow-y: hidden;
+  border-bottom: 1px solid var(--vw-grey-2);
+}
+.admv-topbar-inner { height: 1px; }
+.admv-topbar::-webkit-scrollbar { height: 12px; }
+.admv-topbar::-webkit-scrollbar-track { background: var(--vw-grey-1); border-radius: 6px; }
+.admv-topbar::-webkit-scrollbar-thumb { background: var(--vw-blue); border-radius: 6px; }
+.admv-topbar::-webkit-scrollbar-thumb:hover { background: var(--vw-grey-4); }
+
 .serie { font-weight: 600; color: var(--vw-blue); font-family: monospace; font-size: 12px; }
 .muted { color: var(--vw-grey-3); font-size: 11px; }
 
@@ -893,6 +905,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
   .admv-scroll { max-height: none; overflow: visible; }
   .admv-scroll thead th,
   .admv-scroll tbody td:first-child { position: static; box-shadow: none; }
+  .admv-topbar { display: none; }
 }
 
 
@@ -1909,7 +1922,7 @@ function renderAdmVentas() {
 
   // .table-scroll = scroll horizontal de respaldo si aún así no entra
   // (sin él, .table-wrap tiene overflow:hidden y cortaba columnas).
-  h += '<div class="table-wrap"><div class="table-scroll admv-scroll"><table class="admv responsive-cards" style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:1100px">';
+  h += '<div class="table-wrap"><div class="admv-topbar"><div class="admv-topbar-inner"></div></div><div class="table-scroll admv-scroll"><table class="admv responsive-cards" style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:1100px">';
   h += '<thead style="white-space:nowrap"><tr>'
      + '<th style="text-align:left">PV</th><th style="text-align:left">Fecha</th><th style="text-align:left">Modelo</th>'
      + '<th style="text-align:left">Cliente</th><th style="text-align:left">Vendedor</th><th style="text-align:left">Serie</th>'
@@ -2001,6 +2014,42 @@ function renderAdmVentas() {
   h += '</tbody></table></div></div>';
   h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio y fecha de patentamiento salen de Oversoft en vivo (no se editan). El resto se completa acá y <b>se guarda solo al cambiar cada campo</b> (el ✓ de la fila se pone verde cuando guardó bien; si algo falla, avisa y podés reintentar con el ✓). El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes. El mes de cada carpeta (selector de arriba, mismo criterio que Patentamientos) = fecha real de Oversoft o, si aún no está patentada, el "Mes pat. ✔adm" — las ventas nuevas sin ninguno de los dos entran al mes en curso (cambiale el "Mes pat." si va para otro mes).</div>';
   cont.innerHTML = h;
+  setupAdmTopScroll();
+}
+
+// Sincroniza la barra de scroll superior (admv-topbar) con la tabla (admv-scroll):
+// mover una mueve la otra. La barra de arriba queda siempre visible aunque no
+// hayas bajado, así te corrés a los costados sin ir al final de la tabla.
+function setupAdmTopScroll() {
+  const cont = document.getElementById('admVentasContent');
+  if (!cont) return;
+  const bar      = cont.querySelector('.admv-topbar');
+  const inner    = cont.querySelector('.admv-topbar-inner');
+  const scroller = cont.querySelector('.admv-scroll');
+  const table    = scroller ? scroller.querySelector('table.admv') : null;
+  if (!bar || !inner || !scroller || !table) return;
+
+  const ajustarAncho = () => { inner.style.width = table.scrollWidth + 'px'; };
+  ajustarAncho();
+  requestAnimationFrame(ajustarAncho);   // de nuevo cuando el layout terminó
+
+  let lock = false;
+  bar.addEventListener('scroll', () => {
+    if (lock) return; lock = true; scroller.scrollLeft = bar.scrollLeft; lock = false;
+  });
+  scroller.addEventListener('scroll', () => {
+    if (lock) return; lock = true; bar.scrollLeft = scroller.scrollLeft; lock = false;
+  });
+
+  if (!setupAdmTopScroll._resize) {
+    setupAdmTopScroll._resize = true;
+    window.addEventListener('resize', () => {
+      const c = document.getElementById('admVentasContent');
+      const t = c && c.querySelector('table.admv');
+      const i = c && c.querySelector('.admv-topbar-inner');
+      if (t && i) i.style.width = t.scrollWidth + 'px';
+    });
+  }
 }
 
 async function guardarAdmVenta(preventa) {
