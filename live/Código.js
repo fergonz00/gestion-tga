@@ -78,7 +78,7 @@ function doGet(e) {
     if (tipo === 'madre')           return jsonResponse(getMadreSheet(params));   // lectura cruda de una pestaña de la planilla madre
     if (tipo === 'precios')         return jsonResponse(_cached('precios', CACHE_TTL_SEC, fresh, getPreciosActualBT)); // espejo de precios/ganancia de "Actual BT"
     if (tipo === 'motor')           return jsonResponse(_cached('motor', CACHE_TTL_SEC, fresh, getBaratitoMotor));     // MOTOR: calcula desde Supabase (no la planilla)
-    if (tipo === 'snapshotbt')      return jsonResponse(snapshotBTMensual(String(params.mes || '') || null)); // sync manual de la BT vigente a Supabase
+    if (tipo === 'snapshotbt')      return jsonResponse(snapshotBTMensual(String(params.mes || '') || null, String(params.hoja || '') || null, String(params.dry || '') === '1')); // sync de la BT a Supabase (hoja override + dry para preview)
     if (tipo === 'admventas')       return jsonResponse(_cached('admventas', CACHE_TTL_SEC, fresh, getAdmVentas)); // adm de ventas: Oversoft + campos manuales
     if (tipo === 'migraradmventas') return jsonResponse(migrarAdmVentasDesdeHoja()); // una-vez: vuelca lo ya cargado en la hoja a adm_ventas
     if (tipo === 'comprasvw')       return jsonResponse(_cached('comprasvw', CACHE_TTL_SEC, fresh, getComprasVW)); // compras a VW: carga Valeria + conciliación Oversoft
@@ -611,6 +611,8 @@ function getAdmVentas() {
         fecha_liquidacion:  m.fecha_liquidacion || '',
         reventa_particular: m.reventa_particular || '',
         fecha_pago_vw:      m.fecha_pago_vw || '',
+        entrega_programada: m.entrega_programada || '',   // fecha+hora pactada de entrega (datetime-local)
+        retiro:             !!m.retiro,                    // true = el cliente ya retiró la unidad
         notas:              m.notas || '',
       },
     };
@@ -627,7 +629,7 @@ function getVentasV2() {
   const get = (path) => { const res = UrlFetchApp.fetch(OVERSOFT_URL + path, h); return res.getResponseCode() < 300 ? JSON.parse(res.getContentText()) : []; };
 
   const desdeStr = VENTAS_MES_MINIMO + '-01';
-  const pvs = get('/preventas?select=prevtaid,numero,fecha,vendedorid,unidadid,modelo,precioventa,tasadeivaid&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + desdeStr + '&order=prevtaid.desc&limit=3000');
+  const pvs = get('/preventas?select=prevtaid,numero,fecha,vendedorid,unidadid,modelo,precioventa,tasadeivaid,comentario,comentarioaux&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + desdeStr + '&order=prevtaid.desc&limit=3000');
 
   // unidades (serie + color) en lotes de 100
   const uidSet = {}; for (const p of pvs) if (p.unidadid) uidSet[p.unidadid] = true;
@@ -662,6 +664,10 @@ function getVentasV2() {
   }
   const ncDe = (codFull) => { const d = desc[String(codFull || '').trim()]; return d ? (catByNorm[_ntrim(d)] || null) : null; };
 
+  // Accesorios manuales (tabla ventas_manual, key = preventa normalizada).
+  const manV = {};
+  try { for (const m of _supaGet('/ventas_manual?select=preventa,accesorios')) manV[m.preventa] = Number(m.accesorios) || 0; } catch (e) {}
+
   const cuentaPorMes = {}, acumPorMes = {};
   const filas = [];
   // proceso cronológico (asc) para la gcia neta acumulada por mes
@@ -686,7 +692,10 @@ function getVentasV2() {
       gciaPct = _gciaVentaPct(monto, ivaFrac, listaM, Number(btMes.costo_concesionario) || 0, ccM, otrosM);
       if (gciaPct !== null) gciaPesos = Math.round(gciaPct * listaM);
     }
-    if (gciaPesos !== null) acumPorMes[mesKey] = (acumPorMes[mesKey] || 0) + gciaPesos;
+    const acc = manV[_normPv(p.numero)] || 0;   // accesorios manuales: la fórmula los SUMA
+    if (gciaPesos !== null) { gciaPesos += acc; acumPorMes[mesKey] = (acumPorMes[mesKey] || 0) + gciaPesos; }
+    const comentario = [String(p.comentario || '').trim(), String(p.comentarioaux || '').trim()].filter(Boolean).join('\n');
+    const mencionaAcc = /\bacc/i.test(comentario);
 
     const vendNombre = vend[p.vendedorid] || '';
     filas.push({
@@ -705,6 +714,9 @@ function getVentasV2() {
       gciaNetaAcum: gciaPesos !== null ? acumPorMes[mesKey] : null,
       vendedor: _matchVendedor(vendNombre) || vendNombre,
       vendedorRaw: vendNombre,
+      accesorios: acc,
+      comentario: comentario,
+      mencionaAcc: mencionaAcc,
       sinBt: !btMes,
       _dbg: btMes ? { nc: nc.nombre_corto, lista: Number(btMes.precio_lista)||0, costo: Number(btMes.costo_concesionario)||0,
         cc: Number(((incPorMes[mesKey]||{})[nc.nombre_corto]||{}).performance)||0,
@@ -792,13 +804,27 @@ function migrarAdmVentasDesdeHoja() {
 }
 
 // Upsert de los campos manuales de una carpeta (key = # preventa normalizado).
+// Guarda los accesorios (manual) de una venta en ventas_manual (key=preventa norm).
+function saveVentaManual(body) {
+  const pv = _normPv(body.preventa || '');
+  if (!pv) return { error: 'falta preventa' };
+  const acc = (body.accesorios === '' || body.accesorios == null) ? 0 : Math.round(Number(body.accesorios) || 0);
+  const row = { preventa: pv, accesorios: acc, updated_at: new Date().toISOString(), updated_by: String(body.usuario || '') };
+  const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
+  const res = UrlFetchApp.fetch(SUPA_URL + '/ventas_manual?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(row), muteHttpExceptions: true });
+  if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200) };
+  return { ok: true, preventa: pv, accesorios: acc };
+}
+
 function saveAdmVenta(body) {
   const pv = String(body.preventa || '').trim();
   if (!pv) return { error: 'falta preventa' };
-  const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'credito_liquidado', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'notas'];
+  const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'credito_liquidado', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'entrega_programada', 'notas'];
   const row = { preventa: pv, updated_at: new Date().toISOString(), updated_by: String(body.usuario || '') };
   const campos = body.campos || {};
   for (const k of permitidos) if (campos[k] !== undefined) row[k] = (campos[k] === '' ? null : campos[k]);
+  // retiro es boolean (checkbox): acepta true/false o 'true'/'SI'
+  if (campos.retiro !== undefined) row.retiro = (campos.retiro === true || campos.retiro === 'true' || campos.retiro === 'SI');
   const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
   const res = UrlFetchApp.fetch(SUPA_URL + '/adm_ventas?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(row), muteHttpExceptions: true });
   if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200) };
@@ -1043,7 +1069,7 @@ function delCompraVW(body) {
 // se actualiza a mitad de mes (lista nueva, fe de erratas), el histórico se
 // corrige solo en la próxima corrida.
 const SNAPSHOT_ORIGEN = 'snapshot Actual BT';
-function snapshotBTMensual(mesOverride) {
+function snapshotBTMensual(mesOverride, hojaOverride, dryRun) {
   const mes = mesOverride || _yyyyMm(new Date());
   const svc = PropertiesService.getScriptProperties().getProperty('SUPA_SERVICE');
   if (!svc) return { error: 'falta SUPA_SERVICE en Script Properties (doPost setsecret)' };
@@ -1076,14 +1102,16 @@ function snapshotBTMensual(mesOverride) {
   // "Actual BT": fila 2 header, datos desde 3. Cols (0-based, validadas contra
   // Supabase junio): 1 modelo · 2 lista · 20 cc s/iva · 21 cc c/iva · 23 cupo ·
   // 24 táctico · 25 whosale · 26 adic1 · 27 adic2 · 37 costo rep (AL).
-  const sh = SpreadsheetApp.openById(MADRE_ID).getSheetByName('Actual BT');
-  if (!sh) return { error: 'no encontré la pestaña Actual BT en la madre' };
+  const hojaBT = (typeof hojaOverride === 'string' && hojaOverride) ? hojaOverride : 'Actual BT';
+  const sh = SpreadsheetApp.openById(MADRE_ID).getSheetByName(hojaBT);
+  if (!sh) return { error: 'no encontré la pestaña ' + hojaBT + ' en la madre' };
   const data = sh.getRange(3, 1, sh.getLastRow() - 2, 38).getValues();
   const r2 = (x) => Math.round((Number(x) || 0) * 100) / 100;
 
   const precNuevos = [], incNuevos = [], sinMatch = [], difCurados = [];
   let precPatch = 0, incPatch = 0;
   const patch = (path, body) => {
+    if (dryRun) return true;   // dry-run: no escribe
     const res = UrlFetchApp.fetch(SUPA_URL + path, { method: 'patch', headers: hW, payload: JSON.stringify(body), muteHttpExceptions: true });
     return res.getResponseCode() < 300;
   };
@@ -1129,9 +1157,11 @@ function snapshotBTMensual(mesOverride) {
     }
   }
 
-  const out = { mes: mes, preciosNuevos: precNuevos.length, preciosActualizados: precPatch,
+  const out = { mes: mes, hoja: hojaBT, dryRun: !!dryRun, preciosNuevos: precNuevos.length, preciosActualizados: precPatch,
                 incNuevos: incNuevos.length, incActualizados: incPatch,
-                difCurados: difCurados, sinMatch: sinMatch };
+                difCurados: difCurados, sinMatch: sinMatch,
+                incNuevosDetalle: incNuevos.map(x => x.nombre_corto + ' | ' + x.tipo + ' = ' + x.monto_civa) };
+  if (dryRun) return out;   // preview: no escribe nada
   if (precNuevos.length) {
     const res = UrlFetchApp.fetch(SUPA_URL + '/precios_lista', { method: 'post', headers: hW, payload: JSON.stringify(precNuevos), muteHttpExceptions: true });
     if (res.getResponseCode() >= 300) return { error: 'insert precios_lista falló: ' + res.getContentText().slice(0, 300), parcial: out };
@@ -1219,12 +1249,20 @@ function getBaratitoMotor() {
   // 2) catálogo, 3) incentivos de TODOS los meses, 4) dto
   const cat = _supaGet('/catalogo_modelos?select=codigo,nombre_corto,nombre_bt,familia&activo=eq.true');
   const incPorMes = {};  // mes → nc → {tipo: civa}
-  for (const r of _supaGet('/incentivos?select=mes,nombre_corto,tipo,monto_civa')) {
+  const incDetPorMes = {};  // mes → nc → [ {tipo, montoCiva, montoSiva, condicion, circular} ]  (para mostrar de qué circular viene cada incentivo)
+  for (const r of _supaGet('/incentivos?select=mes,nombre_corto,tipo,monto_civa,monto_siva,condicion,circular')) {
     if (!incPorMes[r.mes]) incPorMes[r.mes] = {};
     if (!incPorMes[r.mes][r.nombre_corto]) incPorMes[r.mes][r.nombre_corto] = {};
     incPorMes[r.mes][r.nombre_corto][r.tipo] = Number(r.monto_civa) || 0;
+    if (!incDetPorMes[r.mes]) incDetPorMes[r.mes] = {};
+    if (!incDetPorMes[r.mes][r.nombre_corto]) incDetPorMes[r.mes][r.nombre_corto] = [];
+    incDetPorMes[r.mes][r.nombre_corto].push({
+      tipo: r.tipo, montoCiva: Number(r.monto_civa) || 0, montoSiva: Number(r.monto_siva) || 0,
+      condicion: r.condicion || '', circular: r.circular || '',
+    });
   }
   const incByNc = incPorMes[mesUsado] || {};
+  const incDetByNc = incDetPorMes[mesUsado] || {};
   const dtoByNc = {};
   for (const d of _supaGet('/dto_tg?select=nombre_corto,dto')) dtoByNc[d.nombre_corto] = Number(d.dto) || 0;
 
@@ -1305,6 +1343,9 @@ function getBaratitoMotor() {
       promGciaSinBt: gciaSinBt,      // ventas sin BT de su mes (quedan afuera)
       costos:        { iibb: iibb, comision: comision, cheque: cheque, fyf: PRECIOS_FYF },
       incentivos:    { cc90: 0, cc90Iva: cc90Iva, tactico: Number(ii.tactico)||0, whosale: Number(ii.whosale)||0, adicional1: Number(ii.adicional1)||0, adicional2: Number(ii.adicional2)||0, cupo: Number(ii.cupo)||0 },
+      // detalle por incentivo (monto c/IVA y s/IVA, condición y CIRCULAR de origen) para el desglose del Baratito
+      incentivosDet: incDetByNc[c.nombre_corto] || [],
+      mesIncentivos: mesUsado,
       ventasPorMes:  ventasNc[c.nombre_corto] || {},
       // stock por color (Oversoft) + ajustes de precio por color ('*' = todos)
       colores:       Object.entries(stockColorPorTrim[c.nombre_corto] || {})
@@ -1409,6 +1450,7 @@ function doPost(e) {
     if (accion === 'setajustecolor')       return jsonResponse(saveAjusteColor(body));
     if (accion === 'setsecret')            return jsonResponse(_setSecret(body));
     if (accion === 'setadmventa')          return jsonResponse(saveAdmVenta(body));
+    if (accion === 'setventamanual')       return jsonResponse(saveVentaManual(body));
     if (accion === 'setcompravw')          return jsonResponse(saveCompraVW(body));
     if (accion === 'delcompravw')          return jsonResponse(delCompraVW(body));
     if (accion === 'instalartriggersnapshot') return jsonResponse(_instalarTriggerSnapshot());

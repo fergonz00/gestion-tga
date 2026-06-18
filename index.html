@@ -1708,6 +1708,8 @@ let admVentasData = null;
 let admVentasFiltro = 'todas';        // 'pendientes' (sin dominio) | 'todas' | 'patentadas'
 let admVentasBusca = '';
 let admVentasMes = '';                // 'yyyy-mm' | '__sin__' | '__todos__' (default: mes actual)
+let admAgendaAbierta = false;         // panel "Agenda de entregas" desplegado
+let admAgendaSoloPend = false;        // en la agenda, mostrar solo los que aún NO retiraron
 let admVentasComAbiertos = new Set(); // keys con el comentario de la PV desplegado (sobrevive re-renders)
 
 function toggleAdmComentario(key) {
@@ -1767,7 +1769,7 @@ function _admFinRow(key, v, fs) {
   const abierto = admVentasFinAbiertos.has(key);
   const up = v.usadoParte;
   let t = '<tr id="admfin_' + key + '"' + (abierto ? '' : ' style="display:none"') + '>'
-    + '<td colspan="17" style="background:#f0f6ff;border-left:3px solid #001e50;padding:10px 14px;text-align:left">'
+    + '<td colspan="19" style="background:#f0f6ff;border-left:3px solid #001e50;padding:10px 14px;text-align:left">'
     + '<div style="font-weight:700;font-size:12px;margin-bottom:6px">💵 Cuadro financiero · PV ' + escapeHtml(v.preventa)
     + (up ? ' · <span style="color:#7a5b00">usado en parte de pago (' + fmtPesosCompact(up.toma) + ')</span>' : '')
     + (v.creditoCobrado ? ' · <span style="color:' + (v.creditoCobrado.ok ? '#0a7a30' : '#cc6600') + '">' + (v.creditoCobrado.ok ? 'Crédito cobrado ' + _fechaDMA(v.creditoCobrado.fecha) : 'Crédito pendiente') + '</span>' : '')
@@ -1904,7 +1906,16 @@ function renderAdmVentas() {
   h += '<input type="text" id="admBuscaInput" placeholder="🔍 PV, cliente, serie, dominio…" value="' + escapeHtml(admVentasBusca) + '" oninput="admVentasBusca=this.value;renderAdmVentas()" '
      + ' style="padding:7px 12px;border:1px solid var(--vw-grey-2);border-radius:8px;min-width:220px;font-size:13px">';
   h += '<span style="font-size:12px;color:var(--vw-grey-3)">' + rows.length + ' carpetas</span>';
+  // Botón que despliega la agenda/calendario de entregas (fecha+hora pactada por cliente)
+  const _pendEntregas = (admVentasData.ventas || []).filter(x => x.manual && x.manual.entrega_programada && !x.manual.retiro).length;
+  h += '<button onclick="admAgendaAbierta=!admAgendaAbierta;renderAdmVentas()" style="padding:6px 12px;border:1px solid ' + (admAgendaAbierta ? 'var(--vw-blue)' : 'var(--vw-grey-2)') + ';border-radius:16px;cursor:pointer;font-size:13px;'
+    + (admAgendaAbierta ? 'background:var(--vw-blue);color:#fff;font-weight:700' : 'background:#fff;color:var(--vw-grey-3)') + '">📅 Agenda de entregas'
+    + (_pendEntregas ? ' <span style="background:#cc6600;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700">' + _pendEntregas + '</span>' : '') + '</button>';
   h += '</div>';
+
+  // Panel de agenda/calendario de entregas (se arma de TODAS las carpetas con
+  // entrega pactada, sin importar el filtro de mes de la tabla).
+  if (admAgendaAbierta) h += renderAgendaEntregas();
 
   // .table-scroll = scroll horizontal de respaldo si aún así no entra
   // (sin él, .table-wrap tiene overflow:hidden y cortaba columnas).
@@ -1914,7 +1925,10 @@ function renderAdmVentas() {
      + '<th style="text-align:left">Cliente</th><th style="text-align:left">Vendedor</th><th style="text-align:left">Serie</th>'
      + '<th title="Pago de la unidad a VW (de Compras y Saldos, por serie): fecha o impaga">Pago VW</th>'
      + '<th style="text-align:left">Dominio</th><th style="text-align:left">F. patent.</th>'
-     + '<th>Patenta</th><th>Admin</th><th title="La adm confirma el mes una vez pagado el patentamiento (aunque Oversoft ya tenga la fecha)">Mes pat. ✔adm</th><th title="Forma de pago según Oversoft (formas de pago + recibos). 💵 abre el detalle">Tipo</th><th title="¿El crédito fue liquidado? lo marca la adm; la fecha sale sola del recibo">Créd. liq.</th><th>Rev/Part</th><th>Notas</th><th></th>'
+     + '<th>Patenta</th><th>Admin</th><th title="La adm confirma el mes una vez pagado el patentamiento (aunque Oversoft ya tenga la fecha)">Mes pat. ✔adm</th>'
+     + '<th title="Día y hora pactada para que el cliente retire la unidad">📅 Entrega</th>'
+     + '<th title="Tildar cuando el cliente finalmente retiró la unidad">Retiró</th>'
+     + '<th title="Forma de pago según Oversoft (formas de pago + recibos). 💵 abre el detalle">Tipo</th><th title="¿El crédito fue liquidado? lo marca la adm; la fecha sale sola del recibo">Créd. liq.</th><th>Rev/Part</th><th>Notas</th><th></th>'
      + '</tr></thead><tbody>';
 
   // Guardado AUTOMÁTICO: cualquier cambio en un campo dispara el guardado de
@@ -1975,6 +1989,17 @@ function renderAdmVentas() {
        + '<td data-label="Admin">' + sel(v.preventa, key, 'admin', m.admin, ['MECHI', 'ANTO', 'VALE', 'MONI'], 78) + '</td>'
        // Oversoft ya tiene fecha pero la adm no confirmó el mes → borde naranja
        + '<td data-label="Mes pat. ✔adm">' + inp(v.preventa, key, 'mes_patentamiento', m.mes_patentamiento, 88, 'month', (v.fechaPatentamiento && !m.mes_patentamiento) ? '#cc6600' : null) + '</td>'
+       + '<td data-label="📅 Entrega" style="white-space:nowrap">'
+         + '<input type="datetime-local" id="adm_entrega_programada_' + key + '" value="' + escapeHtml(m.entrega_programada || '') + '"'
+         + ' onchange="guardarAdmVenta(\'' + v.preventa + '\').then(function(){renderAdmVentas();})"'
+         + ' style="width:172px;padding:3px 5px;border:1px solid ' + (m.entrega_programada && !m.retiro ? '#0a66c2' : 'var(--vw-grey-2)') + ';border-radius:5px;font-size:12px">'
+       + '</td>'
+       + '<td data-label="Retiró" style="text-align:center;white-space:nowrap">'
+         + '<input type="checkbox" id="adm_retiro_' + key + '"' + (m.retiro ? ' checked' : '')
+         + ' onchange="guardarAdmVenta(\'' + v.preventa + '\').then(function(){renderAdmVentas();})"'
+         + ' title="Tildar cuando el cliente retiró la unidad" style="width:18px;height:18px;cursor:pointer;vertical-align:middle">'
+         + (m.retiro ? ' <span style="color:#0a7a30;font-weight:700;font-size:12px">✓ retiró</span>' : '')
+       + '</td>'
        + '<td data-label="Tipo" style="white-space:nowrap">'
          + '<span style="display:inline-block;background:' + chipC.bg + ';color:#fff;border-radius:10px;padding:2px 7px;font-size:11px;font-weight:700">' + tipoTxt + '</span>'
          + (tieneUsado ? ' <span style="display:inline-block;background:#7a5b00;color:#fff;border-radius:10px;padding:2px 6px;font-size:10px">usado</span>' : '')
@@ -1993,11 +2018,11 @@ function renderAdmVentas() {
     if (v.cuadro && v.cuadro.length) h += _admFinRow(key, v, fs);
     if (v.comentario) {
       h += '<tr id="admcom_' + key + '"' + (admVentasComAbiertos.has(key) ? '' : ' style="display:none"') + '>'
-         + '<td colspan="17" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">'
+         + '<td colspan="19" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">'
          + '💬 <b>Comentario de la PV ' + escapeHtml(v.preventa) + ':</b> ' + escapeHtml(v.comentario) + '</td></tr>';
     }
   }
-  if (!rows.length) h += '<tr><td colspan="17" class="empty">Sin carpetas para ese filtro.</td></tr>';
+  if (!rows.length) h += '<tr><td colspan="19" class="empty">Sin carpetas para ese filtro.</td></tr>';
   h += '</tbody></table></div></div>';
   h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio y fecha de patentamiento salen de Oversoft en vivo (no se editan). El resto se completa acá y <b>se guarda solo al cambiar cada campo</b> (el ✓ de la fila se pone verde cuando guardó bien; si algo falla, avisa y podés reintentar con el ✓). El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes. El mes de cada carpeta (selector de arriba, mismo criterio que Patentamientos) = fecha real de Oversoft o, si aún no está patentada, el "Mes pat. ✔adm" — las ventas nuevas sin ninguno de los dos entran al mes en curso (cambiale el "Mes pat." si va para otro mes).</div>';
   // El re-render recrea el <input> de búsqueda y le saca el foco (antes había
@@ -2055,13 +2080,89 @@ function setupAdmTopScroll() {
   }
 }
 
+// "2026-06-20T15:30" → { dia:'2026-06-20', hora:'15:30', label:'Vie 20/06 · 15:30' }
+const _DIAS_SEM = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+const _MESES_AB = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+function _parseEntrega(val) {
+  const s = String(val || '').trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
+  if (!m) return null;
+  const y = +m[1], mo = +m[2], d = +m[3], hh = m[4] != null ? +m[4] : null, mi = m[5] != null ? +m[5] : 0;
+  const dt = new Date(y, mo - 1, d, hh == null ? 0 : hh, mi);
+  const dia = m[1] + '-' + m[2] + '-' + m[3];
+  const hora = hh == null ? '' : (m[4] + ':' + m[5]);
+  return { dia: dia, hora: hora, y: y, mo: mo, d: d, ord: dia + 'T' + (hora || '00:00'),
+    diaLabel: _DIAS_SEM[dt.getDay()] + ' ' + m[3] + '/' + m[2] + '/' + m[1] };
+}
+
+// Agenda / calendario de entregas: todas las carpetas con entrega pactada,
+// agrupadas por día, ordenadas por fecha+hora. Marca con ✓ las ya retiradas.
+function renderAgendaEntregas() {
+  const todas = (admVentasData.ventas || [])
+    .filter(v => v.manual && v.manual.entrega_programada)
+    .map(v => ({ v: v, e: _parseEntrega(v.manual.entrega_programada) }))
+    .filter(x => x.e);
+  // hoy a las 00:00 en ISO, para separar próximas de pasadas
+  const now = new Date();
+  const hoyIso = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+
+  let items = todas.slice();
+  if (admAgendaSoloPend) items = items.filter(x => !x.v.manual.retiro);
+  items.sort((a, b) => a.e.ord.localeCompare(b.e.ord));
+
+  const totalPend = todas.filter(x => !x.v.manual.retiro).length;
+  const totalRet = todas.filter(x => x.v.manual.retiro).length;
+
+  let a = '<div style="background:#f7faff;border:1px solid #d6e4f5;border-radius:10px;padding:14px 16px;margin:6px 0 14px">';
+  a += '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">';
+  a += '<b style="font-size:15px;color:#001e50">📅 Agenda de entregas</b>';
+  a += '<span style="font-size:12px;color:var(--vw-grey-3)">' + totalPend + ' por entregar · ' + totalRet + ' retiradas</span>';
+  a += '<label style="font-size:12px;color:var(--vw-grey-3);cursor:pointer;margin-left:auto">'
+    + '<input type="checkbox"' + (admAgendaSoloPend ? ' checked' : '') + ' onchange="admAgendaSoloPend=this.checked;renderAdmVentas()" style="vertical-align:middle"> Solo pendientes de retirar</label>';
+  a += '</div>';
+
+  if (!items.length) {
+    a += '<div style="color:var(--vw-grey-3);font-size:13px;padding:6px 0">No hay entregas ' + (admAgendaSoloPend ? 'pendientes ' : '') + 'cargadas. Cargá la fecha y hora en la columna “📅 Entrega” de cada carpeta.</div></div>';
+    return a;
+  }
+
+  // agrupo por día
+  let curDia = '';
+  for (const x of items) {
+    if (x.e.dia !== curDia) {
+      if (curDia) a += '</div>';   // cierro grupo anterior
+      curDia = x.e.dia;
+      const esHoy = x.e.dia === hoyIso;
+      const pasado = x.e.dia < hoyIso;
+      a += '<div style="margin-top:10px">';
+      a += '<div style="font-weight:700;font-size:13px;color:' + (esHoy ? '#0a66c2' : (pasado ? 'var(--vw-grey-3)' : '#001e50')) + ';border-bottom:1px solid #e0e8f2;padding-bottom:3px;margin-bottom:5px">'
+        + x.e.diaLabel + (esHoy ? ' · HOY' : '') + '</div>';
+    }
+    const m = x.v.manual, v = x.v;
+    const ret = !!m.retiro;
+    a += '<div style="display:flex;align-items:center;gap:8px;font-size:12.5px;padding:3px 4px;' + (ret ? 'opacity:.6' : '') + '">'
+      + '<span style="display:inline-block;min-width:46px;font-weight:700;color:#444">' + (x.e.hora || '—') + '</span>'
+      + '<span style="display:inline-block;min-width:20px;text-align:center">' + (ret ? '<span style="color:#0a7a30;font-weight:700">✓</span>' : '<span style="color:#cc6600">○</span>') + '</span>'
+      + '<span><b>' + escapeHtml(String(v.cliente).slice(0, 28)) + '</b>'
+      + ' <span style="color:var(--vw-grey-3)">— ' + escapeHtml(String(v.modelo).slice(0, 24)) + '</span>'
+      + ' <span style="color:#888;font-size:11px">PV ' + escapeHtml(v.preventa) + (v.dominio ? ' · ' + escapeHtml(v.dominio) : '') + (v.vendedor ? ' · ' + escapeHtml(v.vendedor) : '') + '</span>'
+      + (ret ? ' <span style="color:#0a7a30;font-weight:700;font-size:11px">retiró</span>' : '') + '</span>'
+      + '</div>';
+  }
+  a += '</div>';   // cierro último grupo
+  a += '</div>';   // cierro panel
+  return a;
+}
+
 async function guardarAdmVenta(preventa) {
   const key = _admKey(preventa);
   const campos = {};
-  for (const c of ['patenta', 'admin', 'tipo_carpeta', 'mes_patentamiento', 'credito_liquidado', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'notas']) {
+  for (const c of ['patenta', 'admin', 'tipo_carpeta', 'mes_patentamiento', 'credito_liquidado', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'entrega_programada', 'notas']) {
     const el = document.getElementById('adm_' + c + '_' + key);
     if (el) campos[c] = el.value.trim();
   }
+  const retiroEl = document.getElementById('adm_retiro_' + key);
+  if (retiroEl) campos.retiro = retiroEl.checked;
   const btn = document.getElementById('admsave_' + key);
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
   try {
