@@ -1940,9 +1940,10 @@ function renderAdmVentas() {
      + '<th title="Pago de la unidad a VW (de Compras y Saldos, por serie): fecha o impaga">Pago VW</th>'
      + '<th style="text-align:left">Dominio</th><th style="text-align:left">F. patent.</th>'
      + '<th>Patenta</th><th>Admin</th><th title="La adm confirma el mes una vez pagado el patentamiento (aunque Oversoft ya tenga la fecha)">Mes pat. ✔adm</th>'
-     + '<th title="Día y hora pactada para que el cliente retire la unidad">📅 Entrega</th>'
-     + '<th title="Tildar cuando el cliente finalmente retiró la unidad">Retiró</th>'
-     + '<th title="Forma de pago según Oversoft (formas de pago + recibos). 💵 abre el detalle">Tipo</th><th title="¿El crédito fue liquidado? lo marca la adm; la fecha sale sola del recibo">Créd. liq.</th><th>Rev/Part</th><th>Notas</th><th></th>'
+     + '<th title="Forma de pago según Oversoft (formas de pago + recibos). 💵 abre el detalle">Tipo</th><th title="¿El crédito fue liquidado? lo marca la adm; la fecha sale sola del recibo">Créd. liq.</th><th>Rev/Part</th><th>Notas</th>'
+     + '<th title="Día y hora programada en Oversoft para que el cliente retire la unidad">📅 Entrega</th>'
+     + '<th title="✓ cuando la unidad figura como entregada en Oversoft">Retiró</th>'
+     + '<th></th>'
      + '</tr></thead><tbody>';
 
   // Guardado AUTOMÁTICO: cualquier cambio en un campo dispara el guardado de
@@ -2003,15 +2004,6 @@ function renderAdmVentas() {
        + '<td data-label="Admin">' + sel(v.preventa, key, 'admin', m.admin, ['MECHI', 'ANTO', 'VALE', 'MONI'], 78) + '</td>'
        // Oversoft ya tiene fecha pero la adm no confirmó el mes → borde naranja
        + '<td data-label="Mes pat. ✔adm">' + inp(v.preventa, key, 'mes_patentamiento', m.mes_patentamiento, 88, 'month', (v.fechaPatentamiento && !m.mes_patentamiento) ? '#cc6600' : null) + '</td>'
-       + '<td data-label="📅 Entrega" style="white-space:nowrap">'
-         + (v.entregaFecha
-             ? '<b style="color:' + (v.entregada ? '#0a7a30' : '#0a66c2') + '">' + _fechaDMA(v.entregaFecha) + '</b>'
-               + (v.entregaHora ? ' <span style="color:var(--vw-grey-3)">' + escapeHtml(v.entregaHora) + '</span>' : '')
-             : '<span style="color:var(--vw-grey-3)">—</span>')
-       + '</td>'
-       + '<td data-label="Retiró" style="text-align:center;white-space:nowrap">'
-         + (v.entregada ? '<span style="color:#0a7a30;font-weight:700;font-size:13px">✓ retiró</span>' : '<span style="color:var(--vw-grey-3)">—</span>')
-       + '</td>'
        + '<td data-label="Tipo" style="white-space:nowrap">'
          + '<span style="display:inline-block;background:' + chipC.bg + ';color:#fff;border-radius:10px;padding:2px 7px;font-size:11px;font-weight:700">' + tipoTxt + '</span>'
          + (tieneUsado ? ' <span style="display:inline-block;background:#7a5b00;color:#fff;border-radius:10px;padding:2px 6px;font-size:10px">usado</span>' : '')
@@ -2024,6 +2016,15 @@ function renderAdmVentas() {
        + '</td>'
        + '<td data-label="Rev/Part">' + sel(v.preventa, key, 'reventa_particular', m.reventa_particular, ['PARTICULAR', 'REVENTA'], 90) + '</td>'
        + '<td data-label="Notas">' + inp(v.preventa, key, 'notas', m.notas, 92) + '</td>'
+       + '<td data-label="📅 Entrega" style="white-space:nowrap">'
+         + (v.entregaFecha
+             ? '<b style="color:' + (v.entregada ? '#0a7a30' : '#0a66c2') + '">' + _fechaDMA(v.entregaFecha) + '</b>'
+               + (v.entregaHora ? ' <span style="color:var(--vw-grey-3)">' + escapeHtml(v.entregaHora) + '</span>' : '')
+             : '<span style="color:var(--vw-grey-3)">—</span>')
+       + '</td>'
+       + '<td data-label="Retiró" style="text-align:center;white-space:nowrap">'
+         + (v.entregada ? '<span style="color:#0a7a30;font-weight:700;font-size:13px">✓ retiró</span>' : '<span style="color:var(--vw-grey-3)">—</span>')
+       + '</td>'
        + '<td data-label="Guardado"><button onclick="guardarAdmVenta(\'' + v.preventa + '\')" id="admsave_' + key + '" title="Reintentar guardado de la fila" '
        + ' style="border:0;background:var(--vw-blue);color:#fff;border-radius:6px;padding:4px 9px;cursor:pointer">✓</button></td>'
        + '</tr>';
