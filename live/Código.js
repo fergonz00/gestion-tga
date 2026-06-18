@@ -866,8 +866,8 @@ function migrarComprasVW() {
 function saveCompraVW(body) {
   const serie = String(body.serie || '').trim().toUpperCase();
   if (!serie) return { error: 'falta serie' };
-  const permitidos = ['mes', 'modelo_valeria', 'color', 'fc_numero', 'fecha_fc', 'vence', 'fecha_pago_vw', 'neto', 'percep_iva', 'percep_iibb_er', 'imp_internos', 'importe_saldo', 'fecha_certif', 'notas', 'conciliado', 'iva_rate'];
-  const numericos = ['neto', 'percep_iva', 'percep_iibb_er', 'imp_internos', 'importe_saldo', 'iva_rate'];
+  const permitidos = ['mes', 'modelo_valeria', 'color', 'fc_numero', 'fecha_fc', 'vence', 'fecha_pago_vw', 'neto', 'percep_iva', 'percep_iibb_er', 'imp_internos', 'importe_saldo', 'fecha_certif', 'notas', 'conciliado', 'iva_rate', 'iva_monto', 'iibb_er', 'iibb_caba', 'iibb_bsas'];
+  const numericos = ['neto', 'percep_iva', 'percep_iibb_er', 'imp_internos', 'importe_saldo', 'iva_rate', 'iva_monto', 'iibb_er', 'iibb_caba', 'iibb_bsas'];
   const row = { serie: serie, updated_at: new Date().toISOString(), updated_by: String(body.usuario || '') };
   const campos = body.campos || {};
   for (const k of permitidos) if (campos[k] !== undefined) {
