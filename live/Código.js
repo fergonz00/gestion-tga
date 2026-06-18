@@ -480,7 +480,7 @@ function getAdmVentas() {
   const uids = Object.keys(uidSet);
   const unis = {};
   for (let i = 0; i < uids.length; i += 100) {
-    for (const u of get('/unidades?select=unidadid,serie,vin,patente,fechapatentamiento,fechaderecepcion&unidadid=in.(' + uids.slice(i, i + 100).join(',') + ')')) unis[u.unidadid] = u;
+    for (const u of get('/unidades?select=unidadid,serie,vin,patente,fechapatentamiento,fechaderecepcion,fechaprogramada,horaprogramada,entregada&unidadid=in.(' + uids.slice(i, i + 100).join(',') + ')')) unis[u.unidadid] = u;
   }
 
   // 3) vendedores y clientes (nombre + localidad, por CUIT)
@@ -576,6 +576,10 @@ function getAdmVentas() {
       chasis: String(u.vin || '').trim(),
       dominio: String(u.patente || '').trim(),
       fechaPatentamiento: u.fechapatentamiento ? String(u.fechapatentamiento).slice(0, 10) : '',
+      // Entrega programada y si ya retiró → directo de Oversoft (unidades), no se carga a mano.
+      entregaFecha: u.fechaprogramada ? String(u.fechaprogramada).slice(0, 10) : '',
+      entregaHora: String(u.horaprogramada || '').slice(0, 5),
+      entregada: !!u.entregada,
       usado: (Number(p.usadoid) || 0) > 0,
       montoFinanciado: Number(p.financiacion_importe) || 0,
       patentaCliente: !!p.patentacliente,
@@ -611,8 +615,6 @@ function getAdmVentas() {
         fecha_liquidacion:  m.fecha_liquidacion || '',
         reventa_particular: m.reventa_particular || '',
         fecha_pago_vw:      m.fecha_pago_vw || '',
-        entrega_programada: m.entrega_programada || '',   // fecha+hora pactada de entrega (datetime-local)
-        retiro:             !!m.retiro,                    // true = el cliente ya retiró la unidad
         notas:              m.notas || '',
       },
     };
@@ -683,12 +685,16 @@ function getVentasV2() {
     const nc = ncDe(p.modelo);
     const btMes = nc && btPorMes[mesKey] ? btPorMes[mesKey][nc.nombre_corto] : null;
 
+    // Autoahorro (PV terminada en "/8"): NO cobra condiciones comerciales →
+    // el cálculo NO aplica incentivos (cc/otros = 0).
+    const esAA = String(p.numero || '').split('/').pop().trim() === '8';
+
     let gciaPct = null, gciaPesos = null;
     if (btMes && monto > 0) {
       const listaM = Number(btMes.precio_lista) || 0;
       const im = (incPorMes[mesKey] || {})[nc.nombre_corto] || {};
-      const ccM = Number(im.performance) || 0;
-      const otrosM = (Number(im.tactico) || 0) + (Number(im.whosale) || 0) + (Number(im.adicional1) || 0) + (Number(im.adicional2) || 0) + (Number(im.cupo) || 0);
+      const ccM = esAA ? 0 : (Number(im.performance) || 0);
+      const otrosM = esAA ? 0 : ((Number(im.tactico) || 0) + (Number(im.whosale) || 0) + (Number(im.adicional1) || 0) + (Number(im.adicional2) || 0) + (Number(im.cupo) || 0));
       gciaPct = _gciaVentaPct(monto, ivaFrac, listaM, Number(btMes.costo_concesionario) || 0, ccM, otrosM);
       if (gciaPct !== null) gciaPesos = Math.round(gciaPct * listaM);
     }
@@ -819,12 +825,10 @@ function saveVentaManual(body) {
 function saveAdmVenta(body) {
   const pv = String(body.preventa || '').trim();
   if (!pv) return { error: 'falta preventa' };
-  const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'credito_liquidado', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'entrega_programada', 'notas'];
+  const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'credito_liquidado', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'notas'];
   const row = { preventa: pv, updated_at: new Date().toISOString(), updated_by: String(body.usuario || '') };
   const campos = body.campos || {};
   for (const k of permitidos) if (campos[k] !== undefined) row[k] = (campos[k] === '' ? null : campos[k]);
-  // retiro es boolean (checkbox): acepta true/false o 'true'/'SI'
-  if (campos.retiro !== undefined) row.retiro = (campos.retiro === true || campos.retiro === 'true' || campos.retiro === 'SI');
   const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
   const res = UrlFetchApp.fetch(SUPA_URL + '/adm_ventas?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(row), muteHttpExceptions: true });
   if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200) };
