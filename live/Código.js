@@ -506,6 +506,17 @@ function getAdmVentas() {
       if (d && !clis[d]) clis[d] = c;
     }
   }
+  // Fallback por CODIGO interno de Oversoft: clientes viejos referencian la PV
+  // por su 'codigo' (un nº legado, p.ej. 7697619) que no es ni el CUIT ni el DNI.
+  // Sin esto la PV queda sin nombre aunque la ficha exista (ej. PV 08035/1).
+  const codPend = cuits.filter(c => !clis[c]);
+  for (let i = 0; i < codPend.length; i += 80) {
+    const lote = codPend.slice(i, i + 80).map(c => '"' + c + '"').join(',');
+    for (const c of get('/clientes?select=codigo,nombre,localidad&codigo=in.(' + encodeURIComponent(lote) + ')')) {
+      const cod = String(c.codigo || '').trim();
+      if (cod && !clis[cod]) clis[cod] = c;
+    }
+  }
 
   // 4) descripción de modelo por código completo (igual que el motor)
   const desc = {};
@@ -532,7 +543,7 @@ function getAdmVentas() {
     const lote = nums.slice(i, i + 50).map(n => '"' + n + '"').join(',');
     const dc = get('/detcash?select=referencia,fecha,vencimiento,importe,motivo,origen,cobranzanro&origen=in.(VTOKM,VTPDA,RC)&referencia=in.(' + encodeURIComponent(lote) + ')&limit=1000');
     for (const r of dc) (dcByPv[r.referencia] = dcByPv[r.referencia] || []).push(r);
-    const us = get('/usados?select=preventaorigen,marca,modelo,patente,anio,preciodetoma&preventaorigen=in.(' + encodeURIComponent(lote) + ')&limit=1000');
+    const us = get('/usados?select=preventaorigen,marca,modelo,patente,anio,km,color,vin,combustible,preciodetoma&preventaorigen=in.(' + encodeURIComponent(lote) + ')&limit=1000');
     for (const x of us) (usByPv[x.preventaorigen] = usByPv[x.preventaorigen] || []).push(x);
   }
 
@@ -575,7 +586,16 @@ function getAdmVentas() {
       totalCobrado: fin.totalCobrado,
       falta: fin.falta,
       creditoCobrado: fin.creditoCobrado,      // {ok, fecha} si hay financiación
-      usadoParte: us ? { marca: String(us.marca || '').trim(), modelo: String(us.modelo || '').trim(), patente: String(us.patente || '').trim(), anio: us.anio || '', toma: Number(us.preciodetoma) || 0 } : null,
+      // usadoParte: ficha del usado tomado en parte de pago (de la tabla usados,
+      // por preventaorigen = nº PV). La "versión" viene dentro de modelo (Oversoft
+      // no la separa). toma = preciodetoma = lo que se le reconoce al cliente.
+      usadoParte: us ? {
+        marca: String(us.marca || '').trim(), modelo: String(us.modelo || '').trim(),
+        patente: String(us.patente || '').trim(), anio: us.anio || '',
+        km: Number(us.km) || 0, color: String(us.color || '').trim(),
+        vin: String(us.vin || '').trim(), combustible: String(us.combustible || '').trim(),
+        toma: Number(us.preciodetoma) || 0,
+      } : null,
       // pago de la unidad a VW (de saldos-tga, por serie): fecha + paga/impaga.
       // Si saldos NO la detecta pero la unidad tiene +3 meses (por fecha de
       // recepción, o la venta si falta) → por defecto PAGA (obvio que ya se pagó).
@@ -2537,7 +2557,9 @@ function setObjetivoPat(body) {
     const keys = sh.getRange(2, 1, lastRow - 1, 1).getValues();
     for (let i = 0; i < keys.length; i++) {
       if (String(keys[i][0] || '').trim() === mesKey) {
-        sh.getRange(i + 2, 1, 1, OBJETIVOS_PAT_HEADERS.length).setValues([[mesKey, valor, ahora]]);
+        // "'" fuerza texto en col A — sin esto Sheets interpreta "2026-05" como
+        // fecha y al releer el filtro /^\d{4}-\d{2}$/ la descarta (el update se perdia).
+        sh.getRange(i + 2, 1, 1, OBJETIVOS_PAT_HEADERS.length).setValues([["'" + mesKey, valor, ahora]]);
         return { ok: true, mesKey: mesKey, valor: valor, accion: 'update' };
       }
     }
@@ -2601,7 +2623,8 @@ function setObjetivoCompra(body) {
     const keys = sh.getRange(2, 1, lastRow - 1, 1).getValues();
     for (let i = 0; i < keys.length; i++) {
       if (String(keys[i][0] || '').trim() === mesKey) {
-        sh.getRange(i + 2, 1, 1, OBJETIVOS_COMPRAS_HEADERS.length).setValues([[mesKey, valor, ahora]]);
+        // "'" fuerza texto en col A (igual que el insert), si no el update se pierde al releer.
+        sh.getRange(i + 2, 1, 1, OBJETIVOS_COMPRAS_HEADERS.length).setValues([["'" + mesKey, valor, ahora]]);
         return { ok: true, mesKey: mesKey, valor: valor, accion: 'update' };
       }
     }

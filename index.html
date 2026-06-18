@@ -342,6 +342,26 @@ tbody tr.expo:hover { background: linear-gradient(to right, rgba(139,92,246,0.12
 .admv thead th { padding: 7px 4px; font-size: 9.5px; letter-spacing: 0.2px; }
 .admv tbody td { padding: 5px 4px; }
 
+/* Adm. ventas — caja con scroll propio: el encabezado queda pegado arriba, la
+   barra de scroll horizontal siempre a la vista (no al final de las filas) y la
+   columna PV congelada a la izquierda. Resuelve el "bajar–derecha–subir". */
+.admv-scroll {
+  max-height: calc(100vh - 200px);
+  overflow: auto;
+}
+.admv-scroll thead th {
+  position: sticky; top: 0; z-index: 3;
+}
+.admv-scroll thead th:first-child {       /* esquina PV: pegada arriba Y a la izq */
+  left: 0; z-index: 5;
+}
+.admv-scroll tbody td:first-child {        /* columna PV congelada */
+  position: sticky; left: 0; z-index: 2;
+  background: white;
+  box-shadow: 1px 0 0 var(--vw-grey-2);    /* divisoria que no se recorta al scrollear */
+}
+.admv-scroll tbody tr:hover td:first-child { background: var(--vw-grey-1); }
+
 .serie { font-weight: 600; color: var(--vw-blue); font-family: monospace; font-size: 12px; }
 .muted { color: var(--vw-grey-3); font-size: 11px; }
 
@@ -868,6 +888,11 @@ table.patent-tbl.resumida .col-extra { display: none; }
     font-size: 14px;
   }
   table.admv td[data-label="PV"]::before { display: none; }
+
+  /* En modo tarjetas no aplica el scroll/freeze de escritorio */
+  .admv-scroll { max-height: none; overflow: visible; }
+  .admv-scroll thead th,
+  .admv-scroll tbody td:first-child { position: static; box-shadow: none; }
 }
 
 
@@ -1884,7 +1909,7 @@ function renderAdmVentas() {
 
   // .table-scroll = scroll horizontal de respaldo si aún así no entra
   // (sin él, .table-wrap tiene overflow:hidden y cortaba columnas).
-  h += '<div class="table-wrap"><div class="table-scroll"><table class="admv responsive-cards" style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:1100px">';
+  h += '<div class="table-wrap"><div class="table-scroll admv-scroll"><table class="admv responsive-cards" style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:1100px">';
   h += '<thead style="white-space:nowrap"><tr>'
      + '<th style="text-align:left">PV</th><th style="text-align:left">Fecha</th><th style="text-align:left">Modelo</th>'
      + '<th style="text-align:left">Cliente</th><th style="text-align:left">Vendedor</th><th style="text-align:left">Serie</th>'
