@@ -685,9 +685,13 @@ function getVentasV2() {
     const nc = ncDe(p.modelo);
     const btMes = nc && btPorMes[mesKey] ? btPorMes[mesKey][nc.nombre_corto] : null;
 
-    // Autoahorro (PV terminada en "/8"): NO cobra condiciones comerciales →
-    // el cálculo NO aplica incentivos (cc/otros = 0).
-    const esAA = String(p.numero || '').split('/').pop().trim() === '8';
+    // Autoahorro: NO cobra condiciones comerciales → sin incentivos. Para estar
+    // SEGUROS de que es AA exigimos DOS cosas: (1) PV terminada en "/8" Y (2) el
+    // comentario menciona "G-O" / "GO" / "grupo y orden" (referencia del plan).
+    // Una /8 que en realidad es venta normal (sin G-O) SÍ cobra incentivos.
+    const _comAA = String(p.comentario || '') + ' ' + String(p.comentarioaux || '');
+    const esAA = String(p.numero || '').split('/').pop().trim() === '8'
+      && (/\bG\s*-?\s*O\b/i.test(_comAA) || /grupo\s*y\s*orden/i.test(_comAA));
 
     let gciaPct = null, gciaPesos = null;
     if (btMes && monto > 0) {

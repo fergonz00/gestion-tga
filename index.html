@@ -1723,7 +1723,9 @@ let admVentasFiltro = 'todas';        // 'pendientes' (sin dominio) | 'todas' | 
 let admVentasBusca = '';
 let admVentasMes = '';                // 'yyyy-mm' | '__sin__' | '__todos__' (default: mes actual)
 let admAgendaAbierta = false;         // panel "Agenda de entregas" desplegado
-let admAgendaSoloPend = false;        // en la agenda, mostrar solo los que aún NO retiraron
+let admAgendaSoloPend = true;         // agenda: solo lo que aún NO retiraron (default ON)
+let admAgendaOcultarPasados = true;   // agenda: ocultar días que ya pasaron (default ON)
+let admAgendaMes = '';                // agenda: 'yyyy-mm' | '__todas__'  (default: mes en curso)
 let admVentasComAbiertos = new Set(); // keys con el comentario de la PV desplegado (sobrevive re-renders)
 
 function toggleAdmComentario(key) {
@@ -2113,27 +2115,59 @@ function renderAgendaEntregas() {
     .filter(v => v.entregaFecha)
     .map(v => ({ v: v, e: _parseEntrega(v.entregaFecha, v.entregaHora) }))
     .filter(x => x.e);
-  // hoy a las 00:00 en ISO, para separar próximas de pasadas
+  // hoy a las 00:00 en ISO + mes en curso 'yyyy-mm'
   const now = new Date();
   const hoyIso = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+  const mesActualKey = hoyIso.slice(0, 7);
+  if (!admAgendaMes) admAgendaMes = mesActualKey;   // default: mes en curso
 
-  let items = todas.slice();
-  if (admAgendaSoloPend) items = items.filter(x => !x.v.entregada);
+  // meses con entregas (para el selector), ordenados
+  const mesesConEntrega = Array.from(new Set(todas.map(x => x.e.dia.slice(0, 7)))).sort();
+
+  // Filtro:
+  // - "Solo pendientes": esconde lo ya retirado.
+  // - Mes en curso + ocultar pasados → muestra de HOY en adelante (este mes y los
+  //   siguientes, así también aparecen las entregas del mes que viene).
+  // - Mes específico → solo ese mes (ocultar pasados recorta días previos a hoy).
+  const items = todas.filter(x => {
+    if (admAgendaSoloPend && x.v.entregada) return false;
+    const mk = x.e.dia.slice(0, 7);
+    if (admAgendaMes === '__todas__') {
+      return admAgendaOcultarPasados ? x.e.dia >= hoyIso : true;
+    }
+    if (admAgendaOcultarPasados && admAgendaMes === mesActualKey) {
+      return x.e.dia >= hoyIso;   // hoy en adelante, cualquier mes (incluye el siguiente)
+    }
+    if (mk !== admAgendaMes) return false;
+    if (admAgendaOcultarPasados && x.e.dia < hoyIso) return false;
+    return true;
+  });
   items.sort((a, b) => a.e.ord.localeCompare(b.e.ord));
 
-  const totalPend = todas.filter(x => !x.v.entregada).length;
-  const totalRet = todas.filter(x => x.v.entregada).length;
+  const vPend = items.filter(x => !x.v.entregada).length;
+  const vRet = items.filter(x => x.v.entregada).length;
+
+  // selector de mes
+  let selMes = '<select onchange="admAgendaMes=this.value;renderAdmVentas()" style="padding:4px 8px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:12px">';
+  for (const mk of mesesConEntrega) {
+    const lbl = _mesLabelLargo(mk) + ' ' + mk.slice(0, 4) + (mk === mesActualKey ? ' (mes en curso)' : '');
+    selMes += '<option value="' + mk + '"' + (admAgendaMes === mk ? ' selected' : '') + '>' + lbl + '</option>';
+  }
+  selMes += '<option value="__todas__"' + (admAgendaMes === '__todas__' ? ' selected' : '') + '>Todas</option></select>';
 
   let a = '<div style="background:#f7faff;border:1px solid #d6e4f5;border-radius:10px;padding:14px 16px;margin:6px 0 14px">';
   a += '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">';
   a += '<b style="font-size:15px;color:#001e50">📅 Agenda de entregas</b>';
-  a += '<span style="font-size:12px;color:var(--vw-grey-3)">' + totalPend + ' por entregar · ' + totalRet + ' retiradas</span>';
+  a += '<label style="font-size:12px;color:var(--vw-grey-3)">Mes: ' + selMes + '</label>';
+  a += '<span style="font-size:12px;color:var(--vw-grey-3)">' + vPend + ' por entregar' + (vRet ? ' · ' + vRet + ' retiradas' : '') + '</span>';
   a += '<label style="font-size:12px;color:var(--vw-grey-3);cursor:pointer;margin-left:auto">'
-    + '<input type="checkbox"' + (admAgendaSoloPend ? ' checked' : '') + ' onchange="admAgendaSoloPend=this.checked;renderAdmVentas()" style="vertical-align:middle"> Solo pendientes de retirar</label>';
+    + '<input type="checkbox"' + (admAgendaOcultarPasados ? ' checked' : '') + ' onchange="admAgendaOcultarPasados=this.checked;renderAdmVentas()" style="vertical-align:middle"> Ocultar días que ya pasaron</label>';
+  a += '<label style="font-size:12px;color:var(--vw-grey-3);cursor:pointer">'
+    + '<input type="checkbox"' + (admAgendaSoloPend ? ' checked' : '') + ' onchange="admAgendaSoloPend=this.checked;renderAdmVentas()" style="vertical-align:middle"> Solo lo que falta retirar</label>';
   a += '</div>';
 
   if (!items.length) {
-    a += '<div style="color:var(--vw-grey-3);font-size:13px;padding:6px 0">No hay entregas ' + (admAgendaSoloPend ? 'pendientes ' : '') + 'programadas en Oversoft.</div></div>';
+    a += '<div style="color:var(--vw-grey-3);font-size:13px;padding:6px 0">No hay entregas programadas para este filtro.</div></div>';
     return a;
   }
 
