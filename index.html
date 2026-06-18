@@ -1272,6 +1272,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <button class="tab active" data-tab="resumen" onclick="setTab('resumen')">Resumen</button>
       <button class="tab" data-tab="stock" onclick="setTab('stock')">Stock</button>
       <button class="tab" data-tab="ventas" onclick="setTab('ventas')">Ventas</button>
+      <button class="tab" data-tab="ventasov" onclick="setTab('ventasov')">Ventas (Oversoft)</button>
       <button class="tab" data-tab="admventas" onclick="setTab('admventas')">Adm. ventas</button>
       <button class="tab" data-tab="reparto" onclick="setTab('reparto')">Reparto</button>
       <button class="tab" data-tab="incentivos" onclick="setTab('incentivos')">Incentivos</button>
@@ -1348,6 +1349,19 @@ table.patent-tbl.resumida .col-extra { display: none; }
         </div>
       </div>
       <div id="ventasContent"></div>
+    </section>
+
+    <!-- =================== VENTAS (OVERSOFT) =================== -->
+    <!-- Versión nueva: ventas + ganancia salen de Oversoft + BT (fórmula de la hoja
+         replicada), sin leer el Sheet. Permite cargar accesorios a mano (se suman). -->
+    <section class="panel" id="panelVentasOv">
+      <div class="toolbar">
+        <div class="updated" id="updatedAtVentasOv">Ventas y ganancia desde Oversoft + BT (sin Sheet).</div>
+        <div class="actions">
+          <button class="refresh" onclick="loadVentasOv(true)">Actualizar</button>
+        </div>
+      </div>
+      <div id="ventasOvContent"><div class="empty">Cargando…</div></div>
     </section>
 
     <!-- Patentamientos dejó de ser solapa propia: ahora es una subtab dentro de
@@ -2183,6 +2197,93 @@ async function guardarAdmVenta(preventa) {
     if (btn) { btn.disabled = false; btn.textContent = '✓'; }
     alert('No se pudo guardar la carpeta ' + preventa + ': ' + e.message);
   }
+}
+
+// =================== VENTAS (OVERSOFT) ===================
+// Ventas + ganancia desde Oversoft + BT (fórmula de la hoja replicada). Permite
+// cargar accesorios a mano (se suman). Detecta "acc" en el comentario de la PV.
+let ventasOvData = null;
+let ventasOvMes = '';                 // 'yyyy-mm' | '__todos__'
+let ventasOvComAbiertos = new Set();
+
+async function loadVentasOv(forzar) {
+  const cont = document.getElementById('ventasOvContent');
+  if (cont && !ventasOvData) cont.innerHTML = '<div class="empty">Cargando ventas (Oversoft)…</div>';
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=ventasv2' + (forzar ? '&fresh=1' : '');
+    const res = await fetch(url);
+    ventasOvData = await res.json();
+    if (!ventasOvMes && ventasOvData.mesActual) ventasOvMes = ventasOvData.mesActual;
+    renderVentasOv();
+  } catch (e) {
+    if (cont) cont.innerHTML = '<div class="empty">Error: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+function setVentasOvMes(m) { ventasOvMes = m; renderVentasOv(); }
+function toggleVentasOvCom(key) {
+  const tr = document.getElementById('vovcom_' + key);
+  if (!tr) return;
+  const abrir = tr.style.display === 'none';
+  tr.style.display = abrir ? '' : 'none';
+  if (abrir) ventasOvComAbiertos.add(key); else ventasOvComAbiertos.delete(key);
+}
+async function guardarAccesorios(preventa, valor) {
+  try {
+    const body = new URLSearchParams();
+    body.set('payload', JSON.stringify({ token: APPS_SCRIPT_TOKEN, accion: 'setventamanual',
+      preventa: preventa, accesorios: valor, usuario: window._tgaUser || '' }));
+    const res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    await loadVentasOv(true);   // re-suma la ganancia con el accesorio
+  } catch (e) { alert('No se pudo guardar accesorios de ' + preventa + ': ' + e.message); }
+}
+function renderVentasOv() {
+  const cont = document.getElementById('ventasOvContent');
+  if (!cont || !ventasOvData) return;
+  const todas = ventasOvData.ventas || [];
+  const meses = ventasOvData.meses || [];
+  const filtra = ventasOvMes && ventasOvMes !== '__todos__';
+  const rows = filtra ? todas.filter(v => v.mesKey === ventasOvMes) : todas;
+  let sel = '<select onchange="setVentasOvMes(this.value)" style="padding:5px 8px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px">';
+  sel += '<option value="__todos__"' + (!filtra ? ' selected' : '') + '>Todos los meses</option>';
+  for (const m of meses) sel += '<option value="' + m.mesKey + '"' + (m.mesKey === ventasOvMes ? ' selected' : '') + '>' + escapeHtml(m.label) + ' (' + m.cuenta + ')</option>';
+  sel += '</select>';
+  let totG = 0;
+  for (const v of rows) if (typeof v.gciaVtaPesos === 'number') totG += v.gciaVtaPesos;
+  let h = '<div style="margin:6px 0 12px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">' + sel
+    + '<span style="font-size:13px;color:var(--vw-grey-3)">' + rows.length + ' ventas · ganancia total <b style="color:#0a7a30">' + fmtPesos(totG) + '</b></span></div>';
+  h += '<div style="overflow-x:auto"><table class="ventas-tbl"><thead><tr style="text-align:left">'
+    + '<th>PV</th><th>Fecha</th><th>Modelo</th><th>Vend.</th><th style="text-align:right">Monto</th>'
+    + '<th style="text-align:right">Ganancia</th><th style="text-align:right">%</th><th style="text-align:right">Accesorios</th></tr></thead><tbody>';
+  for (const v of rows) {
+    const key = String(v.preventaNum || '').replace(/[^0-9]/g, '');
+    const pvArg = String(v.preventaNum || '').replace(/'/g, '');
+    const btnCom = v.comentario ? ' <button onclick="toggleVentasOvCom(\'' + key + '\')" title="Ver comentario de la PV" style="border:0;background:none;cursor:pointer;font-size:13px;padding:0 2px">💬</button>' : '';
+    const accFlag = v.mencionaAcc ? ' <span title="El comentario menciona accesorios — cargá el monto" style="background:#cc6600;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">acc</span>' : '';
+    const g = (typeof v.gciaVtaPesos === 'number');
+    const gColor = g ? (v.gciaVtaPesos >= 0 ? '#0a7a30' : '#cc3300') : 'var(--vw-grey-3)';
+    h += '<tr' + (v.mencionaAcc ? ' style="background:#fff8e1"' : '') + '>'
+      + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + accFlag + '</td>'
+      + '<td>' + _fechaDMA(v.fechaPvIso) + '</td>'
+      + '<td>' + escapeHtml(v.modelo) + '</td>'
+      + '<td>' + escapeHtml(v.vendedor || '') + '</td>'
+      + '<td style="text-align:right">' + fmtPesos(v.montoFc) + '</td>'
+      + '<td style="text-align:right;color:' + gColor + ';font-weight:600">' + (g ? fmtPesos(v.gciaVtaPesos) : 's/BT') + '</td>'
+      + '<td style="text-align:right;color:' + gColor + '">' + (v.gciaVtaPct != null ? (v.gciaVtaPct * 100).toFixed(1) + '%' : '—') + '</td>'
+      + '<td style="text-align:right"><input type="number" value="' + (v.accesorios || 0) + '" onchange="guardarAccesorios(\'' + pvArg + '\', this.value)" style="width:108px;text-align:right;padding:3px 5px;border:1px solid ' + (v.accesorios ? '#0a66c2' : 'var(--vw-grey-2)') + ';border-radius:5px;font-size:12px"></td>'
+      + '</tr>';
+    if (v.comentario) {
+      h += '<tr id="vovcom_' + key + '"' + (ventasOvComAbiertos.has(key) ? '' : ' style="display:none"') + '>'
+        + '<td colspan="8" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">💬 ' + escapeHtml(v.comentario) + '</td></tr>';
+    }
+  }
+  if (!rows.length) h += '<tr><td colspan="8" class="empty">Sin ventas.</td></tr>';
+  h += '</tbody></table></div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Ganancia = venta − costo de reposición (con incentivos) − comisión − IIBB + accesorios. Las marcadas <span style="background:#cc6600;color:#fff;border-radius:8px;padding:0 5px">acc</span> mencionan accesorios en el comentario (💬) — cargá el monto y se suma. "s/BT" = mes sin BT cargada. (Versión nueva: sale de Oversoft, sin Sheet.)</div>';
+  cont.innerHTML = h;
+  const u = document.getElementById('updatedAtVentasOv');
+  if (u && ventasOvData.updatedAt) u.textContent = 'Actualizado: ' + new Date(ventasOvData.updatedAt).toLocaleString('es-AR');
 }
 
 // =======================================================================
@@ -3231,6 +3332,7 @@ function setTab(tab) {
     resumen:        'panelResumen',
     stock:          'panelStock',
     ventas:         'panelVentas',
+    ventasov:       'panelVentasOv',
     incentivos:     'panelIncentivos',
     precios:        'panelPrecios',
     industria:      'panelIndustria',
@@ -3248,6 +3350,7 @@ function setTab(tab) {
     else                    renderOversoftStock();
   }
   if (tab === 'ventas'         && !ventasData)   loadVentas(false);
+  if (tab === 'ventasov'       && !ventasOvData) loadVentasOv(false);
   if (tab === 'incentivos'     && !incentivosData) loadIncentivos(false);
   if (tab === 'admventas'      && !admVentasData)  loadAdmVentas(false);
   if (tab === 'reparto')                           loadReparto(false);
