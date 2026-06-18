@@ -1274,9 +1274,6 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <button class="tab" data-tab="ventas" onclick="setTab('ventas')">Ventas</button>
       <button class="tab" data-tab="admventas" onclick="setTab('admventas')">Adm. ventas</button>
       <button class="tab" data-tab="reparto" onclick="setTab('reparto')">Reparto</button>
-      <button class="tab" data-tab="comprasvw" onclick="setTab('comprasvw')">Compras VW</button>
-      <button class="tab" data-tab="flujo" onclick="setTab('flujo')">Flujo financiero</button>
-      <button class="tab" data-tab="trimestre" onclick="setTab('trimestre')">Trimestre</button>
       <button class="tab" data-tab="incentivos" onclick="setTab('incentivos')">Incentivos</button>
       <button class="tab" data-tab="industria" onclick="setTab('industria')">Industria</button>
       <!-- Tab discreta: solo aparece entrando con #oversoft en la URL (revealOversoftTab) -->
@@ -1356,16 +1353,8 @@ table.patent-tbl.resumida .col-extra { display: none; }
     <!-- Patentamientos dejó de ser solapa propia: ahora es una subtab dentro de
          "Adm. ventas" (ver panelAdmVentas más abajo). -->
 
-    <!-- =================== TRIMESTRE =================== -->
-    <section class="panel" id="panelTrimestre">
-      <div class="toolbar">
-        <div class="updated">Seguimiento del recupero trimestral VW (criterios A · B · C)</div>
-        <div class="actions">
-          <button class="refresh" onclick="loadPatentamientos(true)">Actualizar</button>
-        </div>
-      </div>
-      <div id="trimestreContent"></div>
-    </section>
+    <!-- Trimestre dejó de ser solapa propia: ahora es una subtab dentro de
+         "Adm. ventas" (ver panelAdmVentas más abajo). -->
 
     <!-- =================== INCENTIVOS =================== -->
     <section class="panel" id="panelIncentivos">
@@ -1398,6 +1387,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <div class="subtabs">
         <button class="subtab active" data-subtab="admventas"      onclick="setAdmSubtab('admventas')">Adm. ventas</button>
         <button class="subtab"        data-subtab="patentamientos" onclick="setAdmSubtab('patentamientos')">Patentamientos</button>
+        <button class="subtab"        data-subtab="trimestre"      onclick="setAdmSubtab('trimestre')">Trimestre</button>
       </div>
 
       <div class="subpanel active" id="subpanelAdmVentasMain">
@@ -1419,6 +1409,16 @@ table.patent-tbl.resumida .col-extra { display: none; }
         </div>
         <div id="patentContent"></div>
       </div>
+
+      <div class="subpanel" id="subpanelAdmVentasTrimestre">
+        <div class="toolbar">
+          <div class="updated">Seguimiento del recupero trimestral VW (criterios A · B · C)</div>
+          <div class="actions">
+            <button class="refresh" onclick="loadPatentamientos(true)">Actualizar</button>
+          </div>
+        </div>
+        <div id="trimestreContent"></div>
+      </div>
     </section>
 
     <!-- =================== REPARTO (objetivo de compra vs comprado por mes) =================== -->
@@ -1432,27 +1432,8 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <div id="repartoContent"><div class="empty">Cargando…</div></div>
     </section>
 
-    <!-- =================== COMPRAS VW (carga Valeria + conciliación Oversoft) =================== -->
-    <section class="panel" id="panelComprasVW">
-      <div class="toolbar">
-        <div class="updated" id="updatedAtComprasVW">Facturas de compra a VW: cargá la unidad (aparece en Oversoft 1-2 días después) y conciliá el modelo.</div>
-        <div class="actions">
-          <button class="refresh" onclick="loadComprasVW(true)">Actualizar</button>
-        </div>
-      </div>
-      <div id="comprasVWContent"><div class="empty">Cargando…</div></div>
-    </section>
-
-    <!-- =================== FLUJO FINANCIERO (ingresos vs egresos) =================== -->
-    <section class="panel" id="panelFlujo">
-      <div class="toolbar">
-        <div class="updated" id="updatedAtFlujo">Cuándo entra plata (cobros pendientes de ventas) y cuándo hay que pagarle a VW.</div>
-        <div class="actions">
-          <button class="refresh" onclick="loadFlujo(true)">Actualizar</button>
-        </div>
-      </div>
-      <div id="flujoContent"><div class="empty">Cargando…</div></div>
-    </section>
+    <!-- Compras VW y Flujo financiero se sacaron de Gestión: ahora viven en la
+         app de Saldos (saldos.titogonzalez.online). -->
 
     <!-- =================== OVERSOFT (admin / prueba de conexión) =================== -->
     <section class="panel" id="panelOversoft">
@@ -1486,8 +1467,7 @@ const USUARIOS_PERMITIDOS = ['fngonzalez', 'fgonzalez', 'cgonzalez'];
 const USUARIOS_ADM_VENTAS = ['mgerez'];
 // Usuarios que entran SOLO a la solapa "Patentamientos" (consulta).
 const USUARIOS_PATENTAMIENTOS = [];
-// Usuarios que entran SOLO a la solapa "Compras VW" (Valeria, gerente de adm).
-const USUARIOS_COMPRAS = ['vreyna'];
+// (USUARIOS_COMPRAS eliminado: Compras VW y Flujo se movieron a la app de Saldos.)
 
 // URL del Web App publicado desde el Apps Script de la planilla espejo.
 // Pendiente: pegar acá la URL que devuelve "Deploy → Web app" en el editor de Apps Script.
@@ -3071,12 +3051,8 @@ function enterApp(session) {
     setAdmSubtab('patentamientos');
     return;
   }
-  // Valeria (compras a VW): ve Compras VW y Flujo financiero.
-  if (USUARIOS_COMPRAS.includes(session.usuario)) {
-    document.querySelectorAll('.tab').forEach(t => { if (t.dataset.tab !== 'comprasvw' && t.dataset.tab !== 'flujo') t.style.display = 'none'; });
-    setTab('comprasvw');
-    return;
-  }
+  // (Compras VW y Flujo financiero se movieron a la app de Saldos: vreyna ahora
+  //  entra por saldos.titogonzalez.online, ya no por Gestión.)
   loadObjetivosPat();      // pisa el cache local con la verdad de la planilla
   loadObjetivosCompras();  // idem para objetivos de compras
   loadIndustria();         // idem para data de industria (TGA vs mercado)
@@ -3113,15 +3089,18 @@ function startAutoRefresh() {
       if (!calcOpen) _fetchStockSilent();
       _fetchVentasSilent();
       _fetchPatentSilent();
-    } else if (activo === 'stock' && !calcOpen) {
-      _fetchStockSilent();
+    } else if (activo === 'stock' && !ovsDropOpen) {
+      // La solapa Stock muestra Oversoft: refresco en vivo sin spinner. No lo hago
+      // si hay un menú de filtros abierto (lo cerraría a mitad de uso).
+      loadOversoftStock(true, true);
     } else if (activo === 'ventas') {
       _fetchVentasSilent();
     } else if (activo === 'admventas') {
-      // Patentamientos es subtab de Adm. ventas: si está abierta, la refrescamos.
-      if (document.getElementById('subpanelAdmVentasPatent')?.classList.contains('active')) _fetchPatentSilent();
-    } else if (activo === 'trimestre') {
-      _fetchPatentSilent();
+      // Patentamientos y Trimestre son subtabs de Adm. ventas y dependen de
+      // patentData: si alguna está abierta, refrescamos patentamientos.
+      const subP = document.getElementById('subpanelAdmVentasPatent')?.classList.contains('active');
+      const subT = document.getElementById('subpanelAdmVentasTrimestre')?.classList.contains('active');
+      if (subP || subT) _fetchPatentSilent();
     } else if (activo === 'incentivos') {
       _fetchIncentivosSilent();
     } else if (activo === 'industria') {
@@ -3141,23 +3120,21 @@ function logout() {
 // TABS
 // =======================================================================
 function setTab(tab) {
-  // Patentamientos pasó a ser subtab dentro de "Adm. ventas": redirigimos para
-  // que cualquier setTab('patentamientos') viejo (links del resumen, etc.) siga andando.
+  // Patentamientos y Trimestre pasaron a ser subtabs dentro de "Adm. ventas":
+  // redirigimos para que cualquier setTab() viejo (links del resumen, etc.) ande.
   if (tab === 'patentamientos') { setTab('admventas'); setAdmSubtab('patentamientos'); return; }
+  if (tab === 'trimestre')      { setTab('admventas'); setAdmSubtab('trimestre');      return; }
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   const map = {
     resumen:        'panelResumen',
     stock:          'panelStock',
     ventas:         'panelVentas',
-    trimestre:      'panelTrimestre',
     incentivos:     'panelIncentivos',
     precios:        'panelPrecios',
     industria:      'panelIndustria',
     admventas:      'panelAdmVentas',
     reparto:        'panelReparto',
-    comprasvw:      'panelComprasVW',
-    flujo:          'panelFlujo',
     oversoft:       'panelOversoft',
   };
   const el = document.getElementById(map[tab]);
@@ -3170,15 +3147,9 @@ function setTab(tab) {
     else                    renderOversoftStock();
   }
   if (tab === 'ventas'         && !ventasData)   loadVentas(false);
-  if (tab === 'trimestre') {
-    if (!patentData) loadPatentamientos(false);
-    else             renderTrimestre();
-  }
   if (tab === 'incentivos'     && !incentivosData) loadIncentivos(false);
   if (tab === 'admventas'      && !admVentasData)  loadAdmVentas(false);
   if (tab === 'reparto')                           loadReparto(false);
-  if (tab === 'comprasvw'      && !comprasVWData)  loadComprasVW(false);
-  if (tab === 'flujo'          && !flujoData)      loadFlujo(false);
   if (tab === 'industria') {
     // Industria depende de patentData para contar TGA patentadas
     if (!patentData) loadPatentamientos(false);
@@ -3186,13 +3157,19 @@ function setTab(tab) {
   }
 }
 
-// Subtabs dentro de "Adm. ventas": la administrativa y Patentamientos (consulta).
+// Subtabs dentro de "Adm. ventas": la administrativa, Patentamientos (consulta)
+// y Trimestre (recupero trimestral, depende de patentData).
 function setAdmSubtab(name) {
   document.querySelectorAll('#panelAdmVentas .subtab').forEach(b => b.classList.toggle('active', b.dataset.subtab === name));
-  document.getElementById('subpanelAdmVentasMain').classList.toggle('active',  name === 'admventas');
-  document.getElementById('subpanelAdmVentasPatent').classList.toggle('active', name === 'patentamientos');
+  document.getElementById('subpanelAdmVentasMain').classList.toggle('active',      name === 'admventas');
+  document.getElementById('subpanelAdmVentasPatent').classList.toggle('active',    name === 'patentamientos');
+  document.getElementById('subpanelAdmVentasTrimestre').classList.toggle('active', name === 'trimestre');
   if (name === 'admventas'      && !admVentasData) loadAdmVentas(false);
   if (name === 'patentamientos' && !patentData)    loadPatentamientos(false);
+  if (name === 'trimestre') {
+    if (!patentData) loadPatentamientos(false);  // al llegar la data, el hook de
+    else             renderTrimestre();          // loadPatentamientos pinta Trimestre.
+  }
 }
 
 // =======================================================================
@@ -4464,12 +4441,16 @@ async function _fetchJson(tipo, forzar) {
   return data;
 }
 
-async function loadOversoftStock(forzar) {
+async function loadOversoftStock(forzar, silent) {
   if (oversoftStockData && !forzar) { renderOversoftStock(); return; }
   const btn  = document.getElementById('btnRefreshOvsStock');
   const wrap = document.getElementById('oversoftStockContent');
-  if (btn) { btn.disabled = true; btn.textContent = 'Cargando...'; }
-  wrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>Cargando stock Oversoft...</div></div>';
+  // silent = refresco en background (auto-refresh): no toca el botón ni mete
+  // spinner; si falla, deja la tabla actual en pantalla.
+  if (!silent) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Cargando...'; }
+    wrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>Cargando stock Oversoft...</div></div>';
+  }
 
   try {
     // Oversoft: unidades NO asignadas (físico libre + a recibir), sin PV.
@@ -4532,10 +4513,10 @@ async function loadOversoftStock(forzar) {
     renderOversoftStock();
   } catch (e) {
     console.error(e);
-    wrap.innerHTML = '<div class="errbox"><div class="ttl">⚠️ No se pudo cargar el stock Oversoft</div>'
+    if (!silent) wrap.innerHTML = '<div class="errbox"><div class="ttl">⚠️ No se pudo cargar el stock Oversoft</div>'
       + '<div>' + escapeHtml(e.message || String(e)) + '</div></div>';
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Actualizar'; }
+    if (!silent && btn) { btn.disabled = false; btn.textContent = 'Actualizar'; }
   }
 }
 
@@ -5672,6 +5653,9 @@ async function loadPatentamientos(forzar) {
     // Si la solapa Industria está visible, re-render con la data nueva
     const panelInd = document.getElementById('panelIndustria');
     if (panelInd && panelInd.classList.contains('active')) renderIndustria();
+    // Trimestre es subtab de Adm. ventas y depende de patentData: si está visible, pintarla.
+    const subTri = document.getElementById('subpanelAdmVentasTrimestre');
+    if (subTri && subTri.classList.contains('active')) renderTrimestre();
   } catch (e) {
     console.error(e);
     wrap.innerHTML = '<div class="errbox"><div class="ttl">⚠️ No se pudieron cargar los patentamientos</div>'
@@ -5701,6 +5685,9 @@ async function _fetchPatentSilent() {
     // Si la solapa Industria está visible, también re-render (depende de patentData para TGA pat)
     const panelInd = document.getElementById('panelIndustria');
     if (panelInd && panelInd.classList.contains('active')) renderIndustria();
+    // Trimestre (subtab de Adm. ventas): si está visible, re-render con la data nueva.
+    const subTri = document.getElementById('subpanelAdmVentasTrimestre');
+    if (subTri && subTri.classList.contains('active')) renderTrimestre();
   } catch { /* silencioso */ }
 }
 
@@ -7281,7 +7268,7 @@ function escapeHtml(s) {
   }
   // Sesión impersonada: se permite y se trata como el usuario impersonado
   // (mismas solapas que vería esa persona), que es el sentido de impersonar.
-  if (!USUARIOS_PERMITIDOS.includes(session.usuario) && !USUARIOS_ADM_VENTAS.includes(session.usuario) && !USUARIOS_PATENTAMIENTOS.includes(session.usuario) && !USUARIOS_COMPRAS.includes(session.usuario)) {
+  if (!USUARIOS_PERMITIDOS.includes(session.usuario) && !USUARIOS_ADM_VENTAS.includes(session.usuario) && !USUARIOS_PATENTAMIENTOS.includes(session.usuario)) {
     showGate('Tu usuario no tiene acceso a esta vista.');
     return;
   }
