@@ -1755,14 +1755,22 @@ function _diasEntre(aIso, bIso) {
 // después del vencimiento = 'tarde' (⚠️).
 function _admFinEstado(v) {
   const hoy = new Date().toISOString().slice(0, 10);
+  // La cuenta corriente cierra (pagos + notas de crédito cubren todo). Si cierra,
+  // un saldo suelto en una línea NO es deuda real: lo anuló una NC o un pago
+  // imputado a otro concepto (ej. "cancela unidad" corregido con nota de crédito).
+  const cuentaSaldada = (Number(v.falta) || 0) <= 1;
   let alerta = '';
   const lineas = (v.cuadro || []).map(c => {
     const saldo = Math.round(c.plan - c.cobrado);
     let estado = 'ok';
     if (saldo > 1) {
-      const d = _diasEntre(c.vto, hoy);
-      if (c.vto && d !== null && d > 2) { estado = 'destiempo'; alerta = 'destiempo'; }
-      else estado = 'pendiente';
+      if (cuentaSaldada) {
+        estado = 'compensado';
+      } else {
+        const d = _diasEntre(c.vto, hoy);
+        if (c.vto && d !== null && d > 2) { estado = 'destiempo'; alerta = 'destiempo'; }
+        else estado = 'pendiente';
+      }
     } else {
       // recibo emitido después del Vto: solo dato informativo (NO alarma — es
       // normal que el recibo del financiado/saldo llegue días después del Vto).
@@ -1789,6 +1797,8 @@ function _admFinRow(key, v, fs) {
     + '<div style="font-weight:700;font-size:12px;margin-bottom:6px">💵 Cuadro financiero · PV ' + escapeHtml(v.preventa)
     + (up ? ' · <span style="color:#7a5b00">usado en parte de pago (' + fmtPesosCompact(up.toma) + ')</span>' : '')
     + (v.creditoCobrado ? ' · <span style="color:' + (v.creditoCobrado.ok ? '#0a7a30' : '#cc6600') + '">' + (v.creditoCobrado.ok ? 'Crédito cobrado ' + _fechaDMA(v.creditoCobrado.fecha) : 'Crédito pendiente') + '</span>' : '')
+    + (v.totalNc > 0 ? ' · <span style="color:#0a7a30">📝 Nota de crédito ' + fmtPesos(v.totalNc) + ' (anula deuda)</span>' : '')
+    + (v.totalNd > 0 ? ' · <span style="color:#cc6600">📝 Nota de débito ' + fmtPesos(v.totalNd) + ' (a pagar)</span>' : '')
     + '</div>'
     // Ficha del usado tomado (dominio, marca/modelo+versión, año, kms, color)
     + (up ? '<div style="background:#fff8e6;border:1px solid #e8d48a;border-radius:6px;padding:7px 10px;margin-bottom:8px;font-size:12px;color:#5a4500">'
@@ -1808,9 +1818,12 @@ function _admFinRow(key, v, fs) {
     let est = 'pendiente', col = 'var(--vw-grey-3)';
     if (c.estado === 'ok') { est = '✓'; col = '#0a7a30'; }
     else if (c.estado === 'tarde') { est = '✓ <span style="color:var(--vw-grey-3)">(recibo +' + c.diasTarde + 'd)</span>'; col = '#0a7a30'; }
+    else if (c.estado === 'compensado') { est = '✓ saldado <span style="color:var(--vw-grey-3)">(la cuenta cierra)</span>'; col = '#0a7a30'; }
     else if (c.estado === 'destiempo') { est = '🔴 SIN RECIBO · chequear pago'; col = '#cc3300'; }
+    const ncTag = (c.nc > 0) ? ' <span style="color:#0a7a30;font-size:10px;background:#e8f5ec;border-radius:8px;padding:1px 5px;white-space:nowrap">NC ' + fmtPesosCompact(c.nc) + '</span>' : '';
+    const ndTag = (c.nd > 0) ? ' <span style="color:#cc6600;font-size:10px;background:#fff3e0;border-radius:8px;padding:1px 5px;white-space:nowrap">ND ' + fmtPesosCompact(c.nd) + '</span>' : '';
     t += '<tr style="border-top:1px solid #dbe7f5">'
-      + '<td style="padding:3px 6px">' + escapeHtml(c.concepto) + '</td>'
+      + '<td style="padding:3px 6px">' + escapeHtml(c.concepto) + ncTag + ndTag + '</td>'
       + '<td style="text-align:right;padding:3px 6px">' + fmtPesos(c.plan) + '</td>'
       + '<td style="text-align:right;padding:3px 6px">' + (c.cobrado ? fmtPesos(c.cobrado) : '—') + '</td>'
       + '<td style="text-align:center;padding:3px 6px">' + (c.vto ? _fechaDMA(c.vto) : '—') + '</td>'
@@ -1835,7 +1848,7 @@ function _admFinRow(key, v, fs) {
     + '<td style="padding:4px 6px">TOTAL</td>'
     + '<td style="text-align:right;padding:4px 6px">' + fmtPesos(v.totalPlan + tomaToma) + '</td>'
     + '<td style="text-align:right;padding:4px 6px">' + fmtPesos(v.totalCobrado + tomaToma) + '</td>'
-    + '<td colspan="3" style="padding:4px 6px;color:' + (v.falta > 1 ? '#cc3300' : '#0a7a30') + '">' + (v.falta > 1 ? 'Falta ' + fmtPesos(v.falta) : 'Todo cobrado ✓') + '</td>'
+    + '<td colspan="3" style="padding:4px 6px;color:' + (v.falta > 1 ? '#cc3300' : '#0a7a30') + '">' + (v.falta > 1 ? 'Falta ' + fmtPesos(v.falta) : (v.falta < -1 ? 'Saldo a favor del cliente ' + fmtPesos(-v.falta) : 'Todo cobrado ✓')) + '</td>'
     + '</tr></table></td></tr>';
   return t;
 }

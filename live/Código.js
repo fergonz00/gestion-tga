@@ -408,16 +408,27 @@ function _cuadroDePv(rows) {
   var g = {}, hasVTPDA = false;
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i], mot = String(r.motivo || '').trim(), imp = Number(r.importe) || 0;
-    if (r.origen === 'VTPDA') hasVTPDA = true;
-    if (!g[mot]) g[mot] = { motivo: mot, concepto: _concNombre(mot), plan: 0, cobrado: 0, vto: '', fechaCobro: '', recibos: [] };
-    if (r.origen === 'RC') {
+    var origen = String(r.origen || '');
+    if (origen === 'VTPDA') hasVTPDA = true;
+    if (!g[mot]) g[mot] = { motivo: mot, concepto: _concNombre(mot), plan: 0, cobrado: 0, nc: 0, nd: 0, vto: '', fechaCobro: '', recibos: [] };
+    if (origen === 'RC') {
+      // recibo / pago real del cliente
       g[mot].cobrado += -imp;
       var nro = String(r.cobranzanro || '').replace(/;/g, ' ').trim().split(/\s+/).pop();
       if (nro) g[mot].recibos.push(nro);
       var f = String(r.fecha || '').slice(0, 10);
       if (f > g[mot].fechaCobro) g[mot].fechaCobro = f;
+    } else if (imp < 0) {
+      // NOTA DE CRÉDITO (VTGTS neg, o reverso de un cargo): es un haber de la cta
+      // cte → anula deuda igual que un pago. Acá vive el caso "cancela unidad
+      // corregido por NC".
+      g[mot].cobrado += -imp;
+      g[mot].nc += -imp;
     } else {
+      // cargo planificado (VTOKM/VTPDA) o NOTA DE DÉBITO (VTGTS pos = algo a pagar
+      // de más que no se facturó) → suma a la deuda.
       g[mot].plan += imp;
+      if (origen === 'VTGTS') g[mot].nd += imp;
       var v = String(r.vencimiento || '').slice(0, 10);
       if (v && (!g[mot].vto || v < g[mot].vto)) g[mot].vto = v;
     }
@@ -425,14 +436,15 @@ function _cuadroDePv(rows) {
   var lineas = [];
   for (var k in g) {
     var c = g[k];
-    if (c.plan <= 0 && c.cobrado <= 0) continue;
+    if (Math.abs(c.plan) < 0.01 && Math.abs(c.cobrado) < 0.01) continue;
     c.saldo = Math.round((c.plan - c.cobrado) * 100) / 100;
     lineas.push(c);
   }
   lineas.sort(function (a, b) { return (a.vto || '9999').localeCompare(b.vto || '9999'); });
-  var totalPlan = 0, totalCobrado = 0, finLine = null;
+  var totalPlan = 0, totalCobrado = 0, totalNc = 0, totalNd = 0, finLine = null;
   for (var j = 0; j < lineas.length; j++) {
     totalPlan += lineas[j].plan; totalCobrado += lineas[j].cobrado;
+    totalNc += lineas[j].nc; totalNd += lineas[j].nd;
     if (!finLine && _finInfo(lineas[j].motivo)) finLine = lineas[j];
   }
   var tipo = 'CONTADO', financia = '';
@@ -442,6 +454,8 @@ function _cuadroDePv(rows) {
     totalPlan: Math.round(totalPlan * 100) / 100,
     totalCobrado: Math.round(totalCobrado * 100) / 100,
     falta: Math.round((totalPlan - totalCobrado) * 100) / 100,
+    totalNc: Math.round(totalNc * 100) / 100,   // total notas de crédito aplicadas
+    totalNd: Math.round(totalNd * 100) / 100,   // total notas de débito (cargos extra)
     tipo: tipo, financia: financia,
     creditoCobrado: finLine ? { ok: (finLine.saldo <= 1), fecha: finLine.fechaCobro } : null,
   };
@@ -542,7 +556,10 @@ function getAdmVentas() {
   const nums = pvs.map(p => p.numero).filter(Boolean);
   for (let i = 0; i < nums.length; i += 50) {
     const lote = nums.slice(i, i + 50).map(n => '"' + n + '"').join(',');
-    const dc = get('/detcash?select=referencia,fecha,vencimiento,importe,motivo,origen,cobranzanro&origen=in.(VTOKM,VTPDA,RC)&referencia=in.(' + encodeURIComponent(lote) + ')&limit=1000');
+    // VTGTS = notas de la cta cte del cliente (negativo = nota de crédito que
+    // anula deuda; positivo = nota de débito = cargo extra a pagar). Sin esto, una
+    // deuda ya anulada por NC (ej. CANCOKM corregido) quedaba como falta fantasma.
+    const dc = get('/detcash?select=referencia,fecha,vencimiento,importe,motivo,origen,cobranzanro&origen=in.(VTOKM,VTPDA,RC,VTGTS)&referencia=in.(' + encodeURIComponent(lote) + ')&limit=1000');
     for (const r of dc) (dcByPv[r.referencia] = dcByPv[r.referencia] || []).push(r);
     const us = get('/usados?select=preventaorigen,marca,modelo,patente,anio,km,color,vin,combustible,preciodetoma&preventaorigen=in.(' + encodeURIComponent(lote) + ')&limit=1000');
     for (const x of us) (usByPv[x.preventaorigen] = usByPv[x.preventaorigen] || []).push(x);
@@ -590,6 +607,8 @@ function getAdmVentas() {
       totalPlan: fin.totalPlan,
       totalCobrado: fin.totalCobrado,
       falta: fin.falta,
+      totalNc: fin.totalNc,                    // notas de crédito aplicadas (anulan deuda)
+      totalNd: fin.totalNd,                    // notas de débito (cargos extra a pagar)
       creditoCobrado: fin.creditoCobrado,      // {ok, fecha} si hay financiación
       // usadoParte: ficha del usado tomado en parte de pago (de la tabla usados,
       // por preventaorigen = nº PV). La "versión" viene dentro de modelo (Oversoft
@@ -693,9 +712,9 @@ function getVentasV2() {
     const esAA = String(p.numero || '').split('/').pop().trim() === '8'
       && (/\bG\s*-?\s*O\b/i.test(_comAA) || /grupo\s*y\s*orden/i.test(_comAA));
 
-    let gciaPct = null, gciaPesos = null;
+    let gciaPct = null, gciaPesos = null, listaM = 0;
     if (btMes && monto > 0) {
-      const listaM = Number(btMes.precio_lista) || 0;
+      listaM = Number(btMes.precio_lista) || 0;
       const im = (incPorMes[mesKey] || {})[nc.nombre_corto] || {};
       const ccM = esAA ? 0 : (Number(im.performance) || 0);
       const otrosM = esAA ? 0 : ((Number(im.tactico) || 0) + (Number(im.whosale) || 0) + (Number(im.adicional1) || 0) + (Number(im.adicional2) || 0) + (Number(im.cupo) || 0));
@@ -703,7 +722,11 @@ function getVentasV2() {
       if (gciaPct !== null) gciaPesos = Math.round(gciaPct * listaM);
     }
     const acc = manV[_normPv(p.numero)] || 0;   // accesorios manuales: la fórmula los SUMA
-    if (gciaPesos !== null) { gciaPesos += acc; acumPorMes[mesKey] = (acumPorMes[mesKey] || 0) + gciaPesos; }
+    if (gciaPesos !== null) {
+      gciaPesos += acc;
+      if (listaM > 0) gciaPct = gciaPesos / listaM;   // el % también incluye accesorios
+      acumPorMes[mesKey] = (acumPorMes[mesKey] || 0) + gciaPesos;
+    }
     const comentario = [String(p.comentario || '').trim(), String(p.comentarioaux || '').trim()].filter(Boolean).join('\n');
     const mencionaAcc = /\bacc/i.test(comentario);
 
