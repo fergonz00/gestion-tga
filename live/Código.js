@@ -63,6 +63,7 @@ function doGet(e) {
   try {
     if (tipo === 'stock')           return jsonResponse(_cached('stock',          CACHE_TTL_SEC, fresh, getStock));
     if (tipo === 'ventas')          return jsonResponse(_cached('ventas',         CACHE_TTL_SEC, fresh, getVentas));
+    if (tipo === 'ventasv2')        return jsonResponse(getVentasV2());           // PARALELO (validación): ventas desde Oversoft + margen desde la BT
     if (tipo === 'patentamientos')  return jsonResponse(_cached('patentamientos', CACHE_TTL_SEC, fresh, getPatentamientos));
     if (tipo === 'incentivos')      return jsonResponse(_cached('incentivos_' + (params.mes || ''), CACHE_TTL_SEC, fresh, () => getIncentivos(params)));
     if (tipo === 'pagosvw')         return jsonResponse(getPagosVW(params));      // sin cache
@@ -615,6 +616,113 @@ function getAdmVentas() {
     };
   });
   return { ventas: ventas, total: ventas.length, desde: ADM_VENTAS_DESDE, updatedAt: new Date().toISOString() };
+}
+
+// ====== VENTAS desde Oversoft + margen desde la BT (reemplazo de getVentas) ======
+// Arma la lista de ventas como Adm.ventas (Oversoft) y calcula la ganancia por
+// venta con la BT del mes de cada venta (igual que el motor), SIN leer la hoja.
+// Endpoint paralelo tipo=ventasv2 para validar contra la hoja antes de cortar.
+function getVentasV2() {
+  const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
+  const get = (path) => { const res = UrlFetchApp.fetch(OVERSOFT_URL + path, h); return res.getResponseCode() < 300 ? JSON.parse(res.getContentText()) : []; };
+
+  const desdeStr = VENTAS_MES_MINIMO + '-01';
+  const pvs = get('/preventas?select=prevtaid,numero,fecha,vendedorid,unidadid,modelo,precioventa,tasadeivaid&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + desdeStr + '&order=prevtaid.desc&limit=3000');
+
+  // unidades (serie + color) en lotes de 100
+  const uidSet = {}; for (const p of pvs) if (p.unidadid) uidSet[p.unidadid] = true;
+  const uids = Object.keys(uidSet); const unis = {};
+  for (let i = 0; i < uids.length; i += 100) for (const u of get('/unidades?select=unidadid,serie,color&unidadid=in.(' + uids.slice(i, i + 100).join(',') + ')')) unis[u.unidadid] = u;
+  const colorDe = {};
+  for (const c of get('/colores?select=colorid,descripcion&limit=2000')) colorDe[String(c.colorid)] = String(c.descripcion || '').trim();
+
+  const vend = {};
+  for (const v of get('/vendedores?select=vendedorid,nombre&limit=2000')) vend[v.vendedorid] = String(v.nombre || '').trim();
+
+  // desc modelo (codigodecompra → descripcion operativa)
+  const desc = {}; let off = 0;
+  for (let i = 0; i < 12; i++) { const ch = get('/modelos?select=codigodecompra,descripcionoperativa&order=modeloid&limit=1000&offset=' + off); for (const m of ch) if (m.codigodecompra) desc[String(m.codigodecompra).trim()] = m.descripcionoperativa; if (ch.length < 1000) break; off += 1000; }
+
+  // catálogo + BT por mes + incentivos por mes (Supabase) — para el margen
+  const catByNorm = {};
+  for (const c of _supaGet('/catalogo_modelos?select=codigo,nombre_corto,nombre_bt&activo=eq.true')) {
+    if (c.nombre_corto) catByNorm[_ntrim(c.nombre_corto)] = c;
+    if (c.nombre_bt) catByNorm[_ntrim(c.nombre_bt)] = c;
+  }
+  const btPorMes = {};
+  for (const p of _supaGet('/precios_lista?select=mes,modelo,precio_lista,costo_concesionario')) {
+    if (!btPorMes[p.mes]) btPorMes[p.mes] = {};
+    btPorMes[p.mes][p.modelo] = p;
+  }
+  const incPorMes = {};
+  for (const r of _supaGet('/incentivos?select=mes,nombre_corto,tipo,monto_civa')) {
+    if (!incPorMes[r.mes]) incPorMes[r.mes] = {};
+    if (!incPorMes[r.mes][r.nombre_corto]) incPorMes[r.mes][r.nombre_corto] = {};
+    incPorMes[r.mes][r.nombre_corto][r.tipo] = Number(r.monto_civa) || 0;
+  }
+  const ncDe = (codFull) => { const d = desc[String(codFull || '').trim()]; return d ? (catByNorm[_ntrim(d)] || null) : null; };
+
+  const cuentaPorMes = {}, acumPorMes = {};
+  const filas = [];
+  // proceso cronológico (asc) para la gcia neta acumulada por mes
+  for (const p of pvs.slice().reverse()) {
+    if (!p.fecha) continue;
+    const mesKey = String(p.fecha).slice(0, 7);
+    if (mesKey < VENTAS_MES_MINIMO) continue;
+    cuentaPorMes[mesKey] = (cuentaPorMes[mesKey] || 0) + 1;
+
+    const monto = Number(p.precioventa) || 0;
+    const ivaFrac = Number(p.tasadeivaid) === 3 ? 0.105 : 0.21;
+    const u = unis[p.unidadid] || {};
+    const nc = ncDe(p.modelo);
+    const btMes = nc && btPorMes[mesKey] ? btPorMes[mesKey][nc.nombre_corto] : null;
+
+    let gciaPct = null, gciaPesos = null;
+    if (btMes && monto > 0) {
+      const listaM = Number(btMes.precio_lista) || 0;
+      const im = (incPorMes[mesKey] || {})[nc.nombre_corto] || {};
+      const ccM = Number(im.performance) || 0;
+      const otrosM = (Number(im.tactico) || 0) + (Number(im.whosale) || 0) + (Number(im.adicional1) || 0) + (Number(im.adicional2) || 0) + (Number(im.cupo) || 0);
+      gciaPct = _gciaVentaPct(monto, ivaFrac, listaM, Number(btMes.costo_concesionario) || 0, ccM, otrosM);
+      if (gciaPct !== null) gciaPesos = Math.round(gciaPct * listaM);
+    }
+    if (gciaPesos !== null) acumPorMes[mesKey] = (acumPorMes[mesKey] || 0) + gciaPesos;
+
+    const vendNombre = vend[p.vendedorid] || '';
+    filas.push({
+      ventaNum: Number(p.prevtaid) || 0,
+      fechaPvIso: String(p.fecha).slice(0, 10),
+      fechaPvStr: String(p.fecha).slice(0, 10),
+      mesKey: mesKey,
+      preventaNum: String(p.numero || '').trim(),
+      montoFc: monto,
+      iva: ivaFrac * 100,
+      serie: String(u.serie || '').trim(),
+      modelo: desc[String(p.modelo || '').trim()] || String(p.modelo || ''),
+      color: colorDe[String(u.color)] || '',
+      gciaVtaPesos: gciaPesos,
+      gciaVtaPct: gciaPct,
+      gciaNetaAcum: gciaPesos !== null ? acumPorMes[mesKey] : null,
+      vendedor: _matchVendedor(vendNombre) || vendNombre,
+      vendedorRaw: vendNombre,
+      sinBt: !btMes,
+      _dbg: btMes ? { nc: nc.nombre_corto, lista: Number(btMes.precio_lista)||0, costo: Number(btMes.costo_concesionario)||0,
+        cc: Number(((incPorMes[mesKey]||{})[nc.nombre_corto]||{}).performance)||0,
+        otros: (function(im){return (Number(im.tactico)||0)+(Number(im.whosale)||0)+(Number(im.adicional1)||0)+(Number(im.adicional2)||0)+(Number(im.cupo)||0);})((incPorMes[mesKey]||{})[nc.nombre_corto]||{}) } : null,
+    });
+  }
+  filas.reverse(); // lo más nuevo arriba
+
+  const meses = Object.keys(cuentaPorMes).sort().reverse().map(k => ({ mesKey: k, label: _mesLabel(k), cuenta: cuentaPorMes[k] }));
+  const sinBt = filas.filter(f => f.sinBt).length;
+  const _incDbg = {
+    meses: Object.keys(incPorMes),
+    teraJun: (incPorMes['2026-06'] || {})['Tera Trend MSI MT'] || null,
+    btMeses: Object.keys(btPorMes),
+    btTeraJun: (btPorMes['2026-06'] || {})['Tera Trend MSI MT'] || null,
+    catTera: catByNorm[_ntrim('Tera Trend MSI MT')] || null,
+  };
+  return { ventas: filas, meses: meses, mesActual: _yyyyMm(new Date()), sinBt: sinBt, fuente: 'oversoft+bt', _incDbg: _incDbg, updatedAt: new Date().toISOString() };
 }
 
 // MIGRACIÓN una-vez (re-ejecutable): lo que la administrativa YA cargó en la
@@ -1292,6 +1400,7 @@ function doPost(e) {
     if (accion === 'comprarreparto')       return jsonResponse(marcarComprado(body));
     if (accion === 'deshacerreparto')      return jsonResponse(desmarcarComprado(body));
     if (accion === 'okreparto')            return jsonResponse(darOkReparto(body));
+    if (accion === 'reabrirreparto')       return jsonResponse(reabrirReparto(body));
     if (accion === 'guardarcoloresreparto') return jsonResponse(guardarColoresReparto(body));
     if (accion === 'setindustria')         return jsonResponse(setIndustria(body));
     if (accion === 'setbaratitosnapshot')  return jsonResponse(saveBaratitoSnapshots(body.snapshots || []));
@@ -2843,6 +2952,17 @@ function darOkReparto(body) {
   return { ok: true };
 }
 
+// Deshacer una confirmación: vuelve de 'ok' a 'comprado' (a la sección
+// "Comprado · a conciliar"). No toca la conciliación de compras_vw.
+function reabrirReparto(body) {
+  var vin = String((body && body.vin) || '').trim().toUpperCase();
+  if (!vin) return { ok: false, error: 'falta vin' };
+  var res = UrlFetchApp.fetch(SUPA_URL + '/reparto_vw?vin=eq.' + encodeURIComponent(vin), {
+    method: 'patch', headers: Object.assign(_repartoWHeaders(), { Prefer: 'return=minimal' }),
+    payload: JSON.stringify({ estado_compra: 'comprado' }), muteHttpExceptions: true });
+  return res.getResponseCode() < 300 ? { ok: true } : { ok: false, error: 'supa ' + res.getResponseCode() };
+}
+
 function guardarColoresReparto(body) {
   var entries = (body && body.entries) || [];
   var aGuardar = [], aBorrar = [];
@@ -2865,13 +2985,14 @@ function guardarColoresReparto(body) {
   return { ok: true };
 }
 
-// Reparto del mes (sin los OK) enriquecido con cruce Oversoft + nombres de color
+// Reparto del mes (incluye los OK/confirmados, que el panel muestra en su propia
+// sección y siguen contando) enriquecido con cruce Oversoft + nombres de color
 // + ventas/stock por modelo (motor). Lo consume el panel operativo de gestión.
 function getReparto() {
   var periodo = _repartoPeriodo();
   var rows = [];
   try {
-    rows = _repartoRead('/reparto_vw?select=vin,canal,zona,centrega,modelo_codigo,my,familia,descripcion,color_codigo,comision,status,estado_compra,comprado_at&periodo=eq.' + periodo + '&estado_compra=neq.ok') || [];
+    rows = _repartoRead('/reparto_vw?select=vin,canal,zona,centrega,modelo_codigo,my,familia,descripcion,color_codigo,comision,status,estado_compra,comprado_at&periodo=eq.' + periodo) || [];
   } catch (e) {}
 
   var coloresDb = {};

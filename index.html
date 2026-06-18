@@ -3494,6 +3494,7 @@ async function repartoComprar() {
 }
 async function repartoDeshacer(vin) { await _repartoPost({ accion: 'deshacerreparto', vin: vin }); await loadReparto(true); }
 async function repartoOk(vin) { await _repartoPost({ accion: 'okreparto', vin: vin }); await loadReparto(true); }
+async function repartoReabrir(vin) { await _repartoPost({ accion: 'reabrirreparto', vin: vin }); await loadReparto(true); }
 async function repartoGuardarColores(codigos) {
   const entries = codigos.map(c => ({ codigo: c, nombre: (repartoNombres[c] !== undefined ? repartoNombres[c] : (repartoData.colores[c] || '')) }));
   await _repartoPost({ accion: 'guardarcoloresreparto', entries: entries });
@@ -3512,16 +3513,29 @@ function renderReparto() {
   if (!wrap) return;
 
   // ---- Estadística: objetivo vs comprado por mes ----
+  const mesHoy = _mesKeyHoy();
   const porMes = {};
+  const stockSeriesMes = new Set();   // series ya facturadas este mes (planilla)
   if (stockData && Array.isArray(stockData.unidades)) {
-    stockData.unidades.forEach(u => { if (u.fechaFcIso) porMes[u.fechaFcIso.slice(0, 7)] = (porMes[u.fechaFcIso.slice(0, 7)] || 0) + 1; });
+    stockData.unidades.forEach(u => {
+      if (!u.fechaFcIso) return;
+      const mk = u.fechaFcIso.slice(0, 7);
+      porMes[mk] = (porMes[mk] || 0) + 1;
+      if (mk === mesHoy && u.serie) stockSeriesMes.add(String(u.serie).trim().toUpperCase());
+    });
   }
   const objetivos = getObjetivosCompras();
-  const mesHoy = _mesKeyHoy();
   const items = repartoData.items || [];
-  const repPend = items.filter(i => i.estado_compra === 'comprado' && !i.enOversoft).length;
+  // Comprado del mes = facturado (planilla) + lo marcado en el reparto (comprado o
+  // confirmado/OK) que TODAVÍA no figura facturado. Dedup por serie: si ya está en la
+  // planilla la cuenta la factura; si no, la cuenta el reparto. Así, confirmar (OK)
+  // nunca le saca el conteo a la unidad.
+  const repExtra = items.filter(i =>
+    (i.estado_compra === 'comprado' || i.estado_compra === 'ok') &&
+    !stockSeriesMes.has(String(i.vin || '').slice(-8).toUpperCase())
+  ).length;
   const facturadoActual = porMes[mesHoy] || 0;
-  const comprasActual = facturadoActual + repPend;
+  const comprasActual = facturadoActual + repExtra;
   const objActual = objetivos[mesHoy] || 0;
   const pctActual = objActual ? (comprasActual / objActual * 100) : 0;
   const faltanActual = Math.max(0, objActual - comprasActual);
@@ -3541,7 +3555,7 @@ function renderReparto() {
   } else {
     html += '  <div class="compras-progress-line"><strong>' + comprasActual + '</strong> compras este mes · Cargá el objetivo para ver el avance</div>';
   }
-  if (repPend > 0) html += '  <div class="compras-faltan" style="color:var(--vw-grey-3)">' + facturadoActual + ' facturadas + <strong>' + repPend + '</strong> marcada' + (repPend !== 1 ? 's' : '') + ' en el reparto (todavía sin entrar a Oversoft).</div>';
+  if (repExtra > 0) html += '  <div class="compras-faltan" style="color:var(--vw-grey-3)">' + facturadoActual + ' facturadas + <strong>' + repExtra + '</strong> marcada' + (repExtra !== 1 ? 's' : '') + ' en el reparto (comprado/confirmado, todavía sin figurar facturada).</div>';
   html += '</div>';
 
   const MES_INICIO = '2026-03';
@@ -3562,6 +3576,7 @@ function renderReparto() {
   // ---- Panel operativo ----
   const pend = items.filter(i => i.estado_compra === 'pendiente').length;
   const comprados = items.filter(i => i.estado_compra === 'comprado').length;
+  const confirmados = items.filter(i => i.estado_compra === 'ok').length;
   const alertas = items.filter(i => i.alerta).length;
   const colores = repartoData.colores || {};
   const codigos = [...new Set(items.map(i => i.color_codigo).filter(Boolean))];
@@ -3569,7 +3584,7 @@ function renderReparto() {
   const conocidos = codigos.filter(c => colores[c]).sort();
 
   html += '<div class="reparto-sep"></div>';
-  html += '<div class="reparto-head"><h3>Reparto de VW · ' + _mesLabel(repartoData.periodo || mesHoy) + '</h3><span class="reparto-sub">' + pend + ' pendientes · ' + comprados + ' comprados</span></div>';
+  html += '<div class="reparto-head"><h3>Reparto de VW · ' + _mesLabel(repartoData.periodo || mesHoy) + '</h3><span class="reparto-sub">' + pend + ' pendientes · ' + comprados + ' comprados · ' + confirmados + ' confirmados</span></div>';
   if (alertas > 0) html += '<div class="reparto-alerta">⚠ ' + alertas + ' unidad' + (alertas !== 1 ? 'es' : '') + ' comprada' + (alertas !== 1 ? 's' : '') + ' hace 2 días o más sin aparecer en Oversoft. Revisá con Valeria.</div>';
 
   // Cargar mail
@@ -3608,8 +3623,10 @@ function renderReparto() {
   html += '<div id="repartoTablaWrap"></div>';
   html += '<p class="reparto-foot">Tildá las unidades a comprar y dale "Comprar seleccionadas" (arriba): te arma el texto para VW y pasan a la sección "Comprado · a conciliar" de abajo.</p>';
 
-  // Sección "Comprado · a conciliar" (abajo de todo): todo lo marcado comprado.
+  // Sección "Comprado · a conciliar": lo marcado comprado, todavía sin confirmar.
   html += repartoCompradoSec(items);
+  // Sección "Confirmados": lo que ya conciliaste con Oversoft (OK). Sigue contando.
+  html += repartoConfirmadosSec(items);
 
   wrap.innerHTML = html;
   repartoFiltrar();
@@ -3625,7 +3642,7 @@ function repartoCompradoSec(items) {
     h += '<div class="empty">Todavía no marcaste ninguna unidad como comprada. Tildalas arriba y dale "Comprar".</div>';
     return h;
   }
-  h += '<p class="reparto-hint">Lo que le compraste a VW. Cuando la unidad aparece en Oversoft, chequeá que coincidan modelo y color y tocá <strong>OK</strong> para que quede comprada oficial (sale del reparto).</p>';
+  h += '<p class="reparto-hint">Lo que le compraste a VW. Cuando la unidad aparece en Oversoft, chequeá que coincidan modelo y color y tocá <strong>OK</strong>: pasa a la sección <strong>Confirmados</strong> de abajo y sigue contando como compra del mes.</p>';
   h += '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
     + '<th>Modelo</th><th>Color pedido</th><th>Chasis (VIN)</th><th>Conciliación (Oversoft)</th><th class="num">Acción</th></tr></thead><tbody>';
   comp.forEach(it => {
@@ -3644,9 +3661,33 @@ function repartoCompradoSec(items) {
     } else conc = '<span class="reparto-est-wait">esperando Oversoft' + (it.diasComprado != null ? ' (' + it.diasComprado + 'd)' : '') + '</span>';
     h += '<td>' + conc + '</td>';
     let acc = '<div class="reparto-acc">';
-    if (it.enOversoft) acc += '<button class="refresh reparto-ok" onclick="repartoOk(\'' + it.vin + '\')" title="Confirmar conciliación: queda comprada oficial y sale del reparto">OK</button>';
+    if (it.enOversoft) acc += '<button class="refresh reparto-ok" onclick="repartoOk(\'' + it.vin + '\')" title="Confirmar conciliación: pasa a Confirmados (sigue contando)">OK</button>';
     acc += '<button class="reparto-link" onclick="repartoDeshacer(\'' + it.vin + '\')">Deshacer</button></div>';
     h += '<td class="num">' + acc + '</td></tr>';
+  });
+  h += '</tbody></table></div></div>';
+  return h;
+}
+
+// Sección con las unidades ya confirmadas (OK): conciliadas con Oversoft. Siguen
+// contando como compra del mes; quedan acá para tenerlas a la vista, separadas de
+// las que todavía faltan conciliar.
+function repartoConfirmadosSec(items) {
+  const ok = (items || []).filter(i => i.estado_compra === 'ok');
+  if (!ok.length) return '';
+  let h = '<div class="reparto-sep"></div>';
+  h += '<div class="reparto-head"><h3>✓ Confirmados</h3><span class="reparto-sub">' + ok.length + ' unidad' + (ok.length !== 1 ? 'es' : '') + ' · cuentan como compra del mes</span></div>';
+  h += '<p class="reparto-hint">Ya conciliadas con Oversoft. Si te confundiste, tocá <strong>Deshacer</strong> y vuelven a "Comprado · a conciliar".</p>';
+  h += '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
+    + '<th>Modelo</th><th>Color pedido</th><th>Chasis (VIN)</th><th>Oversoft</th><th class="num">Acción</th></tr></thead><tbody>';
+  ok.forEach(it => {
+    const ov = it.oversoft || {};
+    h += '<tr class="reparto-tr-ovs">';
+    h += '<td><div class="reparto-modelo">' + escapeHtml((it.descripcion || '').replace(/^VW /, '')) + '</div><div class="reparto-fam">' + escapeHtml(it.familia || '') + '</div></td>';
+    h += '<td>' + escapeHtml(it.color_nombre || '') + '</td>';
+    h += '<td class="reparto-vin">' + escapeHtml(it.vin) + '</td>';
+    h += '<td><span class="reparto-est-ok">✓ ' + escapeHtml(ov.modelo || '?') + (ov.serie ? ' · serie ' + escapeHtml(ov.serie) : '') + '</span></td>';
+    h += '<td class="num"><button class="reparto-link" onclick="repartoReabrir(\'' + it.vin + '\')">Deshacer</button></td></tr>';
   });
   h += '</tbody></table></div></div>';
   return h;
