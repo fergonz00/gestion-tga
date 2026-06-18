@@ -1272,7 +1272,6 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <button class="tab active" data-tab="resumen" onclick="setTab('resumen')">Resumen</button>
       <button class="tab" data-tab="stock" onclick="setTab('stock')">Stock</button>
       <button class="tab" data-tab="ventas" onclick="setTab('ventas')">Ventas</button>
-      <button class="tab" data-tab="patentamientos" onclick="setTab('patentamientos')">Patentamientos</button>
       <button class="tab" data-tab="admventas" onclick="setTab('admventas')">Adm. ventas</button>
       <button class="tab" data-tab="reparto" onclick="setTab('reparto')">Reparto</button>
       <button class="tab" data-tab="comprasvw" onclick="setTab('comprasvw')">Compras VW</button>
@@ -1297,14 +1296,12 @@ table.patent-tbl.resumida .col-extra { display: none; }
 
     <!-- =================== STOCK =================== -->
     <section class="panel" id="panelStock">
-      <div class="subtabs">
-        <button class="subtab active" data-subtab="stock"     onclick="setStockSubtab('stock')">Stock</button>
-        <button class="subtab"        data-subtab="oversoft"  onclick="setStockSubtab('oversoft')">Stock Oversoft</button>
-        <button class="subtab"        data-subtab="compras"   onclick="setStockSubtab('compras')">Compras</button>
-        <button class="subtab"        data-subtab="evolucion" onclick="setStockSubtab('evolucion')">Evolución</button>
-      </div>
+      <!-- Subtabs viejas (Stock planilla / Compras / Evolución) sacadas: la solapa
+           Stock ahora muestra directo el stock de Oversoft. Los subpaneles de abajo
+           quedan ocultos en el DOM (sin botones) porque loadStock/stockData siguen
+           alimentando Resumen, Reparto y el comparador Oversoft. -->
 
-      <div class="subpanel active" id="subpanelStock">
+      <div class="subpanel" id="subpanelStock">
         <div class="toolbar">
           <div class="updated" id="updatedAtStock">—</div>
           <div class="actions">
@@ -1314,9 +1311,9 @@ table.patent-tbl.resumida .col-extra { display: none; }
         <div id="stockContent"></div>
       </div>
 
-      <div class="subpanel" id="subpanelOversoft">
+      <div class="subpanel active" id="subpanelOversoft">
         <div class="toolbar">
-          <div class="updated" id="updatedAtOvsStock">Stock en vivo desde Oversoft, cruzado con compras (paga/impaga + vencimiento). En paralelo a la solapa Stock para validar.</div>
+          <div class="updated" id="updatedAtOvsStock">Stock en vivo desde Oversoft, cruzado con compras (paga/impaga + vencimiento).</div>
           <div class="actions">
             <button class="refresh" id="btnRefreshOvsStock" onclick="loadOversoftStock(true)">Actualizar</button>
           </div>
@@ -1356,16 +1353,8 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <div id="ventasContent"></div>
     </section>
 
-    <!-- =================== PATENTAMIENTOS =================== -->
-    <section class="panel" id="panelPatentamientos">
-      <div class="toolbar">
-        <div class="updated" id="updatedAtPatent">—</div>
-        <div class="actions">
-          <button class="refresh" id="btnRefreshPatent" onclick="loadPatentamientos(true)">Actualizar</button>
-        </div>
-      </div>
-      <div id="patentContent"></div>
-    </section>
+    <!-- Patentamientos dejó de ser solapa propia: ahora es una subtab dentro de
+         "Adm. ventas" (ver panelAdmVentas más abajo). -->
 
     <!-- =================== TRIMESTRE =================== -->
     <section class="panel" id="panelTrimestre">
@@ -1404,15 +1393,32 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <div id="industriaContent"></div>
     </section>
 
-    <!-- =================== ADM DE VENTAS =================== -->
+    <!-- =================== ADM DE VENTAS (+ subtab Patentamientos) =================== -->
     <section class="panel" id="panelAdmVentas">
-      <div class="toolbar">
-        <div class="updated" id="updatedAtAdmVentas">Carpetas de venta: lo de Oversoft sale solo; completá el resto y guardá por fila.</div>
-        <div class="actions">
-          <button class="refresh" onclick="loadAdmVentas(true)">Actualizar</button>
-        </div>
+      <div class="subtabs">
+        <button class="subtab active" data-subtab="admventas"      onclick="setAdmSubtab('admventas')">Adm. ventas</button>
+        <button class="subtab"        data-subtab="patentamientos" onclick="setAdmSubtab('patentamientos')">Patentamientos</button>
       </div>
-      <div id="admVentasContent"><div class="empty">Cargando…</div></div>
+
+      <div class="subpanel active" id="subpanelAdmVentasMain">
+        <div class="toolbar">
+          <div class="updated" id="updatedAtAdmVentas">Carpetas de venta: lo de Oversoft sale solo; completá el resto y guardá por fila.</div>
+          <div class="actions">
+            <button class="refresh" onclick="loadAdmVentas(true)">Actualizar</button>
+          </div>
+        </div>
+        <div id="admVentasContent"><div class="empty">Cargando…</div></div>
+      </div>
+
+      <div class="subpanel" id="subpanelAdmVentasPatent">
+        <div class="toolbar">
+          <div class="updated" id="updatedAtPatent">—</div>
+          <div class="actions">
+            <button class="refresh" id="btnRefreshPatent" onclick="loadPatentamientos(true)">Actualizar</button>
+          </div>
+        </div>
+        <div id="patentContent"></div>
+      </div>
     </section>
 
     <!-- =================== REPARTO (objetivo de compra vs comprado por mes) =================== -->
@@ -3048,19 +3054,21 @@ function enterApp(session) {
   document.getElementById('appScreen').classList.remove('hidden');
   document.getElementById('userName').textContent = session.nombre || session.usuario;
   window._tgaUser = session.usuario;
-  // Usuario de administración (Mónica): ve "Adm. ventas" y "Patentamientos".
+  // Usuario de administración (Mónica): ve "Adm. ventas" (que adentro ya incluye
+  // la subtab Patentamientos).
   if (USUARIOS_ADM_VENTAS.includes(session.usuario)) {
-    const tabsAdm = ['admventas', 'patentamientos'];
-    document.querySelectorAll('.tab').forEach(t => { if (!tabsAdm.includes(t.dataset.tab)) t.style.display = 'none'; });
+    document.querySelectorAll('.tab').forEach(t => { if (t.dataset.tab !== 'admventas') t.style.display = 'none'; });
     loadObjetivosPat();
     setTab('admventas');
     return;
   }
-  // Usuario de consulta de patentamientos: ve SOLO esa solapa.
+  // Usuario de consulta de patentamientos: ve SOLO "Adm. ventas" y abrimos la
+  // subtab Patentamientos directo.
   if (USUARIOS_PATENTAMIENTOS.includes(session.usuario)) {
-    document.querySelectorAll('.tab').forEach(t => { if (t.dataset.tab !== 'patentamientos') t.style.display = 'none'; });
+    document.querySelectorAll('.tab').forEach(t => { if (t.dataset.tab !== 'admventas') t.style.display = 'none'; });
     loadObjetivosPat();
-    setTab('patentamientos');
+    setTab('admventas');
+    setAdmSubtab('patentamientos');
     return;
   }
   // Valeria (compras a VW): ve Compras VW y Flujo financiero.
@@ -3109,8 +3117,9 @@ function startAutoRefresh() {
       _fetchStockSilent();
     } else if (activo === 'ventas') {
       _fetchVentasSilent();
-    } else if (activo === 'patentamientos') {
-      _fetchPatentSilent();
+    } else if (activo === 'admventas') {
+      // Patentamientos es subtab de Adm. ventas: si está abierta, la refrescamos.
+      if (document.getElementById('subpanelAdmVentasPatent')?.classList.contains('active')) _fetchPatentSilent();
     } else if (activo === 'trimestre') {
       _fetchPatentSilent();
     } else if (activo === 'incentivos') {
@@ -3132,13 +3141,15 @@ function logout() {
 // TABS
 // =======================================================================
 function setTab(tab) {
+  // Patentamientos pasó a ser subtab dentro de "Adm. ventas": redirigimos para
+  // que cualquier setTab('patentamientos') viejo (links del resumen, etc.) siga andando.
+  if (tab === 'patentamientos') { setTab('admventas'); setAdmSubtab('patentamientos'); return; }
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   const map = {
     resumen:        'panelResumen',
     stock:          'panelStock',
     ventas:         'panelVentas',
-    patentamientos: 'panelPatentamientos',
     trimestre:      'panelTrimestre',
     incentivos:     'panelIncentivos',
     precios:        'panelPrecios',
@@ -3153,9 +3164,12 @@ function setTab(tab) {
   if (el) el.classList.add('active');
   // Lazy load por tab
   if (tab === 'resumen')                          loadResumen();
-  if (tab === 'stock'          && !stockData)    loadStock(false);
+  // La solapa Stock ahora muestra el stock de Oversoft (antes subtab "Stock Oversoft").
+  if (tab === 'stock') {
+    if (!oversoftStockData) loadOversoftStock(false);
+    else                    renderOversoftStock();
+  }
   if (tab === 'ventas'         && !ventasData)   loadVentas(false);
-  if (tab === 'patentamientos' && !patentData)   loadPatentamientos(false);
   if (tab === 'trimestre') {
     if (!patentData) loadPatentamientos(false);
     else             renderTrimestre();
@@ -3170,6 +3184,15 @@ function setTab(tab) {
     if (!patentData) loadPatentamientos(false);
     else             renderIndustria();
   }
+}
+
+// Subtabs dentro de "Adm. ventas": la administrativa y Patentamientos (consulta).
+function setAdmSubtab(name) {
+  document.querySelectorAll('#panelAdmVentas .subtab').forEach(b => b.classList.toggle('active', b.dataset.subtab === name));
+  document.getElementById('subpanelAdmVentasMain').classList.toggle('active',  name === 'admventas');
+  document.getElementById('subpanelAdmVentasPatent').classList.toggle('active', name === 'patentamientos');
+  if (name === 'admventas'      && !admVentasData) loadAdmVentas(false);
+  if (name === 'patentamientos' && !patentData)    loadPatentamientos(false);
 }
 
 // =======================================================================
