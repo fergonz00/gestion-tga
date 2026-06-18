@@ -1915,7 +1915,7 @@ function renderAdmVentas() {
   h += chip('pendientes', 'Pendientes de patentar');
   h += chip('patentadas', 'Patentadas');
   h += chip('todas', 'Todas');
-  h += '<input type="text" placeholder="🔍 PV, cliente, serie, dominio…" value="' + escapeHtml(admVentasBusca) + '" oninput="admVentasBusca=this.value;renderAdmVentas()" '
+  h += '<input type="text" id="admBuscaInput" placeholder="🔍 PV, cliente, serie, dominio…" value="' + escapeHtml(admVentasBusca) + '" oninput="admVentasBusca=this.value;renderAdmVentas()" '
      + ' style="padding:7px 12px;border:1px solid var(--vw-grey-2);border-radius:8px;min-width:220px;font-size:13px">';
   h += '<span style="font-size:12px;color:var(--vw-grey-3)">' + rows.length + ' carpetas</span>';
   h += '</div>';
@@ -1926,8 +1926,9 @@ function renderAdmVentas() {
   h += '<thead style="white-space:nowrap"><tr>'
      + '<th style="text-align:left">PV</th><th style="text-align:left">Fecha</th><th style="text-align:left">Modelo</th>'
      + '<th style="text-align:left">Cliente</th><th style="text-align:left">Vendedor</th><th style="text-align:left">Serie</th>'
+     + '<th title="Pago de la unidad a VW (de Compras y Saldos, por serie): fecha o impaga">Pago VW</th>'
      + '<th style="text-align:left">Dominio</th><th style="text-align:left">F. patent.</th>'
-     + '<th>Patenta</th><th>Admin</th><th title="La adm confirma el mes una vez pagado el patentamiento (aunque Oversoft ya tenga la fecha)">Mes pat. ✔adm</th><th title="Forma de pago según Oversoft (formas de pago + recibos). 💵 abre el detalle">Tipo</th><th title="¿El crédito fue liquidado? lo marca la adm; la fecha sale sola del recibo">Créd. liq.</th><th>Rev/Part</th><th title="Pago de la unidad a VW (de Compras y Saldos, por serie): fecha o impaga">Pago VW</th><th>Notas</th><th></th>'
+     + '<th>Patenta</th><th>Admin</th><th title="La adm confirma el mes una vez pagado el patentamiento (aunque Oversoft ya tenga la fecha)">Mes pat. ✔adm</th><th title="Forma de pago según Oversoft (formas de pago + recibos). 💵 abre el detalle">Tipo</th><th title="¿El crédito fue liquidado? lo marca la adm; la fecha sale sola del recibo">Créd. liq.</th><th>Rev/Part</th><th>Notas</th><th></th>'
      + '</tr></thead><tbody>';
 
   // Guardado AUTOMÁTICO: cualquier cambio en un campo dispara el guardado de
@@ -1973,6 +1974,15 @@ function renderAdmVentas() {
        + '<td data-label="Cliente" title="' + escapeHtml(String(v.cliente) + (v.localidad ? ' — ' + v.localidad : '')) + '">' + escapeHtml(String(v.cliente).slice(0, 17)) + (v.localidad ? '<br><small style="color:var(--vw-grey-3)">' + escapeHtml(String(v.localidad).slice(0, 17)) + '</small>' : '') + '</td>'
        + '<td data-label="Vendedor">' + escapeHtml(v.vendedor) + '</td>'
        + '<td data-label="Serie" title="' + escapeHtml(v.chasis) + '">' + escapeHtml(v.serie) + '</td>'
+       + '<td data-label="Pago VW">'
+         + (v.pagoVW
+             ? (v.pagoVW.impaga
+                 ? '<span style="color:#cc3300;font-weight:700">impaga</span>' + (v.pagoVW.vence ? '<br><small style="color:var(--vw-grey-3)">vence ' + escapeHtml(v.pagoVW.vence) + '</small>' : '')
+                 : (v.pagoVW.porAntiguedad
+                     ? '<b style="color:#0a7a30">paga</b><br><small style="color:var(--vw-grey-3)">por antigüedad</small>'
+                     : '<b style="color:#0a7a30">' + escapeHtml(v.pagoVW.fecha || 'pagada') + '</b>'))
+             : '<span style="color:var(--vw-grey-3)">s/d</span>')
+       + '</td>'
        + '<td data-label="Dominio">' + (v.dominio ? '<b style="color:#0a7a30">' + escapeHtml(v.dominio) + '</b>' : '<span style="color:#cc6600">pend.</span>') + '</td>'
        + '<td data-label="F. patent.">' + (v.fechaPatentamiento ? _fechaDMA(v.fechaPatentamiento) : '<span style="color:var(--vw-grey-3)">—</span>') + '</td>'
        + '<td data-label="Patenta">' + sel(v.preventa, key, 'patenta', m.patenta, ['TG', 'CL', 'RE'], 58) + '</td>'
@@ -1990,15 +2000,6 @@ function renderAdmVentas() {
          + (v.creditoCobrado && v.creditoCobrado.fecha ? '<br><small style="color:#0a7a30">' + _fechaDMA(v.creditoCobrado.fecha) + '</small>' : ((v.tipo && v.tipo.indexOf('FINANCIA') === 0) ? '<br><small style="color:var(--vw-grey-3)">s/recibo</small>' : ''))
        + '</td>'
        + '<td data-label="Rev/Part">' + sel(v.preventa, key, 'reventa_particular', m.reventa_particular, ['PARTICULAR', 'REVENTA'], 90) + '</td>'
-       + '<td data-label="Pago VW">'
-         + (v.pagoVW
-             ? (v.pagoVW.impaga
-                 ? '<span style="color:#cc3300;font-weight:700">impaga</span>' + (v.pagoVW.vence ? '<br><small style="color:var(--vw-grey-3)">vence ' + escapeHtml(v.pagoVW.vence) + '</small>' : '')
-                 : (v.pagoVW.porAntiguedad
-                     ? '<b style="color:#0a7a30">paga</b><br><small style="color:var(--vw-grey-3)">por antigüedad</small>'
-                     : '<b style="color:#0a7a30">' + escapeHtml(v.pagoVW.fecha || 'pagada') + '</b>'))
-             : '<span style="color:var(--vw-grey-3)">s/d</span>')
-       + '</td>'
        + '<td data-label="Notas">' + inp(v.preventa, key, 'notas', m.notas, 92) + '</td>'
        + '<td data-label="Guardado"><button onclick="guardarAdmVenta(\'' + v.preventa + '\')" id="admsave_' + key + '" title="Reintentar guardado de la fila" '
        + ' style="border:0;background:var(--vw-blue);color:#fff;border-radius:6px;padding:4px 9px;cursor:pointer">✓</button></td>'
@@ -2013,8 +2014,24 @@ function renderAdmVentas() {
   if (!rows.length) h += '<tr><td colspan="17" class="empty">Sin carpetas para ese filtro.</td></tr>';
   h += '</tbody></table></div></div>';
   h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio y fecha de patentamiento salen de Oversoft en vivo (no se editan). El resto se completa acá y <b>se guarda solo al cambiar cada campo</b> (el ✓ de la fila se pone verde cuando guardó bien; si algo falla, avisa y podés reintentar con el ✓). El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes. El mes de cada carpeta (selector de arriba, mismo criterio que Patentamientos) = fecha real de Oversoft o, si aún no está patentada, el "Mes pat. ✔adm" — las ventas nuevas sin ninguno de los dos entran al mes en curso (cambiale el "Mes pat." si va para otro mes).</div>';
+  // El re-render recrea el <input> de búsqueda y le saca el foco (antes había
+  // que volver a clickear tras cada letra). Guardo si estaba enfocado + la
+  // posición del cursor y lo restauro después de reescribir el HTML.
+  const ae = document.activeElement;
+  const reenfocarBusca = !!(ae && ae.id === 'admBuscaInput');
+  const caretBusca = reenfocarBusca ? ae.selectionStart : null;
+
   cont.innerHTML = h;
   setupAdmTopScroll();
+
+  if (reenfocarBusca) {
+    const el = document.getElementById('admBuscaInput');
+    if (el) {
+      el.focus();
+      const pos = (caretBusca == null) ? el.value.length : caretBusca;
+      try { el.setSelectionRange(pos, pos); } catch (e) {}
+    }
+  }
 }
 
 // Sincroniza la barra de scroll superior (admv-topbar) con la tabla (admv-scroll):
