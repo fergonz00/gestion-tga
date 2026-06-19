@@ -889,7 +889,7 @@ function instalarTriggerCongelar() {
 
 function getPreciosLista(mes) {
   const m = /^\d{4}-\d{2}$/.test(String(mes || '')) ? mes : _yyyyMm(new Date());
-  const cat = _supaGet('/catalogo_modelos?select=codigo,nombre_corto,nombre_bt&activo=eq.true&order=nombre_corto');
+  const cat = _supaGet('/catalogo_modelos?select=codigo,nombre_corto,nombre_bt,orden&activo=eq.true&order=orden.asc.nullslast,nombre_corto.asc');
   const pl = _supaGet('/precios_lista?select=codigo,modelo,precio_lista,costo_concesionario,lista_num,cargado_at&mes=eq.' + m);
   const porModelo = {};
   let listaNum = null;
