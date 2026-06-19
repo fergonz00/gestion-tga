@@ -2457,6 +2457,14 @@ function _cvwMesKey(mes) {
   const y = Number((p[1] || '').trim()) || 0;
   return y * 100 + n;
 }
+// "junio-26" → "2026-06" (clave mensual estándar usada en Reparto/Resumen).
+function _cvwMesToKey(mes) {
+  const p = String(mes || '').toLowerCase().split('-');
+  const n = _CVW_MESNUM[(p[0] || '').trim()] || 0;
+  const yy = Number((p[1] || '').trim()) || 0;
+  if (!n || !yy) return '';
+  return (2000 + yy) + '-' + String(n).padStart(2, '0');
+}
 // vto "26-mar" / "08-ene" → clave ordenable (mes*100+día). Sin fecha → al final.
 const _CVW_MESAB = { ene: 1, feb: 2, mar: 3, abr: 4, may: 5, jun: 6, jul: 7, ago: 8, sep: 9, set: 9, oct: 10, nov: 11, dic: 12 };
 function _cvwVenceKey(v) {
@@ -4158,7 +4166,7 @@ function _repMesesVentana(n) {
 function _repVendido(v, n) { if (!v) return null; return _repMesesVentana(n).reduce((a, mk) => a + (Number(v[mk]) || 0), 0); }
 
 async function loadReparto(forzar) {
-  if (!stockData || forzar) { try { await loadStock(forzar); } catch (e) {} }
+  if (!comprasVWData || forzar) { try { await loadComprasVW(forzar); } catch (e) {} }
   if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') !== 0) {
     try {
       const res = await fetch(APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=reparto');
@@ -4229,13 +4237,13 @@ function renderReparto() {
   // ---- Estadística: objetivo vs comprado por mes ----
   const mesHoy = _mesKeyHoy();
   const porMes = {};
-  const stockSeriesMes = new Set();   // series ya facturadas este mes (planilla)
-  if (stockData && Array.isArray(stockData.unidades)) {
-    stockData.unidades.forEach(u => {
-      if (!u.fechaFcIso) return;
-      const mk = u.fechaFcIso.slice(0, 7);
+  const stockSeriesMes = new Set();   // series ya facturadas este mes (compras_vw, Supabase)
+  if (comprasVWData && Array.isArray(comprasVWData.compras)) {
+    comprasVWData.compras.forEach(c => {
+      const mk = _cvwMesToKey(c.mes);   // "junio-26" → "2026-06"
+      if (!mk) return;
       porMes[mk] = (porMes[mk] || 0) + 1;
-      if (mk === mesHoy && u.serie) stockSeriesMes.add(String(u.serie).trim().toUpperCase());
+      if (mk === mesHoy && c.serie) stockSeriesMes.add(String(c.serie).trim().toUpperCase());
     });
   }
   const objetivos = getObjetivosCompras();
@@ -6393,11 +6401,9 @@ function _urlIncentivos(mesKey, fresh) {
 }
 
 async function loadIncentivos(forzar) {
-  // Asegurar que ventas/patentamientos/stock estén cargados (para el matching
-  // de pdfs por serie+PV → modelo canónico de ventas).
-  if (!ventasData) loadVentas(false);
+  // El matching cc/condiciones se hace server-side desde Supabase (tabla
+  // incentivos). Patentamientos sí se usa para el cruce por serie+PV.
   if (!patentData) loadPatentamientos(false);
-  if (!stockData)  loadStock(false);
 
   // Conteo de pagos guardados (en background, para mostrar en la upload zone).
   _contarPagosVW().then(n => { totalPagosGuardados = n; renderIncentivos(); });
