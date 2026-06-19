@@ -76,7 +76,6 @@ function doGet(e) {
     if (tipo === 'oversoft')        return jsonResponse(getOversoft(params));     // proxy a la réplica Supabase
     if (tipo === 'oversoftsync')    return jsonResponse(getOversoftSync() || { iso: null, ok: false }); // sello de última sincronización de la réplica (indicador global)
     if (tipo === 'saldoscompras')   return jsonResponse(_cached('saldoscompras', CACHE_TTL_SEC, fresh, getSaldosCompras)); // proxy a saldos-tga (paga/impaga + vencimiento)
-    if (tipo === 'madre')           return jsonResponse(getMadreSheet(params));   // lectura cruda de una pestaña de la planilla madre
     if (tipo === 'precios')         return jsonResponse(_cached('precios', CACHE_TTL_SEC, fresh, getPreciosActualBT)); // espejo de precios/ganancia de "Actual BT"
     if (tipo === 'precioslista')    return jsonResponse(getPreciosLista(String(params.mes || ''))); // precios_lista (lista+costo) editable en el portal — reemplaza "Actual BT"
     if (tipo === 'motor')           return jsonResponse(_cached('motor', CACHE_TTL_SEC, fresh, getBaratitoMotor));     // MOTOR: calcula desde Supabase (no la planilla)
@@ -169,30 +168,6 @@ const MADRE_SHEETS_OK = [
   'Febrero 26 BT', 'Enero 26 BT', 'Enero 2026 BT', 'Resumen Competencia 2',
   'chequeo incentivos', 'cupos', 'listas de precios', 'aumentos vw',
 ];
-function getMadreSheet(params) {
-  const nombre = String(params.sheet || '').trim();
-  if (!nombre) return { hojasPermitidas: MADRE_SHEETS_OK };  // sin sheet → lista la whitelist
-  if (MADRE_SHEETS_OK.indexOf(nombre) === -1) {
-    return { error: 'pestaña no permitida', hojasPermitidas: MADRE_SHEETS_OK };
-  }
-  const ss = SpreadsheetApp.openById(MADRE_ID);
-  const sh = ss.getSheetByName(nombre);
-  if (!sh) return { error: 'no existe la pestaña "' + nombre + '"', hojas: ss.getSheets().map(s => s.getName()) };
-  const desde = Math.max(1, Number(params.from) || 1);          // fila inicial (1-based)
-  const cuantas = Math.min(Number(params.max) || 300, 2000);     // cantidad de filas
-  const totalRows = sh.getLastRow();
-  if (desde > totalRows) return { sheet: nombre, totalFilas: totalRows, from: desde, filas: 0, valores: [] };
-  const lastCol = sh.getLastColumn();
-  const nFilas = Math.min(cuantas, totalRows - desde + 1);
-  if (nFilas < 1 || lastCol < 1) return { sheet: nombre, totalFilas: totalRows, filas: 0, valores: [] };
-  const rng = sh.getRange(desde, 1, nFilas, lastCol);
-  // formulas=1 → devuelve las fórmulas (celda vacía = constante, no fórmula)
-  if (String(params.formulas || '') === '1') {
-    return { sheet: nombre, totalFilas: totalRows, from: desde, filas: nFilas, cols: lastCol, formulas: rng.getFormulas() };
-  }
-  return { sheet: nombre, totalFilas: totalRows, from: desde, filas: nFilas, cols: lastCol, valores: rng.getValues() };
-}
-
 // Espejo de los precios calculados en "Actual BT" de la madre. Devuelve, por
 // modelo, el precio de oferta (AH) y la ganancia (AO) tal cual los calcula Fer,
 // más TODO el desglose para la solapa "Baratito": dto vw, stock, vendidos,
