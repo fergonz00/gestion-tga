@@ -179,22 +179,6 @@ h2 { font-size: 22px; font-weight: 700; color: var(--vw-blue); margin-bottom: 4p
 .compras-hist-pct.good { background: #d4edda; color: #2d6a4f; }
 .compras-hist-pct.none { background: var(--vw-grey-1); color: var(--vw-grey-3); font-weight: 500; font-style: italic; }
 
-/* ========== EVOLUCIÓN STOCK ========== */
-.evol-chart-card {
-  background: white; border: 1px solid var(--vw-grey-2); border-radius: 12px;
-  padding: 18px 16px 14px; margin-bottom: 14px;
-}
-.evol-chart-card .titulo {
-  font-size: 13px; color: var(--vw-grey-4); text-transform: uppercase;
-  letter-spacing: 1px; font-weight: 700; margin-bottom: 12px;
-}
-.evol-chart { width: 100%; height: 220px; display: block; }
-.evol-chart .grid-line { stroke: var(--vw-grey-1); stroke-width: 1; }
-.evol-chart .axis-text { font-size: 10px; fill: var(--vw-grey-3); font-family: inherit; }
-.evol-chart .data-line { fill: none; stroke: var(--vw-blue); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
-.evol-chart .data-area { fill: var(--vw-blue); fill-opacity: 0.1; }
-.evol-chart .data-dot  { fill: var(--vw-blue); stroke: white; stroke-width: 2; }
-.evol-chart .data-label { font-size: 11px; fill: var(--vw-blue); font-weight: 700; font-family: inherit; }
 
 .evol-tbl-card { background: white; border: 1px solid var(--vw-grey-2); border-radius: 12px; padding: 4px 0; overflow: hidden; }
 .evol-tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -1344,15 +1328,6 @@ table.patent-tbl.resumida .col-extra { display: none; }
         <div id="comprasContent"></div>
       </div>
 
-      <div class="subpanel" id="subpanelEvolucion">
-        <div class="toolbar">
-          <div class="updated">Evolución del stock = compras − ventas por mes</div>
-          <div class="actions">
-            <button class="refresh" onclick="refreshEvolucion()">Actualizar</button>
-          </div>
-        </div>
-        <div id="evolucionContent"></div>
-      </div>
     </section>
 
     <!-- =================== VENTAS =================== -->
@@ -3637,7 +3612,6 @@ function setStockSubtab(name) {
   document.getElementById('subpanelStock').classList.toggle('active',     name === 'stock');
   document.getElementById('subpanelOversoft').classList.toggle('active',  name === 'oversoft');
   document.getElementById('subpanelCompras').classList.toggle('active',   name === 'compras');
-  document.getElementById('subpanelEvolucion').classList.toggle('active', name === 'evolucion');
   const spExpo = document.getElementById('subpanelExposicion');
   if (spExpo) spExpo.classList.toggle('active', name === 'exposicion');
   if (name === 'oversoft') {
@@ -3651,12 +3625,6 @@ function setStockSubtab(name) {
   if (name === 'compras') {
     if (!stockData) loadStock(false);
     else            renderCompras();
-  }
-  if (name === 'evolucion') {
-    // Necesita stockData + ventasData para reconstruir
-    if (!stockData)  loadStock(false);
-    if (!ventasData) loadVentas(false);
-    if (stockData && ventasData) renderEvolucion();
   }
 }
 
@@ -3800,11 +3768,6 @@ async function confirmarReponer(serieVieja) {
     alert('Error reponiendo: ' + (e.message || e));
     if (btn) { btn.disabled = false; btn.textContent = 'Confirmar y avisar'; }
   }
-}
-
-function refreshEvolucion() {
-  loadStock(true);
-  loadVentas(true);
 }
 
 // =======================================================================
@@ -4595,133 +4558,6 @@ function onIndustriaInputChange(input) {
   setIndustriaCampo(mk, campo, valor);
 }
 
-// =======================================================================
-// EVOLUCIÓN DEL STOCK · grafico + tabla por mes
-// =======================================================================
-//
-// Reconstruye el stock al cierre de cada mes desde abril 2026 hasta el actual.
-// Anclamos en el presente (unidades con vendido=false en stockData) y vamos
-// hacia atrás aplicando:
-//   stockFinDeMesAnterior = stockFinDeMesActual − comprasMes + ventasMes
-//
-// Asumimos que el stockData mantiene historicas las compras (filas con
-// fechaFcIso) y que ventasData tiene las ventas por mes. Si tu sistema
-// archiva unidades antiguas el resultado puede no ser exacto en meses
-// muy hacia atrás.
-
-function renderEvolucion() {
-  const wrap = document.getElementById('evolucionContent');
-  if (!stockData || !Array.isArray(stockData.unidades) || !ventasData || !Array.isArray(ventasData.ventas)) {
-    wrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>Cargando datos…</div></div>';
-    return;
-  }
-
-  const MES_INICIO = '2026-04';
-  const mesHoy = _mesKeyHoy();
-
-  // Lista de meses desde MES_INICIO hasta mesHoy, ascendente
-  function _mesesEntre(desde, hasta) {
-    const [yd, md] = desde.split('-').map(Number);
-    const [yh, mh] = hasta.split('-').map(Number);
-    const out = [];
-    let y = yd, m = md;
-    while (y < yh || (y === yh && m <= mh)) {
-      out.push(y + '-' + String(m).padStart(2, '0'));
-      m++;
-      if (m > 12) { m = 1; y++; }
-    }
-    return out;
-  }
-  const meses = _mesesEntre(MES_INICIO, mesHoy);
-
-  // Compras por mes (stockData)
-  const comprasPorMes = {};
-  stockData.unidades.forEach(u => {
-    if (!u.fechaFcIso) return;
-    const mk = u.fechaFcIso.slice(0, 7);
-    comprasPorMes[mk] = (comprasPorMes[mk] || 0) + 1;
-  });
-  // Ventas por mes (ventasData)
-  const ventasPorMes = {};
-  ventasData.ventas.forEach(v => {
-    if (!v.mesKey) return;
-    ventasPorMes[v.mesKey] = (ventasPorMes[v.mesKey] || 0) + 1;
-  });
-  // Stock actual (al cierre del mes en curso)
-  const stockActual = stockData.unidades.filter(u => !u.vendido).length;
-
-  // Reconstruir stock al cierre de cada mes (de adelante hacia atrás)
-  const cierre = {};
-  cierre[mesHoy] = stockActual;
-  for (let i = meses.length - 1; i > 0; i--) {
-    const mAct = meses[i];
-    const mAnt = meses[i - 1];
-    const cAct = comprasPorMes[mAct] || 0;
-    const vAct = ventasPorMes[mAct]  || 0;
-    cierre[mAnt] = cierre[mAct] - cAct + vAct;
-  }
-
-  // ====== Render: chart SVG + tabla ======
-  // Chart
-  const valores = meses.map(mk => cierre[mk]);
-  const maxV = Math.max(1, ...valores);
-  const minV = Math.min(0, ...valores);
-  const W = 600, H = 200;
-  const padL = 36, padR = 16, padT = 18, padB = 28;
-  const innerW = W - padL - padR;
-  const innerH = H - padT - padB;
-  const dx = meses.length > 1 ? innerW / (meses.length - 1) : 0;
-  const yOf = v => padT + innerH - ((v - minV) / (maxV - minV || 1)) * innerH;
-  const xOf = i => padL + i * dx;
-
-  // Gridlines (4 horizontales)
-  let svg = '';
-  svg += '<svg class="evol-chart" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">';
-  for (let i = 0; i <= 4; i++) {
-    const yy = padT + (innerH * i / 4);
-    const val = Math.round(maxV - (maxV - minV) * i / 4);
-    svg += '<line class="grid-line" x1="' + padL + '" x2="' + (W - padR) + '" y1="' + yy + '" y2="' + yy + '"/>';
-    svg += '<text class="axis-text" x="' + (padL - 6) + '" y="' + (yy + 3) + '" text-anchor="end">' + val + '</text>';
-  }
-  // Line + area
-  const points = valores.map((v, i) => xOf(i) + ',' + yOf(v)).join(' ');
-  const area = 'M' + xOf(0) + ',' + (padT + innerH) + ' L' + valores.map((v, i) => xOf(i) + ',' + yOf(v)).join(' L') + ' L' + xOf(valores.length - 1) + ',' + (padT + innerH) + ' Z';
-  svg += '<path class="data-area" d="' + area + '"/>';
-  svg += '<polyline class="data-line" points="' + points + '"/>';
-  // Dots + labels + X-axis
-  const mesesCortos = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
-  valores.forEach((v, i) => {
-    const x = xOf(i), y = yOf(v);
-    svg += '<circle class="data-dot" cx="' + x + '" cy="' + y + '" r="4"/>';
-    svg += '<text class="data-label" x="' + x + '" y="' + (y - 9) + '" text-anchor="middle">' + v + '</text>';
-    const [yy, mm] = meses[i].split('-').map(Number);
-    const lbl = mesesCortos[mm - 1] + (i === 0 || mm === 1 ? ' ' + String(yy).slice(2) : '');
-    svg += '<text class="axis-text" x="' + x + '" y="' + (H - padB + 18) + '" text-anchor="middle">' + lbl + '</text>';
-  });
-  svg += '</svg>';
-
-  // Tabla
-  let tbl = '';
-  tbl += '<div class="evol-tbl-card"><table class="evol-tbl">';
-  tbl += '<thead><tr><th>Mes</th><th class="num">Compras</th><th class="num">Ventas</th><th class="num">Variación</th><th class="num">Stock al cierre</th></tr></thead><tbody>';
-  for (let i = meses.length - 1; i >= 0; i--) {
-    const mk = meses[i];
-    const c = comprasPorMes[mk] || 0;
-    const v = ventasPorMes[mk]  || 0;
-    const dif = c - v;
-    const difCls = dif > 0 ? 'var-up' : (dif < 0 ? 'var-down' : 'var-eq');
-    const difStr = (dif > 0 ? '+' : '') + dif;
-    const trCls = (mk === mesHoy) ? 'actual' : '';
-    tbl += '<tr class="' + trCls + '"><td class="mes-col">' + _mesLabel(mk) + (mk === mesHoy ? ' (en curso)' : '') + '</td>';
-    tbl += '<td class="num">' + c + '</td>';
-    tbl += '<td class="num">' + v + '</td>';
-    tbl += '<td class="num ' + difCls + '">' + difStr + '</td>';
-    tbl += '<td class="num">' + cierre[mk] + '</td></tr>';
-  }
-  tbl += '</tbody></table></div>';
-
-  wrap.innerHTML = '<div class="evol-chart-card"><div class="titulo">Stock al cierre · mes a mes</div>' + svg + '</div>' + tbl;
-}
 
 // =======================================================================
 // RESUMEN · vista panorámica (Stock + Ventas + Patentamientos)
@@ -5260,7 +5096,6 @@ function renderOversoftStock() {
 function renderStock() {
   renderResumen();  // mantener la tab de Resumen sincronizada con los datos actuales
   if (document.getElementById('comprasContent')) renderCompras();  // mantener sub-tab Compras sincronizada
-  if (document.getElementById('evolucionContent') && ventasData) renderEvolucion();  // ídem Evolución
   const wrap = document.getElementById('stockContent');
   if (!stockData || !Array.isArray(stockData.unidades)) {
     wrap.innerHTML = '<div class="empty">Sin datos.</div>';
@@ -5973,7 +5808,6 @@ function setMesVentas(mesKey) {
 // =======================================================================
 function renderVentas() {
   renderResumen();
-  if (document.getElementById('evolucionContent') && stockData) renderEvolucion();  // sub-tab Evolución necesita stockData + ventasData
   const wrap = document.getElementById('ventasContent');
   if (!ventasData || !Array.isArray(ventasData.ventas)) {
     wrap.innerHTML = '<div class="empty">Sin datos.</div>';
