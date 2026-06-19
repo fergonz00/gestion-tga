@@ -90,6 +90,7 @@ function doGet(e) {
     if (tipo === 'migrarcomprasvw') return jsonResponse(migrarComprasVW()); // una-vez: vuelca lo de saldos (>=2026) a compras_vw, conciliado con Oversoft
     if (tipo === 'flujo')           return jsonResponse(_cached('flujo', CACHE_TTL_SEC, fresh, getFlujoFinanciero)); // flujo de caja: cobros pendientes (ingresos) vs pagos a VW (egresos)
     if (tipo === 'exposicion')      return jsonResponse(getExposicion());          // stock en exposición por salón (tabla exposicion_unidades, wjfgl)
+    if (tipo === 'reponer')         return jsonResponse(reponerExposicion(params)); // repone una unidad de exposición vendida y avisa por WhatsApp
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
@@ -101,6 +102,60 @@ function doGet(e) {
 function getExposicion() {
   const rows = _supaGet('/exposicion_unidades?select=serie,salon,unidad,color,fecha_fc,vendida,fecha_venta,avisada_venta,activa,reemplaza_a,reemplazada_por&activa=eq.true&order=salon.asc,vendida.desc,serie.asc');
   return { unidades: rows, updatedAt: new Date().toISOString() };
+}
+
+// Secret compartido para invocar las Edge Functions de aviso (server-side, no se expone al browser).
+const EXPO_NOTIF_SECRET = 'expo_c56bc3bcc9ea657f34cf6c6ccc3b18a62e18e2d1';
+
+// Repone una unidad de exposición vendida por otra del stock libre: da de baja la vieja,
+// alta la nueva (mismo salón) y dispara el WhatsApp de reemplazo (template exposicion_reemplazo).
+// Params: serie_vieja, serie_nueva, unidad_nueva, color_nueva.
+function reponerExposicion(params) {
+  const serieVieja  = String(params.serie_vieja  || '').trim();
+  const serieNueva  = String(params.serie_nueva  || '').trim();
+  const unidadNueva = String(params.unidad_nueva || '').trim();
+  const colorNueva  = String(params.color_nueva  || '').trim();
+  if (!serieVieja || !serieNueva || !unidadNueva) return { error: 'faltan datos (serie_vieja, serie_nueva, unidad_nueva)' };
+  if (serieVieja === serieNueva) return { error: 'la serie nueva no puede ser igual a la vieja' };
+
+  const svc = PropertiesService.getScriptProperties().getProperty('SUPA_SERVICE');
+  if (!svc) return { error: 'SUPA_SERVICE no configurado' };
+  const hW = { apikey: svc, Authorization: 'Bearer ' + svc, 'Content-Type': 'application/json' };
+
+  // 1) leer la vieja (activa)
+  const viejas = _supaGet('/exposicion_unidades?select=salon,unidad,color&serie=eq.' + encodeURIComponent(serieVieja) + '&activa=eq.true&limit=1');
+  if (!viejas || !viejas.length) return { error: 'no se encontró la unidad a reponer (serie ' + serieVieja + ')' };
+  const vieja = viejas[0];
+
+  // 2) baja de la vieja
+  const r1 = UrlFetchApp.fetch(SUPA_URL + '/exposicion_unidades?serie=eq.' + encodeURIComponent(serieVieja) + '&activa=eq.true', {
+    method: 'patch', headers: hW, muteHttpExceptions: true,
+    payload: JSON.stringify({ activa: false, reemplazada_por: serieNueva })
+  });
+  if (r1.getResponseCode() >= 300) return { error: 'error dando de baja la vieja: ' + r1.getContentText().slice(0, 200) };
+
+  // 3) alta de la nueva (mismo salón)
+  const r2 = UrlFetchApp.fetch(SUPA_URL + '/exposicion_unidades', {
+    method: 'post', headers: Object.assign({}, hW, { Prefer: 'return=minimal' }), muteHttpExceptions: true,
+    payload: JSON.stringify([{ serie: serieNueva, salon: vieja.salon, unidad: unidadNueva, color: colorNueva, vendida: false, avisada_venta: false, activa: true, reemplaza_a: serieVieja }])
+  });
+  if (r2.getResponseCode() >= 300) return { error: 'error dando de alta la nueva: ' + r2.getContentText().slice(0, 200) };
+
+  // 4) WhatsApp de reemplazo
+  let avisado = false, aviso = null;
+  try {
+    const unidadVendida = (vieja.unidad || '') + (vieja.color ? ' ' + vieja.color : '');
+    const unidadNuevaTxt = unidadNueva + (colorNueva ? ' ' + colorNueva : '');
+    const resp = UrlFetchApp.fetch('https://wjfglsafgaltusmbnccl.supabase.co/functions/v1/notify-exposicion-reemplazo', {
+      method: 'post', muteHttpExceptions: true,
+      headers: { 'Content-Type': 'application/json', 'x-stock-secret': EXPO_NOTIF_SECRET },
+      payload: JSON.stringify({ salon: vieja.salon, unidadVendida: unidadVendida, unidadNueva: unidadNuevaTxt, serieNueva: serieNueva })
+    });
+    aviso = JSON.parse(resp.getContentText() || '{}');
+    avisado = (aviso.enviados || 0) > 0;
+  } catch (e) { aviso = String(e); }
+
+  return { ok: true, serieVieja: serieVieja, serieNueva: serieNueva, salon: vieja.salon, avisado: avisado, aviso: aviso };
 }
 
 // Lectura cruda de una pestaña de la planilla MADRE (1Kvu...). La espejo tiene

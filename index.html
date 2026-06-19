@@ -3713,9 +3713,9 @@ function renderExposicion() {
   html += '<div class="table-wrap"><div class="table-head"><h3>Unidades en exposición</h3>'
         + '<div class="count">' + lista.length + ' unidades</div></div>'
         + '<div class="table-scroll"><table class="stock-tbl responsive-cards">'
-        + '<thead><tr><th>Estado</th><th>Serie</th><th>Unidad</th><th>Color</th><th>Salón</th></tr></thead><tbody>';
+        + '<thead><tr><th>Estado</th><th>Serie</th><th>Unidad</th><th>Color</th><th>Salón</th><th>Acción</th></tr></thead><tbody>';
   if (!lista.length) {
-    html += '<tr><td colspan="5" class="empty">No hay unidades.</td></tr>';
+    html += '<tr><td colspan="6" class="empty">No hay unidades.</td></tr>';
   } else {
     for (const u of lista) {
       let estado;
@@ -3731,11 +3731,71 @@ function renderExposicion() {
             + '<td>' + escapeHtml(u.unidad || '') + '</td>'
             + '<td>' + escapeHtml(u.color || '') + '</td>'
             + '<td>' + escapeHtml(u.salon || '') + '</td>'
+            + '<td>' + (u.vendida ? '<button class="chip" style="padding:4px 10px;cursor:pointer" onclick="abrirReponer(\'' + String(u.serie).replace(/'/g, "\\'") + '\')">↻ Reponer</button>' : '—') + '</td>'
             + '</tr>';
     }
   }
   html += '</tbody></table></div></div>';
   wrap.innerHTML = html;
+}
+
+// --- Reposición: elegir una unidad del stock libre para reemplazar la vendida ---
+async function abrirReponer(serieVieja) {
+  const u = (exposicionData && exposicionData.unidades || []).find(x => x.serie === serieVieja && x.vendida);
+  if (!u) { alert('No se encontró la unidad a reponer.'); return; }
+  if (!oversoftStockData) { try { await loadOversoftStock(false); } catch (e) {} }
+  const activas = new Set((exposicionData && exposicionData.unidades || []).filter(x => x.activa).map(x => x.serie));
+  let libres = ((oversoftStockData && oversoftStockData.unidades) || []).filter(x => x.serie && !activas.has(x.serie));
+  libres = libres.slice().sort((a, b) => String(a.modelo || '').localeCompare(String(b.modelo || ''), 'es'));
+  const opts = libres.map(x => '<option value="' + escapeHtml(x.serie) + '" data-modelo="' + escapeHtml(x.modelo || '') + '" data-color="' + escapeHtml(x.color || '') + '">'
+    + escapeHtml((x.modelo || '') + ' · ' + (x.color || '') + ' · ' + x.serie) + '</option>').join('');
+
+  cerrarReponer();
+  const ov = document.createElement('div');
+  ov.id = 'reponerOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
+  ov.innerHTML = '<div style="background:#fff;border-radius:10px;padding:18px;max-width:540px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.3)">'
+    + '<h3 style="margin:0 0 4px">Reponer unidad de exposición</h3>'
+    + '<div style="font-size:13px;color:#555;margin-bottom:12px">Salón <b>' + escapeHtml(u.salon) + '</b> · sale <b>' + escapeHtml((u.unidad || '') + ' ' + (u.color || '')) + '</b> (vendida)</div>'
+    + (libres.length
+        ? '<label style="font-size:12px;color:#555">Elegí la unidad nueva (stock libre, ' + libres.length + ')</label>'
+          + '<select id="reponerSelect" style="width:100%;padding:9px;border:1px solid #ccc;border-radius:6px;margin:6px 0 14px">' + opts + '</select>'
+        : '<div style="color:#c0392b;margin:8px 0 14px">No hay stock libre disponible para reponer.</div>')
+    + '<div style="display:flex;gap:8px;justify-content:flex-end">'
+    + '<button onclick="cerrarReponer()" style="padding:8px 14px;border:1px solid #ccc;background:#fff;border-radius:6px;cursor:pointer">Cancelar</button>'
+    + (libres.length ? '<button id="reponerConfirm" onclick="confirmarReponer(\'' + String(serieVieja).replace(/'/g, "\\'") + '\')" style="padding:8px 14px;border:0;background:#001e50;color:#fff;border-radius:6px;cursor:pointer">Confirmar y avisar</button>' : '')
+    + '</div></div>';
+  document.body.appendChild(ov);
+}
+
+function cerrarReponer() { const o = document.getElementById('reponerOverlay'); if (o) o.remove(); }
+
+async function confirmarReponer(serieVieja) {
+  const sel = document.getElementById('reponerSelect');
+  if (!sel || !sel.value) { alert('Elegí una unidad.'); return; }
+  const opt = sel.options[sel.selectedIndex];
+  const serieNueva  = sel.value;
+  const unidadNueva = opt.getAttribute('data-modelo') || '';
+  const colorNueva  = opt.getAttribute('data-color') || '';
+  const btn = document.getElementById('reponerConfirm');
+  if (btn) { btn.disabled = true; btn.textContent = 'Reponiendo…'; }
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=reponer'
+      + '&serie_vieja=' + encodeURIComponent(serieVieja)
+      + '&serie_nueva=' + encodeURIComponent(serieNueva)
+      + '&unidad_nueva=' + encodeURIComponent(unidadNueva)
+      + '&color_nueva=' + encodeURIComponent(colorNueva);
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    cerrarReponer();
+    exposicionData = null;
+    await loadExposicion(true);
+    alert(data.avisado ? 'Repuesto ✅ — aviso de WhatsApp enviado a vos, Juan y dlopez.' : 'Repuesto. ⚠️ El WhatsApp no se pudo enviar (revisar luego).');
+  } catch (e) {
+    alert('Error reponiendo: ' + (e.message || e));
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirmar y avisar'; }
+  }
 }
 
 function refreshEvolucion() {
