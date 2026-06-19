@@ -2355,10 +2355,10 @@ function getIncentivos(params) {
   //    ventas (canónico por PV) y caemos a patentamientos si no matchea —
   //    el modelo en patentamientos a veces tiene typos por escritura manual.
   const pat = getPatentamientos();
-  const vent = getVentas();
+  const vent = getVentasV2();   // PV → modelo desde Oversoft + meses congelados (ya no del Sheet)
   const modeloPorPv = {};
   for (const v of (vent.ventas || [])) {
-    if (v.preventaNum) modeloPorPv[String(v.preventaNum).trim()] = String(v.modelo || '').trim();
+    if (v.preventaNum) modeloPorPv[_normPv(v.preventaNum)] = String(v.modelo || '').trim();
   }
 
   // CC al 100% REAL por modelo (tabla "Performance Bonus" de la circular del
@@ -2388,7 +2388,7 @@ function getIncentivos(params) {
     c.mesKey === mesKey && c.tipoCarpetaCanon !== 'Plan ahorro'
   );
   const porUnidadPat = patDelMes.map(c => {
-    const modeloVentas = c.pv ? (modeloPorPv[String(c.pv).trim()] || '') : '';
+    const modeloVentas = c.pv ? (modeloPorPv[_normPv(c.pv)] || '') : '';
     const modelo = modeloVentas || c.modelo || '';
     const cc = bt.porModelo[_normModeloKey(modelo)] || null;
     const paid = pagosPorSerie[c.serie] || {};
