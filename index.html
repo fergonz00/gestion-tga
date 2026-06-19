@@ -3416,9 +3416,13 @@ function startAutoRefresh() {
     loadObjetivosCompras();
     loadIndustria();
     if (activo === 'resumen') {
-      if (!calcOpen) _fetchStockSilent();
-      _fetchVentasSilent();
-      _fetchPatentSilent();
+      // El Resumen sale de Oversoft: refresco stock Oversoft + ventas Oversoft +
+      // patentamientos, y re-pinto.
+      Promise.all([
+        ovsDropOpen ? Promise.resolve() : loadOversoftStock(true, true).catch(() => {}),
+        loadVentasOv(true).catch(() => {}),
+        _fetchPatentSilent(),
+      ]).then(() => { if (document.querySelector('.tab.active')?.dataset.tab === 'resumen') renderResumen(); });
     } else if (activo === 'stock' && !ovsDropOpen) {
       // La solapa Stock muestra Oversoft: refresco en vivo sin spinner. No lo hago
       // si hay un menú de filtros abierto (lo cerraría a mitad de uso).
@@ -4563,23 +4567,27 @@ function renderEvolucion() {
 // Cada loadX/_fetchXSilent llama a renderResumen() al final, así esta tab
 // se actualiza sola cuando alguna sección refresca.
 
-function loadResumen() {
-  // Disparamos las cargas — cada una restaura sincrónicamente de localStorage
-  // si hay cache, así renderResumen() de abajo pinta inmediatamente.
-  if (!stockData)  loadStock(false);
-  if (!ventasData) loadVentas(false);
-  if (!patentData) loadPatentamientos(false);
-  renderResumen();
+async function loadResumen() {
+  renderResumen();  // pinta lo que haya en cache (si hay)
+  // El Resumen sale TODO de Oversoft: stock (oversoftStockData), ventas
+  // (ventasOvData = Oversoft+BT) y patentamientos (patentData = adm_ventas).
+  await Promise.all([
+    oversoftStockData ? Promise.resolve() : loadOversoftStock(false).catch(() => {}),
+    ventasOvData      ? Promise.resolve() : loadVentasOv(false).catch(() => {}),
+    patentData        ? Promise.resolve() : loadPatentamientos(false),
+  ]);
+  renderResumen();  // re-pinta con datos frescos
 }
 
 function refreshResumen() {
   const btn = document.getElementById('btnRefreshResumen');
   if (btn) { btn.disabled = true; btn.textContent = 'Actualizando...'; }
   Promise.all([
-    _fetchStockSilent(),
-    _fetchVentasSilent(),
+    loadOversoftStock(true, true).catch(() => {}),
+    loadVentasOv(true).catch(() => {}),
     _fetchPatentSilent(),
   ]).finally(() => {
+    renderResumen();
     if (btn) { btn.disabled = false; btn.textContent = 'Actualizar todo'; }
   });
 }
@@ -4595,17 +4603,17 @@ function renderResumen() {
   h += '  <div class="resumen-head"><h3>Stock</h3>'
      + '    <button class="resumen-link" onclick="setTab(\'stock\')">Ver detalle →</button>'
      + '  </div>';
-  if (stockData && Array.isArray(stockData.unidades)) {
-    const u = stockData.unidades;
-    const enStock = u.filter(x => !x.vendido).length;
-    const impagas = u.filter(x => !x.vendido && x.pagoEstado === 'impaga').length;
-    const enIndep = u.filter(x => !x.vendido && x.exposicion === 'INDEPENDENCIA').length;
-    const enErios = u.filter(x => !x.vendido && x.exposicion === 'ENTRE RIOS').length;
+  if (oversoftStockData && Array.isArray(oversoftStockData.unidades)) {
+    const u = oversoftStockData.unidades;   // Oversoft en vivo (sin vender, sin PV, sin asignar)
+    const enStock = u.length;
+    const impagas = u.filter(x => x.pago === 'impaga').length;
+    const fisico = u.filter(x => x.tipo === 'fisico').length;     // recibidas
+    const aRecibir = u.filter(x => x.tipo === 'arecibir').length; // en tránsito
     h += '<div class="cards-resumen">';
     h += kpi('Total en stock', enStock, '', 'good');
     h += kpi('Impagas', impagas, impagas ? 'a pagar' : '', impagas ? 'bad' : '');
-    h += kpi('Independencia', enIndep, 'en exposición', enIndep ? 'expo-in' : '');
-    h += kpi('Entre Ríos',   enErios, 'en exposición', enErios ? 'expo-er' : '');
+    h += kpi('Físico', fisico, 'en el predio', '');
+    h += kpi('A recibir', aRecibir, 'en tránsito', aRecibir ? 'warn' : '');
     h += '</div>';
   } else {
     h += '<div class="resumen-loading">Cargando stock...</div>';
@@ -4614,19 +4622,19 @@ function renderResumen() {
 
   // ----- VENTAS -----
   h += '<div class="resumen-block">';
-  const mesV = (ventasData && (mesSeleccionado || ventasData.mesActual)) || '';
-  const mesLabelV = (ventasData && ventasData.meses && ventasData.meses.find(m => m.mesKey === mesV)?.label) || '—';
+  const mesV = (ventasOvData && ventasOvData.mesActual) || '';
+  const mesLabelV = (ventasOvData && ventasOvData.meses && ventasOvData.meses.find(m => m.mesKey === mesV)?.label) || '—';
   h += '  <div class="resumen-head"><h3>Ventas — ' + escapeHtml(mesLabelV) + '</h3>'
-     + '    <button class="resumen-link" onclick="setTab(\'ventas\')">Ver detalle →</button>'
+     + '    <button class="resumen-link" onclick="setTab(\'ventasov\')">Ver detalle →</button>'
      + '  </div>';
-  if (ventasData && Array.isArray(ventasData.ventas)) {
-    const delMes = ventasData.ventas.filter(v => v.mesKey === mesV);
+  if (ventasOvData && Array.isArray(ventasOvData.ventas)) {
+    const delMes = ventasOvData.ventas.filter(v => v.mesKey === mesV);
     const cantidad = delMes.length;
     const gciaPctAvg = delMes.length
       ? delMes.reduce((a, v) => a + (v.gciaVtaPct || 0), 0) / delMes.length
       : 0;
-    const ultima = delMes[delMes.length - 1];
-    const acumMes = ultima ? ultima.gciaNetaAcum : 0;
+    // acumulado del mes = suma de la ganancia de cada venta (robusto al orden)
+    const acumMes = delMes.reduce((a, v) => a + (typeof v.gciaVtaPesos === 'number' ? v.gciaVtaPesos : 0), 0);
     h += '<div class="cards-resumen">';
     h += kpi('Ventas en el mes', cantidad, '', cantidad ? 'good' : '');
     h += kpi('Gcia. neta acumulada', fmtPesos(acumMes), 'al cierre del mes', acumMes > 0 ? 'good' : (acumMes < 0 ? 'bad' : ''));
