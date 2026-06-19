@@ -3746,9 +3746,13 @@ async function abrirReponer(serieVieja) {
   if (!oversoftStockData) { try { await loadOversoftStock(false); } catch (e) {} }
   const activas = new Set((exposicionData && exposicionData.unidades || []).filter(x => x.activa).map(x => x.serie));
   let libres = ((oversoftStockData && oversoftStockData.unidades) || []).filter(x => x.serie && !activas.has(x.serie));
-  libres = libres.slice().sort((a, b) => String(a.modelo || '').localeCompare(String(b.modelo || ''), 'es'));
-  const opts = libres.map(x => '<option value="' + escapeHtml(x.serie) + '" data-modelo="' + escapeHtml(x.modelo || '') + '" data-color="' + escapeHtml(x.color || '') + '">'
-    + escapeHtml((x.modelo || '') + ' · ' + (x.color || '') + ' · ' + x.serie) + '</option>').join('');
+  // De la más vieja en stock a la más nueva (por fecha de compra; las "a recibir" sin fecha al final).
+  libres = libres.slice().sort((a, b) => (a.fechaCompraIso || '9999-12-31').localeCompare(b.fechaCompraIso || '9999-12-31'));
+  const opts = libres.map(x => {
+    const anti = x.fechaCompraIso ? (_fmtFechaDMY(x.fechaCompraIso) + (x.antigDias != null ? ' · ' + x.antigDias + ' d' : '')) : 'a recibir';
+    return '<option value="' + escapeHtml(x.serie) + '" data-modelo="' + escapeHtml(x.modelo || '') + '" data-color="' + escapeHtml(x.color || '') + '">'
+      + escapeHtml((x.modelo || '') + ' · ' + (x.color || '') + ' · ' + x.serie + ' · ' + anti) + '</option>';
+  }).join('');
 
   cerrarReponer();
   const ov = document.createElement('div');
