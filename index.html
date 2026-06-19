@@ -1271,6 +1271,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
     <div class="tabs">
       <button class="tab active" data-tab="resumen" onclick="setTab('resumen')">Resumen</button>
       <button class="tab" data-tab="stock" onclick="setTab('stock')">Stock</button>
+      <button class="tab" data-tab="compra" onclick="setTab('compra')">Compra</button>
       <button class="tab" data-tab="ventasov" onclick="setTab('ventasov')">Ventas</button>
       <button class="tab" data-tab="admventas" onclick="setTab('admventas')">Adm. ventas</button>
       <button class="tab" data-tab="reparto" onclick="setTab('reparto')">Reparto</button>
@@ -1353,6 +1354,17 @@ table.patent-tbl.resumida .col-extra { display: none; }
         </div>
         <div id="evolucionContent"></div>
       </div>
+    </section>
+
+    <!-- =================== COMPRA =================== -->
+    <section class="panel" id="panelCompra">
+      <div class="toolbar">
+        <div class="updated" id="updatedAtCompra">Unidades compradas este mes vs objetivo.</div>
+        <div class="actions">
+          <button class="refresh" onclick="loadCompra(true)">Actualizar</button>
+        </div>
+      </div>
+      <div id="compraContent"><div class="empty">Cargando…</div></div>
     </section>
 
     <!-- =================== VENTAS =================== -->
@@ -3479,6 +3491,7 @@ function setTab(tab) {
   const map = {
     resumen:        'panelResumen',
     stock:          'panelStock',
+    compra:         'panelCompra',
     ventas:         'panelVentas',
     ventasov:       'panelVentasOv',
     incentivos:     'panelIncentivos',
@@ -3498,6 +3511,7 @@ function setTab(tab) {
     if (!oversoftStockData) loadOversoftStock(false);
     else                    renderOversoftStock();
   }
+  if (tab === 'compra')                           loadCompra(false);
   if (tab === 'ventas'         && !ventasData)   loadVentas(false);
   if (tab === 'ventasov'       && !ventasOvData) loadVentasOv(false);
   if (tab === 'precioslista'   && !preciosListaData) loadPreciosLista(false);
@@ -3956,6 +3970,65 @@ async function loadReparto(forzar) {
   }
   try { await loadObjetivosCompras(); } catch (e) {}
   renderReparto();
+}
+
+// ---- Solapa COMPRA: comprado vs objetivo del mes (mismo cálculo que Reparto) ----
+async function loadCompra(forzar) {
+  if (!stockData || forzar) { try { await loadStock(forzar); } catch (e) {} }
+  if (!repartoData || forzar) {
+    try {
+      const res = await fetch(APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=reparto');
+      const d = await res.json();
+      if (d && !d.error) repartoData = d;
+    } catch (e) {}
+  }
+  try { await loadObjetivosCompras(); } catch (e) {}
+  renderCompra();
+}
+
+function renderCompra() {
+  const wrap = document.getElementById('compraContent');
+  if (!wrap) return;
+  const mesHoy = _mesKeyHoy();
+  const porMes = {};
+  const stockSeriesMes = new Set();
+  if (stockData && Array.isArray(stockData.unidades)) {
+    stockData.unidades.forEach(u => {
+      if (!u.fechaFcIso) return;
+      const mk = u.fechaFcIso.slice(0, 7);
+      porMes[mk] = (porMes[mk] || 0) + 1;
+      if (mk === mesHoy && u.serie) stockSeriesMes.add(String(u.serie).trim().toUpperCase());
+    });
+  }
+  const objetivos = getObjetivosCompras();
+  const items = (repartoData && repartoData.items) || [];
+  const repExtra = items.filter(i =>
+    (i.estado_compra === 'comprado' || i.estado_compra === 'ok') &&
+    !stockSeriesMes.has(String(i.vin || '').slice(-8).toUpperCase())
+  ).length;
+  const facturado = porMes[mesHoy] || 0;
+  const compradas = facturado + repExtra;
+  const obj = objetivos[mesHoy] || 0;
+  const faltan = Math.max(0, obj - compradas);
+  const pct = obj ? (compradas / obj * 100) : 0;
+
+  let h = '';
+  h += '<div class="resumen-block">';
+  h += '  <div class="resumen-head"><h3>Compra — ' + escapeHtml(_mesLabel(mesHoy)) + '</h3>'
+     + '    <button class="resumen-link" onclick="setTab(\'reparto\')">Cargar objetivo / ver reparto →</button>'
+     + '  </div>';
+  h += '<div class="cards-resumen">';
+  h += kpi('Compradas', compradas, facturado + ' facturadas' + (repExtra ? ' + ' + repExtra + ' en reparto' : ''), compradas ? 'good' : '');
+  h += kpi('Objetivo', obj || '—', obj ? 'unidades del mes' : 'sin cargar (Reparto)', '');
+  h += kpi('Faltan comprar', obj ? faltan : '—', obj ? (faltan ? 'para el objetivo' : '✓ objetivo cumplido') : '', (obj && faltan) ? 'warn' : (obj ? 'good' : ''));
+  h += kpi('Avance', obj ? pct.toFixed(0) + '%' : '—', '', '');
+  h += '</div>';
+  if (obj > 0) {
+    const cls = _pctCls(pct); const w = Math.min(100, pct);
+    h += '<div class="compras-progress-block" style="margin-top:6px"><div class="compras-progress-bar"><div class="compras-progress-fill ' + cls + '" style="width:' + w + '%"></div></div></div>';
+  }
+  h += '</div>';
+  wrap.innerHTML = h;
 }
 
 async function _repartoPost(obj) {
@@ -4801,7 +4874,7 @@ function renderResumen() {
     h += '<div class="cards-resumen">';
     h += kpi('Ventas en el mes', cantidad, '', cantidad ? 'good' : '');
     h += kpi('Gcia. neta acumulada', fmtPesos(acumMes), 'al cierre del mes', acumMes > 0 ? 'good' : (acumMes < 0 ? 'bad' : ''));
-    h += kpi('Gcia. % promedio', fmtPct(gciaPctAvg), '', '');
+    h += kpi('Gcia. % promedio', fmtPct(gciaPctAvg * 100), '', '');
     h += '<div class="card placeholder"></div>';
     h += '</div>';
   } else {
@@ -5971,7 +6044,7 @@ function renderVentas() {
   html += '<div class="cards">';
   html += kpi('Ventas en el mes', cantidad, '', cantidad ? 'good' : '');
   html += kpi('Gcia. neta acumulada', fmtPesos(acumMes), 'al cierre del mes', acumMes > 0 ? 'good' : (acumMes < 0 ? 'bad' : ''));
-  html += kpi('Gcia. % promedio', fmtPct(gciaPctAvg), '', '');
+  html += kpi('Gcia. % promedio', fmtPct(gciaPctAvg * 100), '', '');
   html += '</div>';
 
   // ----- Ranking de vendedores del mes (solo si está abierto) -----
@@ -6120,7 +6193,7 @@ function filaVenta(v) {
   html += '<td data-label="vs Baratito">' + badgeBaratito(v) + '</td>';
   const gciaCls = (v.gciaVtaPesos || 0) < 0 ? 'gcia-neg' : 'gcia-pos';
   html += '<td class="num ' + gciaCls + '" data-label="Gcia $">' + fmtPesos(v.gciaVtaPesos) + '</td>';
-  html += '<td class="num ' + gciaCls + '" data-label="Gcia %">' + fmtPct(v.gciaVtaPct) + '</td>';
+  html += '<td class="num ' + gciaCls + '" data-label="Gcia %">' + fmtPct(v.gciaVtaPct != null ? v.gciaVtaPct * 100 : null) + '</td>';
   html += '</tr>';
   return html;
 }
