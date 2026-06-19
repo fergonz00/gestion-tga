@@ -2337,6 +2337,26 @@ let ventasOvData = null;
 let ventasOvMes = '';                 // 'yyyy-mm' | '__todos__'
 let ventasOvComAbiertos = new Set();
 
+// Banner con la hora de la última sincronización de la réplica Oversoft.
+// El timestamp viene en UTC (timestamptz) → new Date() lo parsea bien y lo
+// mostramos en hora AR. Si pasaron >15 min (o el sello marca error), pinta en
+// rojo: el sincronizador (corre en otra PC) probablemente esté caído.
+function _ovsSyncBanner(sync) {
+  if (!sync || !sync.iso) return '';
+  const d = new Date(sync.iso);
+  const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+  const hora = d.toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const hace = mins < 1 ? 'recién' : (mins < 60 ? 'hace ' + mins + ' min' : 'hace ' + Math.floor(mins / 60) + ' h ' + (mins % 60) + ' min');
+  const stale = mins > 15 || sync.ok === false;
+  const col = stale ? '#cc3300' : '#0a7a30';
+  const bg  = stale ? '#fdecea' : '#eafaf0';
+  const ico = stale ? '⚠️' : '🔄';
+  const extra = stale ? ' — datos desactualizados, el sincronizador de Oversoft puede estar caído (reiniciarlo en la otra PC)' : '';
+  return '<div style="background:' + bg + ';border:1px solid ' + col + ';color:' + col
+    + ';border-radius:6px;padding:6px 10px;font-size:12px;margin:0 0 10px;font-weight:600">'
+    + ico + ' Última sincronización con Oversoft: ' + hora + ' hs (' + hace + ')' + extra + '</div>';
+}
+
 async function loadVentasOv(forzar) {
   const cont = document.getElementById('ventasOvContent');
   if (cont && !ventasOvData) cont.innerHTML = '<div class="empty">Cargando ventas (Oversoft)…</div>';
@@ -2382,7 +2402,8 @@ function renderVentasOv() {
   sel += '</select>';
   let totG = 0;
   for (const v of rows) if (typeof v.gciaVtaPesos === 'number') totG += v.gciaVtaPesos;
-  let h = '<div style="margin:6px 0 12px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">' + sel
+  let h = _ovsSyncBanner(ventasOvData.syncOversoft);
+  h += '<div style="margin:6px 0 12px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">' + sel
     + '<span style="font-size:13px;color:var(--vw-grey-3)">' + rows.length + ' ventas · ganancia total <b style="color:#0a7a30">' + fmtPesos(totG) + '</b></span></div>';
   h += '<div style="overflow-x:auto"><table class="ventas-tbl"><thead><tr style="text-align:left">'
     + '<th>PV</th><th>Fecha</th><th>Modelo</th><th>Vend.</th><th style="text-align:right">Monto</th>'
