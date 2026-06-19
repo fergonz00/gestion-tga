@@ -56,6 +56,8 @@ a { color: inherit; text-decoration: none; }
   padding: 4px 10px; border-radius: 100px; font-variant-numeric: tabular-nums;
 }
 .app-header .last-sync.stale { background: rgba(255,210,80,0.25); }
+.app-header .last-sync.ovs-ok   { background: rgba(120,230,150,0.22); opacity: 1; }
+.app-header .last-sync.ovs-warn { background: rgba(255,90,90,0.40); opacity: 1; font-weight: 600; }
 .app-header button {
   background: rgba(255,255,255,0.15); color: white;
   padding: 8px 14px; border-radius: 6px;
@@ -1243,6 +1245,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
     <div class="brand">📊 Gestión TGA</div>
     <div class="user-info">
       <span class="last-sync" id="lastSync" title="Última vez que se trajo data fresca del Apps Script">⏱ —</span>
+      <span class="last-sync ovs-sync" id="ovsSync" title="Última sincronización de la réplica de Oversoft (de dónde sale stock, ventas, etc.). Si está en rojo, el sincronizador puede estar caído.">🔄 Oversoft —</span>
       <span class="user-name" id="userName"></span>
       <button onclick="window.location.href='https://titogonzalez.online'">← Portal</button>
       <button onclick="logout()">Salir</button>
@@ -2364,6 +2367,7 @@ async function loadVentasOv(forzar) {
     const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=ventasv2' + (forzar ? '&fresh=1' : '');
     const res = await fetch(url);
     ventasOvData = await res.json();
+    setOvsSync(ventasOvData.syncOversoft);   // aprovecha el sello que ya trae ventasv2
     if (!ventasOvMes && ventasOvData.mesActual) ventasOvMes = ventasOvData.mesActual;
     renderVentasOv();
   } catch (e) {
@@ -3386,6 +3390,43 @@ function _renderLastSync() {
 setInterval(_renderLastSync, 30 * 1000);  // refrescar el "hace X" cada 30s
 
 // =======================================================================
+// OVERSOFT SYNC — indicador global de la última sincronización de la réplica
+// =======================================================================
+// La réplica de Oversoft (de donde sale stock/ventas/etc.) se sincroniza sola
+// cada ~5 min desde otra PC. Mostramos su último sello en la cabecera, visible
+// en todas las solapas. Verde si es reciente, ROJO si pasaron >15 min (el
+// sincronizador probablemente esté caído). El sello viene en UTC.
+window._ovsSync = null;
+function setOvsSync(sync) {        // lo llaman tanto el fetch propio como los embeds (ventasv2)
+  if (sync && sync.iso) { window._ovsSync = sync; _renderOvsSync(); }
+}
+function _renderOvsSync() {
+  const el = document.getElementById('ovsSync');
+  if (!el) return;
+  const s = window._ovsSync;
+  if (!s || !s.iso) { el.textContent = '🔄 Oversoft —'; el.className = 'last-sync ovs-sync'; return; }
+  const d = new Date(s.iso);
+  const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+  const hora = d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  const hace = mins < 1 ? 'recién' : (mins < 60 ? 'hace ' + mins + ' min' : 'hace ' + Math.floor(mins / 60) + ' h ' + (mins % 60) + ' min');
+  const stale = mins > 15 || s.ok === false;
+  el.textContent = (stale ? '⚠️ Oversoft ' : '🔄 Oversoft ') + hora + ' · ' + hace;
+  el.className = 'last-sync ovs-sync ' + (stale ? 'ovs-warn' : 'ovs-ok');
+  el.title = stale
+    ? 'Oversoft SIN actualizar desde las ' + hora + ' (' + hace + '). El sincronizador corre en otra PC y puede estar caído — reinicialo ahí. Mientras tanto, lo cargado después de esa hora no figura.'
+    : 'Oversoft sincronizado a las ' + hora + ' (' + hace + ').';
+}
+async function refreshOvsSync() {
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=oversoftsync';
+    const res = await fetch(url);
+    setOvsSync(await res.json());
+  } catch (e) { /* silencioso: no rompe la app si falla */ }
+}
+setInterval(_renderOvsSync, 30 * 1000);   // recalcula el "hace X" cada 30s
+setInterval(refreshOvsSync, 3 * 60 * 1000); // re-consulta el sello cada 3 min
+
+// =======================================================================
 // CACHE EN LOCALSTORAGE
 // =======================================================================
 // Para que el primer pintado después de un reload sea instantáneo: guardo el
@@ -3448,6 +3489,7 @@ function enterApp(session) {
   document.getElementById('appScreen').classList.remove('hidden');
   document.getElementById('userName').textContent = session.nombre || session.usuario;
   window._tgaUser = session.usuario;
+  refreshOvsSync();   // sello de Oversoft en la cabecera, ni bien entra (todas las solapas)
   // Usuario de administración (Mónica): ve "Adm. ventas" (que adentro ya incluye
   // la subtab Patentamientos).
   if (USUARIOS_ADM_VENTAS.includes(session.usuario)) {

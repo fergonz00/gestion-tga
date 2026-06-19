@@ -1012,7 +1012,7 @@ function getVentasV2(targetMes) {
     btTeraJun: (btPorMes['2026-06'] || {})['Tera Trend MSI MT'] || null,
     catTera: catByNorm[_ntrim('Tera Trend MSI MT')] || null,
   };
-  return { ventas: filas, meses: meses, mesActual: _yyyyMm(new Date()), sinBt: sinBt, fuente: 'oversoft+bt', _incDbg: _incDbg, updatedAt: new Date().toISOString() };
+  return { ventas: filas, meses: meses, mesActual: _yyyyMm(new Date()), sinBt: sinBt, fuente: 'oversoft+bt', _incDbg: _incDbg, syncOversoft: getOversoftSync(), updatedAt: new Date().toISOString() };
 }
 
 // Congela los RESULTADOS de la hoja "PVs" (la ganancia que Fer ya calculó, con
@@ -2123,6 +2123,21 @@ function getOversoft(params) {
 // en el Registro de ejecución. No hace falta redeployar después.
 function _testOversoft() {
   Logger.log(getOversoft({ tabla: 'detcash', qs: 'select=fecha,importe&order=fecha.desc&limit=3' }));
+}
+
+// Sello de última sincronización de la réplica Oversoft (fila `ciclo_global` de
+// sync_status). Devuelve { iso, ok } con el timestamptz UTC, o null si no se pudo
+// leer. Lo usa el indicador global de la cabecera (tipo=oversoftsync) y el embed
+// de la solapa Ventas (getVentasV2).
+function getOversoftSync() {
+  try {
+    const url = OVERSOFT_URL + '/sync_status?select=last_sync,ok&tabla=eq.ciclo_global';
+    const res = UrlFetchApp.fetch(url, { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true });
+    if (res.getResponseCode() >= 300) return null;
+    const rows = JSON.parse(res.getContentText());
+    if (!rows.length) return null;
+    return { iso: rows[0].last_sync, ok: rows[0].ok };
+  } catch (e) { return null; }
 }
 
 // =======================================================================
