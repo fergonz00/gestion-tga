@@ -1299,6 +1299,11 @@ table.patent-tbl.resumida .col-extra { display: none; }
            quedan ocultos en el DOM (sin botones) porque loadStock/stockData siguen
            alimentando Resumen, Reparto y el comparador Oversoft. -->
 
+      <div class="subtabs" style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+        <button class="subtab active" data-subtab="oversoft" onclick="setStockSubtab('oversoft')">Stock</button>
+        <button class="subtab" data-subtab="exposicion" onclick="setStockSubtab('exposicion')">En exposición</button>
+      </div>
+
       <div class="subpanel" id="subpanelStock">
         <div class="toolbar">
           <div class="updated" id="updatedAtStock">—</div>
@@ -1317,6 +1322,16 @@ table.patent-tbl.resumida .col-extra { display: none; }
           </div>
         </div>
         <div id="oversoftStockContent"></div>
+      </div>
+
+      <div class="subpanel" id="subpanelExposicion">
+        <div class="toolbar">
+          <div class="updated" id="updatedAtExpo">Autos en exposición por salón. Cuando se vende uno queda marcado hasta reponerlo.</div>
+          <div class="actions">
+            <button class="refresh" onclick="loadExposicion(true)">Actualizar</button>
+          </div>
+        </div>
+        <div id="exposicionContent"></div>
       </div>
 
       <div class="subpanel" id="subpanelCompras">
@@ -3623,9 +3638,15 @@ function setStockSubtab(name) {
   document.getElementById('subpanelOversoft').classList.toggle('active',  name === 'oversoft');
   document.getElementById('subpanelCompras').classList.toggle('active',   name === 'compras');
   document.getElementById('subpanelEvolucion').classList.toggle('active', name === 'evolucion');
+  const spExpo = document.getElementById('subpanelExposicion');
+  if (spExpo) spExpo.classList.toggle('active', name === 'exposicion');
   if (name === 'oversoft') {
     if (!oversoftStockData) loadOversoftStock(false);
     else                    renderOversoftStock();
+  }
+  if (name === 'exposicion') {
+    if (!exposicionData) loadExposicion(false);
+    else                 renderExposicion();
   }
   if (name === 'compras') {
     if (!stockData) loadStock(false);
@@ -3637,6 +3658,84 @@ function setStockSubtab(name) {
     if (!ventasData) loadVentas(false);
     if (stockData && ventasData) renderEvolucion();
   }
+}
+
+// =======================================================================
+// EN EXPOSICIÓN (stock por salón; se marca solo al venderse vía Oversoft)
+// =======================================================================
+let exposicionData = null;
+let expoSalonFiltro = 'todas';
+
+async function loadExposicion(forzar) {
+  const wrap = document.getElementById('exposicionContent');
+  if (wrap && !exposicionData) wrap.innerHTML = '<div class="empty">Cargando…</div>';
+  try {
+    const data = await _fetchJson('exposicion', forzar);
+    exposicionData = data;
+    renderExposicion();
+    const upd = document.getElementById('updatedAtExpo');
+    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+  } catch (e) {
+    if (wrap) wrap.innerHTML = '<div class="errbox"><div class="ttl">⚠️ No se pudo cargar exposición</div><div>' + escapeHtml(e.message || String(e)) + '</div></div>';
+  }
+}
+
+function setExpoSalon(v) { expoSalonFiltro = v; renderExposicion(); }
+
+function renderExposicion() {
+  const wrap = document.getElementById('exposicionContent');
+  if (!exposicionData || !Array.isArray(exposicionData.unidades)) { wrap.innerHTML = '<div class="empty">Sin datos.</div>'; return; }
+  const todas = exposicionData.unidades;
+  const vendidas = todas.filter(u => u.vendida);
+  const enExpo   = todas.filter(u => !u.vendida);
+
+  let html = '';
+  html += '<div class="cards">';
+  html += kpi('En exposición', enExpo.length, 'sin vender', 'good');
+  html += kpi('Vendidos a reponer', vendidas.length, vendidas.length ? 'pendientes de reemplazo' : 'al día', vendidas.length ? 'bad' : '');
+  html += kpi('Total', todas.length, 'en salones', '');
+  html += '</div>';
+
+  // Filtro por salón
+  const salones = [...new Set(todas.map(u => u.salon).filter(Boolean))].sort();
+  const chip = (v, l, n) => '<button class="chip' + (expoSalonFiltro === v ? ' active' : '') + '" onclick="setExpoSalon(\'' + v.replace(/'/g, "\\'") + '\')">' + l + ' (' + n + ')</button>';
+  html += '<div class="filter-row" style="gap:6px;flex-wrap:wrap;align-items:center">'
+        + chip('todas', 'Todos los salones', todas.length);
+  for (const s of salones) html += chip(s, s, todas.filter(u => u.salon === s).length);
+  html += '</div>';
+
+  let lista = todas;
+  if (expoSalonFiltro !== 'todas') lista = lista.filter(u => u.salon === expoSalonFiltro);
+  lista = lista.slice().sort((a, b) => (b.vendida ? 1 : 0) - (a.vendida ? 1 : 0)
+        || String(a.salon).localeCompare(String(b.salon), 'es')
+        || String(a.serie).localeCompare(String(b.serie)));
+
+  html += '<div class="table-wrap"><div class="table-head"><h3>Unidades en exposición</h3>'
+        + '<div class="count">' + lista.length + ' unidades</div></div>'
+        + '<div class="table-scroll"><table class="stock-tbl responsive-cards">'
+        + '<thead><tr><th>Estado</th><th>Serie</th><th>Unidad</th><th>Color</th><th>Salón</th></tr></thead><tbody>';
+  if (!lista.length) {
+    html += '<tr><td colspan="5" class="empty">No hay unidades.</td></tr>';
+  } else {
+    for (const u of lista) {
+      let estado;
+      if (u.vendida) {
+        const f = u.fecha_venta ? ' ' + _fmtFechaDMY(String(u.fecha_venta).slice(0, 10)) : '';
+        estado = '<span class="badge" style="background:#fdecec;color:#c0392b">🔴 Vendida' + f + ' — reponer</span>';
+      } else {
+        estado = '<span class="badge" style="background:var(--green-soft);color:var(--green-dark)">🟢 En exposición</span>';
+      }
+      html += '<tr>'
+            + '<td>' + estado + '</td>'
+            + '<td>' + escapeHtml(u.serie || '') + '</td>'
+            + '<td>' + escapeHtml(u.unidad || '') + '</td>'
+            + '<td>' + escapeHtml(u.color || '') + '</td>'
+            + '<td>' + escapeHtml(u.salon || '') + '</td>'
+            + '</tr>';
+    }
+  }
+  html += '</tbody></table></div></div>';
+  wrap.innerHTML = html;
 }
 
 function refreshEvolucion() {
