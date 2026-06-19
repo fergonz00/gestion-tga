@@ -3016,19 +3016,13 @@ function _getObjetivosPatSheet() {
   return sh;
 }
 
+// Objetivos de patentamiento por mes — ahora en Supabase (tabla objetivos_pat),
+// ya no en la pestaña del Sheet.
 function getObjetivosPat() {
-  const sh = _getObjetivosPatSheet();
-  const lastRow = sh.getLastRow();
   const objetivos = {};
-  if (lastRow >= 2) {
-    const data = sh.getRange(2, 1, lastRow - 1, OBJETIVOS_PAT_HEADERS.length).getValues();
-    for (const r of data) {
-      const mesKey = String(r[0] || '').trim();
-      const valor = Number(r[1]);
-      if (!/^\d{4}-\d{2}$/.test(mesKey)) continue;
-      if (isNaN(valor) || valor < 0) continue;
-      objetivos[mesKey] = valor;
-    }
+  for (const r of _supaGet('/objetivos_pat?select=mes,objetivo')) {
+    const v = Number(r.objetivo);
+    if (/^\d{4}-\d{2}$/.test(r.mes) && !isNaN(v) && v >= 0) objetivos[r.mes] = v;
   }
   return { objetivos: objetivos, updatedAt: new Date().toISOString() };
 }
@@ -3038,24 +3032,11 @@ function setObjetivoPat(body) {
   const valor = Number(body.valor);
   if (!/^\d{4}-\d{2}$/.test(mesKey)) return { error: 'mesKey inválido: ' + mesKey };
   if (isNaN(valor) || valor < 0) return { error: 'valor inválido: ' + body.valor };
-
-  const sh = _getObjetivosPatSheet();
-  const lastRow = sh.getLastRow();
-  const ahora = new Date().toISOString();
-
-  if (lastRow >= 2) {
-    const keys = sh.getRange(2, 1, lastRow - 1, 1).getValues();
-    for (let i = 0; i < keys.length; i++) {
-      if (String(keys[i][0] || '').trim() === mesKey) {
-        // "'" fuerza texto en col A — sin esto Sheets interpreta "2026-05" como
-        // fecha y al releer el filtro /^\d{4}-\d{2}$/ la descarta (el update se perdia).
-        sh.getRange(i + 2, 1, 1, OBJETIVOS_PAT_HEADERS.length).setValues([["'" + mesKey, valor, ahora]]);
-        return { ok: true, mesKey: mesKey, valor: valor, accion: 'update' };
-      }
-    }
-  }
-  sh.appendRow(["'" + mesKey, valor, ahora]);  // ' fuerza texto en col A
-  return { ok: true, mesKey: mesKey, valor: valor, accion: 'insert' };
+  const h = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' };
+  const row = { mes: mesKey, objetivo: valor, actualizado_at: new Date().toISOString() };
+  const res = UrlFetchApp.fetch(SUPA_URL + '/objetivos_pat?on_conflict=mes', { method: 'post', headers: h, payload: JSON.stringify([row]), muteHttpExceptions: true });
+  if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200) };
+  return { ok: true, mesKey: mesKey, valor: valor };
 }
 
 // =======================================================================
