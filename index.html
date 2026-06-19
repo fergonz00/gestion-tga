@@ -1271,8 +1271,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
     <div class="tabs">
       <button class="tab active" data-tab="resumen" onclick="setTab('resumen')">Resumen</button>
       <button class="tab" data-tab="stock" onclick="setTab('stock')">Stock</button>
-      <button class="tab" data-tab="ventas" onclick="setTab('ventas')">Ventas</button>
-      <button class="tab" data-tab="ventasov" onclick="setTab('ventasov')">Ventas (Oversoft)</button>
+      <button class="tab" data-tab="ventasov" onclick="setTab('ventasov')">Ventas</button>
       <button class="tab" data-tab="admventas" onclick="setTab('admventas')">Adm. ventas</button>
       <button class="tab" data-tab="reparto" onclick="setTab('reparto')">Reparto</button>
       <button class="tab" data-tab="incentivos" onclick="setTab('incentivos')">Incentivos</button>
@@ -3368,6 +3367,7 @@ function setTab(tab) {
   // redirigimos para que cualquier setTab() viejo (links del resumen, etc.) ande.
   if (tab === 'patentamientos') { setTab('admventas'); setAdmSubtab('patentamientos'); return; }
   if (tab === 'trimestre')      { setTab('admventas'); setAdmSubtab('trimestre');      return; }
+  if (tab === 'ventas')         tab = 'ventasov';   // "Ventas" ahora = la versión Oversoft (la vieja se sacó)
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   const map = {
