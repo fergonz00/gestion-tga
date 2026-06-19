@@ -4806,7 +4806,7 @@ function renderResumen() {
       h += kpi('Compradas', compradas, 'facturas del mes', compradas ? 'good' : '');
       h += kpi('Objetivo', obj || '—', obj ? 'unidades' : 'sin cargar', '');
       h += kpi('Faltan comprar', obj ? faltan : '—', obj ? (faltan ? 'para el objetivo' : '✓ cumplido') : 'cargá objetivo en Reparto', (obj && faltan) ? 'warn' : (obj ? 'good' : ''));
-      h += '<div class="card placeholder"></div>';
+      h += kpi('% del objetivo', obj ? Math.round(compradas / obj * 100) + '%' : '—', obj ? (compradas + '/' + obj) : '', obj ? (compradas >= obj ? 'good' : 'warn') : '');
       h += '</div>';
     } else {
       h += '<div class="resumen-loading">Cargando compras...</div>';
@@ -4860,7 +4860,8 @@ function renderResumen() {
     h += kpi('Patentadas', patentadas, total ? Math.round(patentadas / total * 100) + '% del total' : '', patentadas ? 'good' : '');
     h += kpi('Pendientes de patentar', pendientes, 'cargadas sin fecha aún', pendientes ? 'warn' : '');
     if (objetivo > 0) {
-      h += kpi('Faltan al objetivo', faltanCargarR, 'carpetas a cargar (obj ' + objetivo + ')', faltanCargarR > 0 ? 'warn' : 'good');
+      const pctObj = Math.round(total / objetivo * 100);
+      h += kpi('% del objetivo', pctObj + '%', total + '/' + objetivo + ' carpetas' + (faltanCargarR > 0 ? ' · faltan ' + faltanCargarR : ' · ✓'), pctObj >= 100 ? 'good' : 'warn');
     } else {
       h += '<div class="card placeholder"></div>';
     }
