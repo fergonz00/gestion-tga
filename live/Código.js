@@ -63,7 +63,10 @@ function doGet(e) {
   try {
     if (tipo === 'stock')           return jsonResponse(_cached('stock',          CACHE_TTL_SEC, fresh, getStock));
     if (tipo === 'ventas')          return jsonResponse(_cached('ventas',         CACHE_TTL_SEC, fresh, getVentas));
-    if (tipo === 'ventasv2')        return jsonResponse(getVentasV2());           // PARALELO (validación): ventas desde Oversoft + margen desde la BT
+    if (tipo === 'ventasv2')        return jsonResponse(getVentasV2());           // ventas: mes actual por fórmula (Oversoft+BT) + meses cerrados congelados (ventas_hist)
+    if (tipo === 'importarventashist') return jsonResponse(importarVentasHist());  // una-vez/re-ejecutable: congela los resultados de la hoja PVs (meses cerrados)
+    if (tipo === 'congelarmes')     return jsonResponse(congelarMes(String(params.mes || ''))); // congela (guarda) el resultado de la fórmula de un mes
+    if (tipo === 'instalartriggercongelar') return jsonResponse(instalarTriggerCongelar()); // trigger mensual: congela el mes que cierra
     if (tipo === 'patentamientos')  return jsonResponse(_cached('patentamientos', CACHE_TTL_SEC, fresh, getPatentamientos));
     if (tipo === 'incentivos')      return jsonResponse(_cached('incentivos_' + (params.mes || ''), CACHE_TTL_SEC, fresh, () => getIncentivos(params)));
     if (tipo === 'pagosvw')         return jsonResponse(getPagosVW(params));      // sin cache
@@ -158,10 +161,11 @@ function getPreciosActualBT() {
   const n = x => Number(x) || 0;
 
   // Ventas por mes por modelo (para el selector "ventas últimos N meses" del front).
-  // Cuenta las PVs de la hoja ventas agrupadas por modelo canónico × mesKey.
+  // Cuenta las ventas (mismo criterio canónico × mesKey) pero desde OVERSOFT+BT
+  // (getVentasV2: mes actual por fórmula + meses cerrados congelados), NO del Sheet.
   const ventasModeloMes = {};
   try {
-    const vt = getVentas();
+    const vt = getVentasV2();
     for (const venta of (vt.ventas || [])) {
       const k = _normModeloKey(venta.modelo);
       if (!k || !venta.mesKey) continue;
@@ -645,7 +649,9 @@ function getAdmVentas() {
 // Arma la lista de ventas como Adm.ventas (Oversoft) y calcula la ganancia por
 // venta con la BT del mes de cada venta (igual que el motor), SIN leer la hoja.
 // Endpoint paralelo tipo=ventasv2 para validar contra la hoja antes de cortar.
-function getVentasV2() {
+// Sin argumento: mes actual por fórmula + meses cerrados de ventas_hist.
+// Con targetMes ('yyyy-mm'): calcula SOLO ese mes por fórmula (para congelarlo).
+function getVentasV2(targetMes) {
   const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
   const get = (path) => { const res = UrlFetchApp.fetch(OVERSOFT_URL + path, h); return res.getResponseCode() < 300 ? JSON.parse(res.getContentText()) : []; };
 
@@ -691,11 +697,16 @@ function getVentasV2() {
 
   const cuentaPorMes = {}, acumPorMes = {};
   const filas = [];
+  // Meses CERRADOS (< mes actual) = resultados congelados de la hoja (ventas_hist).
+  // El mes ACTUAL se calcula con la fórmula (Oversoft+BT) acá abajo.
+  const mesActualV = _yyyyMm(new Date());
+  const mesObjetivo = targetMes || mesActualV;   // qué mes calcular por fórmula
   // proceso cronológico (asc) para la gcia neta acumulada por mes
   for (const p of pvs.slice().reverse()) {
     if (!p.fecha) continue;
     const mesKey = String(p.fecha).slice(0, 7);
     if (mesKey < VENTAS_MES_MINIMO) continue;
+    if (mesKey !== mesObjetivo) continue;   // solo el mes objetivo se calcula por fórmula
     cuentaPorMes[mesKey] = (cuentaPorMes[mesKey] || 0) + 1;
 
     const monto = Number(p.precioventa) || 0;
@@ -719,12 +730,16 @@ function getVentasV2() {
       const ccM = esAA ? 0 : (Number(im.performance) || 0);
       const otrosM = esAA ? 0 : ((Number(im.tactico) || 0) + (Number(im.whosale) || 0) + (Number(im.adicional1) || 0) + (Number(im.adicional2) || 0) + (Number(im.cupo) || 0));
       gciaPct = _gciaVentaPct(monto, ivaFrac, listaM, Number(btMes.costo_concesionario) || 0, ccM, otrosM);
-      if (gciaPct !== null) gciaPesos = Math.round(gciaPct * listaM);
+      // _gciaVentaPct devuelve gcia/(lista·(1−IVA)). La GANANCIA en $ (= col X de
+      // la hoja) es gcia = pct · lista · (1−IVA). (Antes faltaba el (1−IVA) → las
+      // pérdidas/ganancias salían infladas ~27%.)
+      if (gciaPct !== null) gciaPesos = Math.round(gciaPct * listaM * (1 - ivaFrac));
     }
     const acc = manV[_normPv(p.numero)] || 0;   // accesorios manuales: la fórmula los SUMA
     if (gciaPesos !== null) {
       gciaPesos += acc;
-      if (listaM > 0) gciaPct = gciaPesos / listaM;   // el % también incluye accesorios
+      // % gcia neta (= col Y) = ganancia / (lista · (1−IVA)), ya con accesorios.
+      if (listaM > 0) gciaPct = gciaPesos / (listaM * (1 - ivaFrac));
       acumPorMes[mesKey] = (acumPorMes[mesKey] || 0) + gciaPesos;
     }
     const comentario = [String(p.comentario || '').trim(), String(p.comentarioaux || '').trim()].filter(Boolean).join('\n');
@@ -756,7 +771,26 @@ function getVentasV2() {
         otros: (function(im){return (Number(im.tactico)||0)+(Number(im.whosale)||0)+(Number(im.adicional1)||0)+(Number(im.adicional2)||0)+(Number(im.cupo)||0);})((incPorMes[mesKey]||{})[nc.nombre_corto]||{}) } : null,
     });
   }
-  filas.reverse(); // lo más nuevo arriba
+  filas.reverse(); // lo más nuevo arriba (mes actual, calculado)
+
+  // Meses CERRADOS: traer los resultados congelados (ventas_hist). Solo en el
+  // modo normal (sin targetMes) y solo meses ANTERIORES al actual (el actual
+  // siempre sale de la fórmula, aunque ya esté congelado).
+  if (!targetMes) try {
+    const hist = _supaGet('/ventas_hist?select=*&mes=lt.' + mesActualV + '&order=mes.desc,preventa.desc');
+    for (const h of hist) {
+      cuentaPorMes[h.mes] = (cuentaPorMes[h.mes] || 0) + 1;
+      filas.push({
+        ventaNum: 0, fechaPvIso: h.fecha || '', fechaPvStr: h.fecha || '',
+        mesKey: h.mes, preventaNum: h.preventa, montoFc: Number(h.monto) || 0, iva: null,
+        serie: h.serie || '', modelo: h.modelo || '', color: h.color || '',
+        gciaVtaPesos: h.gcia_pesos != null ? Number(h.gcia_pesos) : null,
+        gciaVtaPct: h.gcia_pct != null ? Number(h.gcia_pct) : null,
+        gciaNetaAcum: null, vendedor: h.vendedor || '', vendedorRaw: h.vendedor || '',
+        accesorios: 0, comentario: '', mencionaAcc: false, sinBt: false, hist: true,
+      });
+    }
+  } catch (e) {}
 
   const meses = Object.keys(cuentaPorMes).sort().reverse().map(k => ({ mesKey: k, label: _mesLabel(k), cuenta: cuentaPorMes[k] }));
   const sinBt = filas.filter(f => f.sinBt).length;
@@ -768,6 +802,82 @@ function getVentasV2() {
     catTera: catByNorm[_ntrim('Tera Trend MSI MT')] || null,
   };
   return { ventas: filas, meses: meses, mesActual: _yyyyMm(new Date()), sinBt: sinBt, fuente: 'oversoft+bt', _incDbg: _incDbg, updatedAt: new Date().toISOString() };
+}
+
+// Congela los RESULTADOS de la hoja "PVs" (la ganancia que Fer ya calculó, con
+// sus criterios de cupos/costos) en ventas_hist, para los meses CERRADOS
+// (< mes actual). El mes actual lo calcula la fórmula. Re-ejecutable (upsert);
+// pisa los meses cerrados con lo último de la hoja. % = gcia/monto (consistente).
+function importarVentasHist() {
+  const vt = getVentas();
+  const mesActual = _yyyyMm(new Date());
+  const rows = [];
+  for (const v of (vt.ventas || [])) {
+    if (!v.mesKey || v.mesKey >= mesActual) continue;   // solo meses cerrados
+    const pv = _normPv(v.preventaNum);
+    if (!pv) continue;
+    const monto = Math.round(Number(v.montoFc) || 0);
+    const gcia = Math.round(Number(v.gciaVtaPesos) || 0);
+    rows.push({
+      preventa: pv, mes: v.mesKey, fecha: v.fechaPvIso || null,
+      modelo: v.modelo || '', color: v.color || '', serie: v.serie || '',
+      vendedor: v.vendedor || v.vendedorRaw || '', monto: monto, gcia_pesos: gcia,
+      gcia_pct: monto > 0 ? gcia / monto : null, updated_at: new Date().toISOString(),
+    });
+  }
+  const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
+  let ok = 0;
+  for (let i = 0; i < rows.length; i += 200) {
+    const lote = rows.slice(i, i + 200);
+    const res = UrlFetchApp.fetch(SUPA_URL + '/ventas_hist?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(lote), muteHttpExceptions: true });
+    if (res.getResponseCode() >= 300) return { error: 'insert ventas_hist falló: ' + res.getContentText().slice(0, 200), ok: ok };
+    ok += lote.length;
+  }
+  return { ok: true, importadas: ok, mesActual: mesActual };
+}
+
+// Congela (guarda fijo) los resultados de la FÓRMULA de un mes en ventas_hist,
+// para que no se recalcule más. Re-ejecutable (upsert).
+function congelarMes(mes) {
+  if (!/^\d{4}-\d{2}$/.test(String(mes || ''))) return { error: 'mes inválido (yyyy-mm)' };
+  const r = getVentasV2(mes);   // calcula ESE mes por fórmula
+  const rows = [];
+  for (const v of (r.ventas || [])) {
+    if (v.mesKey !== mes || typeof v.gciaVtaPesos !== 'number') continue;
+    const pv = _normPv(v.preventaNum);
+    if (!pv) continue;
+    const monto = Math.round(Number(v.montoFc) || 0);
+    rows.push({
+      preventa: pv, mes: mes, fecha: v.fechaPvIso || null,
+      modelo: v.modelo || '', color: v.color || '', serie: v.serie || '',
+      vendedor: v.vendedor || '', monto: monto, gcia_pesos: Math.round(v.gciaVtaPesos),
+      gcia_pct: monto > 0 ? v.gciaVtaPesos / monto : null, updated_at: new Date().toISOString(),
+    });
+  }
+  if (!rows.length) return { ok: true, congeladas: 0, mes: mes, nota: 'sin ventas para ese mes' };
+  const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
+  let ok = 0;
+  for (let i = 0; i < rows.length; i += 200) {
+    const lote = rows.slice(i, i + 200);
+    const res = UrlFetchApp.fetch(SUPA_URL + '/ventas_hist?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(lote), muteHttpExceptions: true });
+    if (res.getResponseCode() >= 300) return { error: 'congelar falló: ' + res.getContentText().slice(0, 200), ok: ok };
+    ok += lote.length;
+  }
+  return { ok: true, congeladas: ok, mes: mes };
+}
+
+// Trigger: día 1 de cada mes congela el mes que recién cerró (el anterior).
+function congelarMesAnteriorAuto() {
+  const now = new Date();
+  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  console.log('congelarMesAnteriorAuto:', JSON.stringify(congelarMes(_yyyyMm(prev))));
+}
+function instalarTriggerCongelar() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'congelarMesAnteriorAuto') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('congelarMesAnteriorAuto').timeBased().onMonthDay(1).atHour(3).create();
+  return { ok: true, instalado: 'congelarMesAnteriorAuto día 1 ~03:00' };
 }
 
 // MIGRACIÓN una-vez (re-ejecutable): lo que la administrativa YA cargó en la
