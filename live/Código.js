@@ -61,11 +61,8 @@ function doGet(e) {
   const tipo  = String(params.tipo  || 'stock').toLowerCase();
   const fresh = String(params.fresh || '') === '1';
   try {
-    if (tipo === 'stock')           return jsonResponse(_cachedBig('stock',       CACHE_TTL_WARM, fresh, getStock));  // >100KB → cache chunked + precalentado
     if (tipo === 'stockhist')       return jsonResponse(getStockHist());          // monto/fecha/color/nombre históricos congelados (para Stock Oversoft)
-    if (tipo === 'ventas')          return jsonResponse(_cachedBig('ventas',      CACHE_TTL_WARM, fresh, getVentas));  // >100KB → cache chunked + precalentado
     if (tipo === 'ventasv2')        return jsonResponse(getVentasV2());           // ventas: mes actual por fórmula (Oversoft+BT) + meses cerrados congelados (ventas_hist)
-    if (tipo === 'importarventashist') return jsonResponse(importarVentasHist());  // una-vez/re-ejecutable: congela los resultados de la hoja PVs (meses cerrados)
     if (tipo === 'congelarmes')     return jsonResponse(congelarMes(String(params.mes || ''))); // congela (guarda) el resultado de la fórmula de un mes
     if (tipo === 'instalartriggercongelar') return jsonResponse(instalarTriggerCongelar()); // trigger mensual: congela el mes que cierra
     if (tipo === 'patentamientos')  return jsonResponse(_cached('patentamientos', CACHE_TTL_SEC, fresh, getPatentamientos));
@@ -76,7 +73,6 @@ function doGet(e) {
     if (tipo === 'repartocomprado')   return jsonResponse(getRepartoComprado());     // sin cache (en vivo): reparto de precios no facturado aún
     if (tipo === 'reparto')           return jsonResponse(getReparto());             // sin cache (en vivo): panel operativo de reparto VW
     if (tipo === 'industria')         return jsonResponse(getIndustria());          // sin cache (es chico)
-    if (tipo === 'ventasdebug')     return jsonResponse(getVentasDebug(params));  // sin cache
     if (tipo === 'oversoft')        return jsonResponse(getOversoft(params));     // proxy a la réplica Supabase
     if (tipo === 'oversoftsync')    return jsonResponse(getOversoftSync() || { iso: null, ok: false }); // sello de última sincronización de la réplica (indicador global)
     if (tipo === 'saldoscompras')   return jsonResponse(_cached('saldoscompras', CACHE_TTL_SEC, fresh, getSaldosCompras)); // proxy a saldos-tga (paga/impaga + vencimiento)
@@ -93,6 +89,7 @@ function doGet(e) {
     if (tipo === 'flujo')           return jsonResponse(_cached('flujo', CACHE_TTL_SEC, fresh, getFlujoFinanciero)); // flujo de caja: cobros pendientes (ingresos) vs pagos a VW (egresos)
     if (tipo === 'exposicion')      return jsonResponse(getExposicion());          // stock en exposición por salón (tabla exposicion_unidades, wjfgl)
     if (tipo === 'reponer')         return jsonResponse(reponerExposicion(params)); // repone una unidad de exposición vendida y avisa por WhatsApp
+    if (tipo === 'unidades')        return jsonResponse(_cached('unidades', CACHE_TTL_SEC, fresh, getStockUnidades)); // stock por CHASIS enriquecido (modelo BT, color, antigüedad) para precio especial por unidad
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
@@ -1019,34 +1016,6 @@ function getVentasV2(targetMes) {
 // sus criterios de cupos/costos) en ventas_hist, para los meses CERRADOS
 // (< mes actual). El mes actual lo calcula la fórmula. Re-ejecutable (upsert);
 // pisa los meses cerrados con lo último de la hoja. % = gcia/monto (consistente).
-function importarVentasHist() {
-  const vt = getVentas();
-  const mesActual = _yyyyMm(new Date());
-  const rows = [];
-  for (const v of (vt.ventas || [])) {
-    if (!v.mesKey || v.mesKey >= mesActual) continue;   // solo meses cerrados
-    const pv = _normPv(v.preventaNum);
-    if (!pv) continue;
-    const monto = Math.round(Number(v.montoFc) || 0);
-    const gcia = Math.round(Number(v.gciaVtaPesos) || 0);
-    rows.push({
-      preventa: pv, mes: v.mesKey, fecha: v.fechaPvIso || null,
-      modelo: v.modelo || '', color: v.color || '', serie: v.serie || '',
-      vendedor: v.vendedor || v.vendedorRaw || '', monto: monto, gcia_pesos: gcia,
-      gcia_pct: monto > 0 ? gcia / monto : null, updated_at: new Date().toISOString(),
-    });
-  }
-  const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
-  let ok = 0;
-  for (let i = 0; i < rows.length; i += 200) {
-    const lote = rows.slice(i, i + 200);
-    const res = UrlFetchApp.fetch(SUPA_URL + '/ventas_hist?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(lote), muteHttpExceptions: true });
-    if (res.getResponseCode() >= 300) return { error: 'insert ventas_hist falló: ' + res.getContentText().slice(0, 200), ok: ok };
-    ok += lote.length;
-  }
-  return { ok: true, importadas: ok, mesActual: mesActual };
-}
-
 // Congela (guarda fijo) los resultados de la FÓRMULA de un mes en ventas_hist,
 // para que no se recalcule más. Re-ejecutable (upsert).
 function congelarMes(mes) {
@@ -1685,6 +1654,63 @@ function _readCompetencia() {
   return out;
 }
 
+// Stock por UNIDAD individual (chasis), enriquecido con nombre BT del modelo,
+// nombre de color y antigüedad en días. Lo consume el portal (precios.titogonzalez.online)
+// para fijar un PRECIO ESPECIAL por unidad (autos de mucha antigüedad) en /precios y
+// que el vendedor lo elija por chasis en el presupuesto. Mismo mapeo
+// código→trim→nombre_bt que el motor, así el portal agrupa por norm(modelo).
+function getStockUnidades() {
+  const cat = _supaGet('/catalogo_modelos?select=codigo,nombre_corto,nombre_bt,familia&activo=eq.true');
+  const catByNorm = {};   // norm(desc operativa | nombre_bt | nombre_corto) → nombre_corto
+  const btByNc = {};      // nombre_corto → nombre_bt
+  for (const c of cat) {
+    if (c.nombre_corto) { catByNorm[_ntrim(c.nombre_corto)] = c.nombre_corto; btByNc[c.nombre_corto] = c.nombre_bt || c.nombre_corto; }
+    if (c.nombre_bt)    catByNorm[_ntrim(c.nombre_bt)] = c.nombre_corto;
+  }
+  const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
+  // descripción operativa por código de compra (paginado, igual que _oversoftMotorData)
+  const desc = {};
+  let off = 0;
+  for (let i = 0; i < 12; i++) {
+    const res = UrlFetchApp.fetch(OVERSOFT_URL + '/modelos?select=codigodecompra,descripcionoperativa&order=modeloid&limit=1000&offset=' + off, h);
+    if (res.getResponseCode() >= 300) break;
+    const ch = JSON.parse(res.getContentText());
+    for (const m of ch) if (m.codigodecompra) desc[String(m.codigodecompra).trim()] = m.descripcionoperativa;
+    if (ch.length < 1000) break;
+    off += 1000;
+  }
+  // colorid → descripción
+  const colorDe = {};
+  try {
+    const resC = UrlFetchApp.fetch(OVERSOFT_URL + '/colores?select=colorid,descripcion&limit=2000', h);
+    if (resC.getResponseCode() < 300) for (const c of JSON.parse(resC.getContentText())) colorDe[String(c.colorid)] = String(c.descripcion || '').trim();
+  } catch (e) {}
+  // unidades en stock: no entregadas, no asignadas, sin preventa (mismas que el stock del motor)
+  const resU = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=serie,modelo,color,fechadepedido,fechaderecepcion&entregada=eq.false&asignada=eq.false&preventa=eq.&limit=3000', h);
+  const us = (resU.getResponseCode() < 300) ? JSON.parse(resU.getContentText()) : [];
+  const hoy = new Date();
+  const out = [];
+  for (const u of us) {
+    const d = desc[String(u.modelo || '').trim()];
+    const nc = d ? (catByNorm[_ntrim(d)] || null) : null;
+    const fc = u.fechadepedido ? String(u.fechadepedido).slice(0, 10)
+             : (u.fechaderecepcion ? String(u.fechaderecepcion).slice(0, 10) : null);
+    let antig = null;
+    if (fc) { const t = new Date(fc + 'T00:00:00'); if (!isNaN(t.getTime())) antig = Math.max(0, Math.floor((hoy - t) / 86400000)); }
+    out.push({
+      serie:       String(u.serie || '').trim(),
+      modelo:      nc ? btByNc[nc] : (d || ('código ' + u.modelo)),  // nombre BT (igual que el motor) o desc cruda si no cataloga
+      nombreCorto: nc,
+      color:       colorDe[String(u.color)] || ('color ' + u.color),
+      antigDias:   antig,
+      fechaCompra: fc,
+      catalogado:  !!nc,
+    });
+  }
+  out.sort((a, b) => (b.antigDias || 0) - (a.antigDias || 0));
+  return { unidades: out, total: out.length, updatedAt: new Date().toISOString() };
+}
+
 function getBaratitoMotor() {
   // Red de seguridad del histórico de BT: una vez cada ~6 h (con que alguien
   // abra Baratito alcanza) sincroniza la "Actual BT" del mes a Supabase.
@@ -2000,7 +2026,7 @@ function _cachedBig(key, ttlSec, fresh, fn) {
 // Trigger cada 30': recalcula los 3 endpoints pesados y los deja calientes en
 // el cache chunked, así el usuario no paga el recompute. ~21s total por corrida.
 function precalentarCache() {
-  const jobs = [['comprasvw', getComprasVW], ['stock', getStock], ['ventas', getVentas]];
+  const jobs = [['comprasvw', getComprasVW]];
   jobs.forEach(function (j) {
     try { _cachedBig(j[0], CACHE_TTL_WARM, true, j[1]); }
     catch (e) { Logger.log('precalentar ' + j[0] + ': ' + e); }
@@ -2019,46 +2045,6 @@ function instalarPrecalentado() {
 // Devuelve TODAS las filas de la hoja ventas sin filtrar (excepto vacías
 // totales), con las columnas crudas que más nos importan + el mesKey calculado.
 // Para diagnosticar conteos. Opcional: ?desde=N&hasta=M filtra por # venta.
-function getVentasDebug(params) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sh = ss.getSheetByName('ventas') || ss.getSheets()[0];
-  if (!sh) throw new Error('No hay hoja ventas');
-
-  const lastRow = sh.getLastRow();
-  const range   = sh.getRange(1, 1, lastRow, 26);
-  const display = range.getDisplayValues();
-  const raw     = range.getValues();
-
-  const desde = params.desde ? parseInt(params.desde, 10) : null;
-  const hasta = params.hasta ? parseInt(params.hasta, 10) : null;
-
-  const filas = [];
-  for (let i = 0; i < display.length; i++) {
-    const drow = display[i];
-    const rrow = raw[i];
-    const num    = drow[0];
-    const fechaS = drow[1];
-    const serie  = drow[7];
-    if (!num && !fechaS && !serie) continue; // fila vacía total
-
-    const fecha = _parseFecha(rrow[1], drow[1]);
-    const numN = toNumber(rrow[0]);
-    if (desde !== null && numN < desde) continue;
-    if (hasta !== null && numN > hasta) continue;
-
-    filas.push({
-      sheetRow: i + 1,                          // fila real en la planilla (1-based)
-      A:        String(num || ''),
-      B:        String(fechaS || ''),
-      H:        String(serie || ''),
-      parsedFecha: fecha ? _isoDate(fecha) : null,
-      mesKey:      fecha ? _yyyyMm(fecha) : null,
-    });
-  }
-
-  return { filas: filas, total: filas.length };
-}
-
 function jsonResponse(obj) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))
@@ -2192,88 +2178,6 @@ function getStockHist() {
   return { unidades: _supaGet('/stock_hist?select=serie,monto,fecha,color,unidad,pago_estado&limit=20000') };
 }
 
-function getStock() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sh = ss.getSheetByName('stock') || ss.getSheets()[0];
-  if (!sh) throw new Error('No hay hojas en la planilla');
-
-  const lastRow = sh.getLastRow();
-  if (lastRow < 2) {
-    return { unidades: [], updatedAt: new Date().toISOString() };
-  }
-
-  // A..P = 16 columnas
-  const range   = sh.getRange(1, 1, lastRow, 16);
-  const display = range.getDisplayValues();
-  const raw     = range.getValues();
-
-  // El IMPORTRANGE arranca el espejo en la fila 1 — la primera fila es el header.
-  // Por las dudas, busco la fila cuyo A diga "serie" en las primeras 5 filas.
-  let headerRow = -1;
-  for (let i = 0; i < Math.min(5, display.length); i++) {
-    if (String(display[i][0] || '').toLowerCase().trim() === 'serie') {
-      headerRow = i;
-      break;
-    }
-  }
-  if (headerRow < 0) headerRow = 0;
-
-  const unidades = [];
-  const hoy = new Date();
-
-  for (let i = headerRow + 1; i < display.length; i++) {
-    const drow = display[i];
-    const rrow = raw[i];
-    const serie = String(drow[0] || '').trim();
-    if (!serie) continue;
-
-    // --- B: fecha factura → ISO + antigüedad en días
-    const fechaFc = _parseFecha(rrow[1], drow[1]);
-    const antigDias = fechaFc ? Math.floor((hoy - fechaFc) / 86400000) : null;
-    const fechaFcIso = fechaFc ? _isoDate(fechaFc) : '';
-
-    // --- F: pago unidad → estado + fecha (si la hay)
-    const pago = _parsePago(rrow[5], drow[5]);
-
-    // --- G: vendido → bool + modelo del vendido
-    const vendidoStr = String(drow[6] || '').trim();
-    const esVendido = !!vendidoStr && !/^(NA|N\/A|#N\/A|#REF!|#ERROR!|#VALUE!)$/i.test(vendidoStr);
-
-    // --- P: exposición (normalizo a UPPER y solo dejo las dos válidas)
-    const expRaw = String(drow[15] || '').trim().toUpperCase().replace('Í', 'I');
-    const exposicion = (expRaw === 'ENTRE RIOS' || expRaw === 'INDEPENDENCIA') ? expRaw : '';
-
-    unidades.push({
-      serie:         serie,                                       // A
-      fechaFcIso:    fechaFcIso,                                  // B → ISO yyyy-mm-dd
-      fechaFcStr:    String(drow[1] || '').trim(),                // B → display
-      antigDias:     antigDias,                                   // calculada
-      unidad:        String(drow[2] || '').trim(),                // C
-      color:         String(drow[3] || '').trim(),                // D
-      montoFc:       toNumber(rrow[4]),                           // E
-      pagoEstado:    pago.estado,                                 // F → 'pagada' | 'impaga' | 'otro'
-      pagoFechaIso:  pago.fechaIso,                               // F (si pagada con fecha)
-      pagoStr:       String(drow[5] || '').trim(),                // F → display
-      vendido:       esVendido,                                   // G
-      vendidoModelo: esVendido ? vendidoStr : '',                 // G
-      ofertaActual:  toNumber(rrow[7]),                           // H
-      rdoActualPct:  _pctFromDisplay(drow[8], rrow[8]),           // I (en puntos %, ej 18.5)
-      lista:         toNumber(rrow[9]),                           // J
-      dtoActualPct:  _pctFromDisplay(drow[10], rrow[10]),         // K
-      dtoPedidoPct:  _pctFromDisplay(drow[11], rrow[11]),         // L
-      rdoConDtoPct:  _pctFromDisplay(drow[12], rrow[12]),         // M
-      precioPedido:  toNumber(rrow[13]),                          // N
-      rdoConPrecioPct: _pctFromDisplay(drow[14], rrow[14]),       // O
-      exposicion:    exposicion,                                  // P
-    });
-  }
-
-  return {
-    unidades:  unidades,
-    updatedAt: new Date().toISOString(),
-  };
-}
-
 // =======================================================================
 // VENTAS
 // =======================================================================
@@ -2289,104 +2193,6 @@ function getStock() {
 //
 // Filtro: solo desde VENTAS_MES_MINIMO (2026-03) en adelante.
 // Orden: igual que la planilla (no reordenamos).
-function getVentas() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sh = ss.getSheetByName('ventas') || ss.getSheets().find(s =>
-    /^pvs?$/i.test(s.getName()) || /^ventas/i.test(s.getName())
-  );
-  if (!sh) throw new Error('No encontré la hoja "ventas"');
-
-  const lastRow = sh.getLastRow();
-  if (lastRow < 2) {
-    return { ventas: [], meses: [], updatedAt: new Date().toISOString() };
-  }
-
-  // Leemos A..AM (39 cols). Necesitamos hasta AG (vendedor, col 33),
-  // pero leo el rango entero por las dudas que Fer sume más adelante.
-  const range   = sh.getRange(1, 1, lastRow, 39);
-  const display = range.getDisplayValues();
-  const raw     = range.getValues();
-
-  // Header detection: primera fila cuyo A diga algo tipo "n" / "nro" / "venta"
-  // y cuyo B diga "fecha". Fallback: fila 1.
-  let headerRow = -1;
-  for (let i = 0; i < Math.min(5, display.length); i++) {
-    const a = String(display[i][0] || '').toLowerCase().trim();
-    const b = String(display[i][1] || '').toLowerCase().trim();
-    if (/(nro|n\b|venta|#)/.test(a) && /fecha/.test(b)) { headerRow = i; break; }
-  }
-  if (headerRow < 0) headerRow = 0;
-
-  const ventas = [];
-  const cuentaPorMes = {};   // 'yyyy-mm' → cuántas
-
-  for (let i = headerRow + 1; i < display.length; i++) {
-    const drow = display[i];
-    const rrow = raw[i];
-
-    // Fecha preventa (col B)
-    const fechaPv = _parseFecha(rrow[1], drow[1]);
-    if (!fechaPv) continue;                              // sin fecha → saltea
-    const mesKey = _yyyyMm(fechaPv);
-    if (mesKey < VENTAS_MES_MINIMO) continue;            // pre-marzo: ignorar
-
-    // Número de venta (col A) — saltea filas vacías sin número y sin serie
-    const ventaNum = toNumber(rrow[0]);
-    const serie    = String(drow[7] || '').trim();
-    if (!ventaNum && !serie) continue;
-
-    cuentaPorMes[mesKey] = (cuentaPorMes[mesKey] || 0) + 1;
-
-    // AG = col 33, index 32 → vendedor (texto libre, mapeamos a oficial)
-    const vendedorRaw = String(drow[32] || '').trim();
-    const vendedor    = _matchVendedor(vendedorRaw);   // string oficial o null
-
-    ventas.push({
-      ventaNum:        ventaNum,                                // A
-      fechaPvIso:      _isoDate(fechaPv),                       // B → ISO
-      fechaPvStr:      String(drow[1] || '').trim(),            // B → display
-      mesKey:          mesKey,                                  // 'yyyy-mm'
-      preventaNum:     String(drow[2] || '').trim(),            // C
-      montoFc:         toNumber(rrow[3]),                       // D
-      iva:             _pctFromDisplay(drow[4], rrow[4]),       // E (puntos %)
-      acc:             toNumber(rrow[5]),                       // F (asumimos monto)
-      accStr:          String(drow[5] || '').trim(),            // F display por las dudas
-      costoHist:       toNumber(rrow[6]),                       // G
-      serie:           serie,                                   // H
-      modelo:          String(drow[8] || '').trim(),            // I
-      color:           String(drow[9] || '').trim(),            // J
-      gciaVtaPesos:    toNumber(rrow[23]),                      // X
-      gciaVtaPct:      _pctFromDisplay(drow[24], rrow[24]),     // Y
-      gciaNetaAcum:    toNumber(rrow[25]),                      // Z
-      vendedor:        vendedor,                                // AG → oficial
-      vendedorRaw:     vendedorRaw,                             // AG → tal cual
-    });
-  }
-
-  // Lista de meses presentes, ordenados desc (mes más reciente primero)
-  const meses = Object.keys(cuentaPorMes).sort().reverse().map(k => ({
-    mesKey: k,
-    label:  _mesLabel(k),
-    cuenta: cuentaPorMes[k],
-  }));
-
-  // Snapshots de comparación contra baratito (key = # preventa).
-  // El frontend los cruza por preventaNum y dispara el cálculo solo para las
-  // ventas que todavía no tienen snapshot.
-  const baratitoSnapshots = _readBaratitoSnapshots();
-
-  return {
-    ventas:    ventas,
-    meses:     meses,
-    mesActual: _yyyyMm(new Date()),
-    vendedoresOficiales: VENDEDORES_OFICIALES,
-    baratitoSnapshots: baratitoSnapshots,
-    fyf:       FYF,
-    baratitoTolerancia: BARATITO_TOLERANCIA,
-    updatedAt: new Date().toISOString(),
-  };
-}
-
 // Mapea un texto libre del campo "vendedor" a uno de los 9 oficiales,
 // o devuelve null si no reconoce.
 // Reglas:

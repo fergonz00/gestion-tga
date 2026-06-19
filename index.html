@@ -1281,24 +1281,10 @@ table.patent-tbl.resumida .col-extra { display: none; }
 
     <!-- =================== STOCK =================== -->
     <section class="panel" id="panelStock">
-      <!-- Subtabs viejas (Stock planilla / Compras / Evolución) sacadas: la solapa
-           Stock ahora muestra directo el stock de Oversoft. Los subpaneles de abajo
-           quedan ocultos en el DOM (sin botones) porque loadStock/stockData siguen
-           alimentando Resumen, Reparto y el comparador Oversoft. -->
-
+      <!-- La solapa Stock muestra directo el stock de Oversoft (subtabs: Stock / En exposición). -->
       <div class="subtabs" style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
         <button class="subtab active" data-subtab="oversoft" onclick="setStockSubtab('oversoft')">Stock</button>
         <button class="subtab" data-subtab="exposicion" onclick="setStockSubtab('exposicion')">En exposición</button>
-      </div>
-
-      <div class="subpanel" id="subpanelStock">
-        <div class="toolbar">
-          <div class="updated" id="updatedAtStock">—</div>
-          <div class="actions">
-            <button class="refresh" id="btnRefreshStock" onclick="loadStock(true)">Actualizar</button>
-          </div>
-        </div>
-        <div id="stockContent"></div>
       </div>
 
       <div class="subpanel active" id="subpanelOversoft">
@@ -1321,27 +1307,6 @@ table.patent-tbl.resumida .col-extra { display: none; }
         <div id="exposicionContent"></div>
       </div>
 
-      <div class="subpanel" id="subpanelCompras">
-        <div class="toolbar">
-          <div class="updated">Compras a VW (por fecha de factura)</div>
-          <div class="actions">
-            <button class="refresh" onclick="loadStock(true)">Actualizar</button>
-          </div>
-        </div>
-        <div id="comprasContent"></div>
-      </div>
-
-    </section>
-
-    <!-- =================== VENTAS =================== -->
-    <section class="panel" id="panelVentas">
-      <div class="toolbar">
-        <div class="updated" id="updatedAtVentas">—</div>
-        <div class="actions">
-          <button class="refresh" id="btnRefreshVentas" onclick="loadVentas(true)">Actualizar</button>
-        </div>
-      </div>
-      <div id="ventasContent"></div>
     </section>
 
     <!-- =================== VENTAS (OVERSOFT) =================== -->
@@ -1479,7 +1444,6 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <div class="ovs-actions">
         <button class="refresh" onclick="ovsOrdenesAbiertas()">Órdenes de taller abiertas</button>
         <button class="refresh" onclick="ovsUltimosPagos()">Últimos 10 pagos</button>
-        <button class="refresh" onclick="ovsCompararStock()">Comparar stock (planilla vs Oversoft)</button>
       </div>
       <div id="oversoftContent" class="ovs-out">
         <div class="ovs-hint">Tocá un botón para correr la consulta contra Supabase.</div>
@@ -1551,7 +1515,6 @@ const BARATITO_TOLERANCIA = 10_000;
 // =======================================================================
 // ESTADO
 // =======================================================================
-let stockData = null;          // { unidades, updatedAt }
 
 // Stock Oversoft (solapa nueva, en paralelo a Stock): unidades en vivo desde la
 // réplica Oversoft, cruzadas con la planilla stock (fecha compra + monto) y con
@@ -1570,7 +1533,6 @@ let calcSerie = '';            // serie de la unidad elegida en el desplegable
 let vistaResumida = false;
 
 // Ventas
-let ventasData = null;            // { ventas, meses, mesActual, updatedAt }
 let mesSeleccionado = '';         // 'yyyy-mm'
 let vistaResumidaVentas = false;  // oculta IVA / acc / costo / serie / color
 let rankingOpen = false;          // toggle de la sección "Ranking de vendedores"
@@ -1748,10 +1710,6 @@ async function loadObjetivosCompras() {
     if (data && data.objetivos && typeof data.objetivos === 'object') {
       objetivosCompras = data.objetivos;
       saveObjetivosComprasCache();
-      // Re-render si la sub-tab compras está visible
-      if (document.getElementById('subpanelCompras') && document.getElementById('subpanelCompras').classList.contains('active')) {
-        renderCompras();
-      }
       // Re-render la solapa Reparto si está activa
       if (document.getElementById('panelReparto') && document.getElementById('panelReparto').classList.contains('active')) {
         renderReparto();
@@ -2588,7 +2546,7 @@ function _marcarComprasOk(data) {
     + ' · ' + (data.total || (data.compras || []).length) + ' facturas';
 }
 
-// Refresco en background de Compras, sin spinner (igual que _fetchStockSilent).
+// Refresco en background de Compras, sin spinner.
 async function _fetchComprasSilent() {
   if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return;
   try {
@@ -3442,8 +3400,6 @@ setInterval(refreshOvsSync, 3 * 60 * 1000); // re-consulta el sello cada 3 min
 // corre en background y vuelve a renderizar cuando llega (rápido, gracias al
 // CacheService del Apps Script). El botón "Actualizar" siempre va con fresh=1.
 const LS_CACHE_KEYS = {
-  stock:          'gestion_cache_stock',
-  ventas:         'gestion_cache_ventas',
   patentamientos: 'gestion_cache_patent',
   incentivos:     'gestion_cache_incent',
   compras:        'gestion_cache_compras',
@@ -3561,8 +3517,6 @@ function startAutoRefresh() {
       // La solapa Stock muestra Oversoft: refresco en vivo sin spinner. No lo hago
       // si hay un menú de filtros abierto (lo cerraría a mitad de uso).
       loadOversoftStock(true, true);
-    } else if (activo === 'ventas') {
-      _fetchVentasSilent();
     } else if (activo === 'admventas') {
       // Patentamientos y Trimestre son subtabs de Adm. ventas y dependen de
       // patentData: si alguna está abierta, refrescamos patentamientos.
@@ -3598,7 +3552,6 @@ function setTab(tab) {
   const map = {
     resumen:        'panelResumen',
     stock:          'panelStock',
-    ventas:         'panelVentas',
     ventasov:       'panelVentasOv',
     incentivos:     'panelIncentivos',
     precios:        'panelPrecios',
@@ -3617,7 +3570,6 @@ function setTab(tab) {
     if (!oversoftStockData) loadOversoftStock(false);
     else                    renderOversoftStock();
   }
-  if (tab === 'ventas'         && !ventasData)   loadVentas(false);
   if (tab === 'ventasov'       && !ventasOvData) loadVentasOv(false);
   if (tab === 'precioslista'   && !preciosListaData) loadPreciosLista(false);
   if (tab === 'incentivos'     && !incentivosData) loadIncentivos(false);
@@ -3807,68 +3759,12 @@ async function ovsUltimosPagos() {
 // Cruce por serie. Es SOLO LECTURA y additive — no toca la planilla.
 const _OVS_norm = s => String(s == null ? '' : s).trim().toUpperCase();
 
-async function ovsCompararStock() {
-  _ovsLoading('comparador de stock');
-  try {
-    // 1) Stock manual de la planilla (reuso stockData si ya está; si no, lo traigo)
-    let manual = stockData;
-    if (!manual || !Array.isArray(manual.unidades)) {
-      const r = await fetch(APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=stock');
-      manual = await r.json();
-      if (manual && manual.error) throw new Error('stock planilla: ' + manual.error);
-      stockData = manual;
-    }
-    const planilla = (manual.unidades || []).filter(u => !u.vendido);          // en stock = no vendido (col G)
-    const planMap = new Map(planilla.map(u => [_OVS_norm(u.serie), u]));
-
-    // 2) Disponible para vender en Oversoft (sin asignar)
-    const ovsRaw = await oversoft('unidades', 'select=serie,modelo&entregada=eq.false&asignada=eq.false&limit=500');
-    const ovs = (Array.isArray(ovsRaw) ? ovsRaw : []);
-    const ovsMap = new Map(ovs.map(r => [_OVS_norm(r.serie), r]));
-
-    // 3) Diferencias por serie
-    const soloPlanilla = planilla.filter(u => !ovsMap.has(_OVS_norm(u.serie)));   // figura en planilla pero Oversoft no la da como disponible
-    const soloOvs      = ovs.filter(r => !planMap.has(_OVS_norm(r.serie)));        // Oversoft la da disponible pero no está en stock de la planilla
-    const coinciden    = planilla.length - soloPlanilla.length;
-
-    // 4) Render
-    const difTotal = soloPlanilla.length + soloOvs.length;
-    let h = '<div class="ovs-cmp-sum">'
-      + '<span><b>' + planilla.length + '</b> en planilla</span>'
-      + '<span><b>' + ovs.length + '</b> disponibles Oversoft</span>'
-      + '<span class="ok"><b>' + coinciden + '</b> coinciden</span>'
-      + '<span class="' + (difTotal ? 'warn' : 'ok') + '"><b>' + difTotal + '</b> diferencias</span>'
-      + '</div>';
-
-    const tabla = (titulo, filas, colSerie, colModelo, vacio) => {
-      if (!filas.length) return '<div class="ovs-cmp-blk"><div class="ovs-cmp-h ok">' + titulo + ': 0</div><div class="ovs-hint">' + vacio + '</div></div>';
-      let t = '<div class="ovs-cmp-blk"><div class="ovs-cmp-h warn">' + titulo + ': ' + filas.length + '</div>'
-        + '<table class="ovs-tbl"><thead><tr><th>Serie</th><th>Modelo / Unidad</th></tr></thead><tbody>';
-      filas.forEach(f => {
-        t += '<tr><td>' + escapeHtml(colSerie(f)) + '</td><td>' + escapeHtml(colModelo(f)) + '</td></tr>';
-      });
-      return t + '</tbody></table></div>';
-    };
-
-    h += tabla('⚠️ En tu planilla pero NO disponible en Oversoft (¿vendida/asignada, o no actualizada?)',
-      soloPlanilla, u => u.serie, u => u.unidad || '', 'Todo lo de tu planilla figura disponible en Oversoft.');
-    h += tabla('⚠️ Disponible en Oversoft pero NO en tu planilla (¿falta cargar, o marcada vendida?)',
-      soloOvs, r => r.serie, r => r.modelo || '', 'Todo lo disponible en Oversoft está en tu planilla.');
-
-    h += '<div class="ovs-q">unidades?select=serie,modelo&amp;entregada=eq.false&amp;asignada=eq.false · cruce por serie vs planilla (no vendido)</div>'
-      + '<div class="ovs-hint" style="margin-top:6px">⏱️ Consultado: ' + new Date().toLocaleString('es-AR') + ' — la hora de sync de Oversoft queda pendiente del sello sync_status.</div>';
-    _ovsOut(h);
-  } catch (err) { _ovsError('comparador de stock', err); }
-}
-
 // =======================================================================
 // STOCK SUB-TABS (Stock / Compras)
 // =======================================================================
 function setStockSubtab(name) {
   document.querySelectorAll('.subtab').forEach(b => b.classList.toggle('active', b.dataset.subtab === name));
-  document.getElementById('subpanelStock').classList.toggle('active',     name === 'stock');
   document.getElementById('subpanelOversoft').classList.toggle('active',  name === 'oversoft');
-  document.getElementById('subpanelCompras').classList.toggle('active',   name === 'compras');
   const spExpo = document.getElementById('subpanelExposicion');
   if (spExpo) spExpo.classList.toggle('active', name === 'exposicion');
   if (name === 'oversoft') {
@@ -3878,10 +3774,6 @@ function setStockSubtab(name) {
   if (name === 'exposicion') {
     if (!exposicionData) loadExposicion(false);
     else                 renderExposicion();
-  }
-  if (name === 'compras') {
-    if (!stockData) loadStock(false);
-    else            renderCompras();
   }
 }
 
@@ -4054,7 +3946,6 @@ function setObjetivoCompra(mesKey, valor) {
   else       delete objetivosCompras[mesKey];
   saveObjetivosComprasCache();
   saveObjetivoCompraRemote(mesKey, n);  // optimista: pintamos primero, persistimos atrás
-  renderCompras();
   if (document.getElementById('repartoContent')) renderReparto();
 }
 function _pctCls(pct) {
@@ -4062,84 +3953,6 @@ function _pctCls(pct) {
   if (pct >= 80)  return 'warn';
   return 'bad';
 }
-function renderCompras() {
-  const wrap = document.getElementById('comprasContent');
-  if (!stockData || !Array.isArray(stockData.unidades)) {
-    wrap.innerHTML = '<div class="empty">Sin datos. Cargá el stock primero.</div>';
-    return;
-  }
-  // Agrupar por mes (yyyy-mm) usando fechaFcIso
-  const porMes = {};  // mesKey → count
-  stockData.unidades.forEach(u => {
-    if (!u.fechaFcIso) return;
-    const mk = u.fechaFcIso.slice(0, 7);
-    porMes[mk] = (porMes[mk] || 0) + 1;
-  });
-  const objetivos = getObjetivosCompras();
-  const mesHoy = _mesKeyHoy();
-
-  // Mes actual (puede no tener compras todavía)
-  const comprasActual = porMes[mesHoy] || 0;
-  const objActual = objetivos[mesHoy] || 0;
-  const pctActual = objActual ? (comprasActual / objActual * 100) : 0;
-  const faltanActual = Math.max(0, objActual - comprasActual);
-
-  let html = '';
-  html += '<div class="compras-mes-actual">';
-  html += '  <div class="titulo">Mes en curso</div>';
-  html += '  <div class="mes">' + _mesLabel(mesHoy) + '</div>';
-  html += '  <div class="compras-obj-row">';
-  html += '    <label>Objetivo VW:</label>';
-  html += '    <input type="number" min="0" step="1" value="' + (objActual || '') + '" onchange="setObjetivoCompra(\'' + mesHoy + '\', this.value)" placeholder="—">';
-  html += '    <span style="font-size:12px;color:var(--vw-grey-3)">carpetas</span>';
-  html += '  </div>';
-
-  if (objActual > 0) {
-    const cls = _pctCls(pctActual);
-    const w = Math.min(100, pctActual);
-    html += '  <div class="compras-progress-block">';
-    html += '    <div class="compras-progress-line"><strong>' + comprasActual + '</strong> / ' + objActual + ' compras · <strong>' + pctActual.toFixed(1) + '%</strong></div>';
-    html += '    <div class="compras-progress-bar"><div class="compras-progress-fill ' + cls + '" style="width:' + w + '%"></div></div>';
-    if (faltanActual > 0) {
-      html += '    <div class="compras-faltan">Faltan <strong>' + faltanActual + '</strong> compras para llegar al objetivo</div>';
-    } else {
-      html += '    <div class="compras-faltan" style="color:#2d6a4f;font-weight:600">✓ Objetivo alcanzado · superado por ' + (comprasActual - objActual) + '</div>';
-    }
-    html += '  </div>';
-  } else {
-    html += '  <div class="compras-progress-line"><strong>' + comprasActual + '</strong> compras este mes · Cargá el objetivo para ver el avance</div>';
-  }
-  html += '</div>';
-
-  // Histórico: meses anteriores desde abril 2026 en adelante. Antes de ese
-  // mes no arrancamos a llevar registro, así que no los mostramos aunque
-  // queden compras viejas en el stockData.
-  const MES_INICIO = '2026-04';
-  const mesesUnicos = new Set([...Object.keys(porMes), ...Object.keys(objetivos)]);
-  mesesUnicos.delete(mesHoy);
-  const mesesHist = [...mesesUnicos]
-    .filter(mk => mk >= MES_INICIO)
-    .sort((a, b) => b.localeCompare(a));
-  if (mesesHist.length) {
-    html += '<div class="compras-historico-titulo">Histórico mensual</div>';
-    mesesHist.forEach(mk => {
-      const compras = porMes[mk] || 0;
-      const obj = objetivos[mk] || 0;
-      const pct = obj ? (compras / obj * 100) : null;
-      const pctCls = pct !== null ? _pctCls(pct) : 'none';
-      const pctTxt = pct !== null ? pct.toFixed(1) + '%' : 'sin obj.';
-      html += '<div class="compras-hist-row">';
-      html += '  <div class="compras-hist-mes">' + _mesLabel(mk) + '</div>';
-      html += '  <div class="compras-hist-num"><strong>' + compras + '</strong> / </div>';
-      html += '  <input class="compras-hist-input" type="number" min="0" step="1" value="' + (obj || '') + '" onchange="setObjetivoCompra(\'' + mk + '\', this.value)" placeholder="obj.">';
-      html += '  <div class="compras-hist-pct ' + pctCls + '">' + pctTxt + '</div>';
-      html += '</div>';
-    });
-  }
-
-  wrap.innerHTML = html;
-}
-
 // =======================================================================
 // REPARTO · panel operativo de compra + objetivo/comprado por mes
 // =======================================================================
@@ -4970,72 +4783,8 @@ function renderResumen() {
 // =======================================================================
 // STOCK · fetch
 // =======================================================================
-async function loadStock(forzar) {
-  if (stockData && !forzar) { renderStock(); return; }
-
-  // Primer pintado: si hay cache en localStorage, lo mostramos ya y
-  // disparamos el fetch fresco en background (sin spinner).
-  if (!stockData && !forzar) {
-    const cached = lsCacheGet('stock');
-    if (cached) {
-      stockData = cached;
-      renderStock();
-      marcarActualizando('updatedAtStock', cached.updatedAt);
-      _fetchStockSilent();
-      return;
-    }
-  }
-
-  const btn = document.getElementById('btnRefreshStock');
-  const wrap = document.getElementById('stockContent');
-  btn.disabled = true; btn.textContent = 'Cargando...';
-  wrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>Cargando stock...</div></div>';
-
-  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) {
-    wrap.innerHTML = '<div class="errbox"><div class="ttl">⚙️ Falta conectar la planilla</div>'
-      + '<div>Hay que publicar el Apps Script de la planilla espejo y pegar la URL en <code>index.html</code> (constante <code>APPS_SCRIPT_URL</code>). Ver <code>README.md</code>.</div></div>';
-    btn.disabled = false; btn.textContent = 'Actualizar';
-    return;
-  }
-
-  try {
-    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=stock' + (forzar ? '&fresh=1' : '');
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    if (data && data.error) throw new Error(data.error);
-    stockData = data;
-    lsCacheSet('stock', data);
-    renderStock();
-    const upd = document.getElementById('updatedAtStock');
-    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
-  } catch (e) {
-    console.error(e);
-    wrap.innerHTML = '<div class="errbox"><div class="ttl">⚠️ No se pudo cargar el stock</div>'
-      + '<div>' + escapeHtml(e.message || String(e)) + '</div></div>';
-  } finally {
-    btn.disabled = false; btn.textContent = 'Actualizar';
-  }
-}
-
 // Refresh en background sin spinner. Si la calc está abierta, no toco la UI
 // (igual que el auto-refresh original). Pide fresh=1 para evitar caches.
-async function _fetchStockSilent() {
-  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return;
-  try {
-    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=stock&fresh=1';
-    const res = await fetch(url);
-    if (!res.ok) return;
-    const data = await res.json();
-    if (data && data.error) return;
-    stockData = data;
-    lsCacheSet('stock', data);
-    if (!calcOpen) renderStock();
-    else           renderResumen();  // si la calc bloquea el render de stock, al menos actualizo el resumen
-    marcarActualizado('updatedAtStock', data.updatedAt);
-  } catch { /* silencioso */ }
-}
-
 // =======================================================================
 // STOCK OVERSOFT · solapa nueva (en paralelo a Stock)
 // =======================================================================
@@ -5348,237 +5097,14 @@ function renderOversoftStock() {
 //   2) ENTRE RIOS    (idem)
 //   3) Resto sin exposición (por antigüedad desc)
 //
-function renderStock() {
-  renderResumen();  // mantener la tab de Resumen sincronizada con los datos actuales
-  if (document.getElementById('comprasContent')) renderCompras();  // mantener sub-tab Compras sincronizada
-  const wrap = document.getElementById('stockContent');
-  if (!stockData || !Array.isArray(stockData.unidades)) {
-    wrap.innerHTML = '<div class="empty">Sin datos.</div>';
-    return;
-  }
-
-  // ===== Modo CALCULADORA exclusiva =====
-  // Cuando la calc está abierta no se ve el resto (KPIs, filtros, tabla).
-  // Solo la calc + botón "Volver al stock".
-  if (calcOpen) {
-    wrap.innerHTML = renderCalcSection();
-    return;
-  }
-
-  // ===== Modo STOCK normal =====
-  const todas = stockData.unidades;
-  const visibles = aplicarFiltros(todas);
-
-  const enStock = todas.filter(u => !u.vendido).length;
-  const impagas = todas.filter(u => !u.vendido && u.pagoEstado === 'impaga').length;
-  const enIndep = todas.filter(u => !u.vendido && u.exposicion === 'INDEPENDENCIA').length;
-  const enErios = todas.filter(u => !u.vendido && u.exposicion === 'ENTRE RIOS').length;
-  const reemplazar = todas.filter(u => u.vendido && u.exposicion).length;
-
-  let html = '';
-  html += '<div class="cards">';
-  html += kpi('Total en stock', enStock, '', 'good');
-  html += kpi('Impagas', impagas, impagas ? 'a pagar' : '', impagas ? 'bad' : '');
-  html += kpi('Independencia', enIndep, 'en exposición', enIndep ? 'expo-in' : '');
-  html += kpi('Entre Ríos',   enErios, 'en exposición', enErios ? 'expo-er' : '');
-  html += '</div>';
-
-  if (reemplazar > 0) {
-    html += '<div class="aviso-reemplazar">'
-          + '  <span class="ico">🔄</span>'
-          + '  <span><b>' + reemplazar + '</b> ' + (reemplazar === 1 ? 'unidad vendida sigue marcada en exposición' : 'unidades vendidas siguen marcadas en exposición') + ' — reemplazalas en la planilla.</span>'
-          + '</div>';
-  }
-
-  // Toolbar: botón calc + filtros
-  html += '<div class="filter-row">';
-  html += '  <button class="calc-toggle" onclick="toggleCalcSection()">🧮 Calculadora de precios</button>';
-  html += '  <div class="search">'
-        + '    <span style="color:var(--vw-grey-3);font-size:13px">🔍</span>'
-        + '    <input type="text" id="stockSearch" placeholder="Serie, modelo, color..." value="' + escapeHtml(filtros.search) + '">'
-        + '  </div>';
-  html += grupoFiltro('Pago', 'pago', [
-    {v:'todas',   l:'Todos'},
-    {v:'pagas',   l:'Pagas'},
-    {v:'impagas', l:'Impagas'},
-  ]);
-  html += grupoFiltro('Exposición', 'expo', [
-    {v:'todas',     l:'Todas'},
-    {v:'indep',     l:'Independencia'},
-    {v:'erios',     l:'Entre Ríos'},
-    {v:'expuestas', l:'Cualquier salón'},
-  ]);
-  html += '  <label class="toggle-resumida">'
-        + '    <input type="checkbox" ' + (vistaResumida ? 'checked' : '') + ' onchange="toggleVistaResumida()"> Vista resumida'
-        + '  </label>';
-  html += '</div>';
-
-  // Tabla
-  html += '<div class="table-wrap">'
-        + '  <div class="table-head">'
-        + '    <h3>Unidades</h3>'
-        + '    <div class="count">' + visibles.length + ' visibles · ' + enStock + ' en stock</div>'
-        + '  </div>'
-        + '  <div class="table-scroll">'
-        + '    <table class="stock-tbl responsive-cards ' + (vistaResumida ? 'resumida' : '') + '">'
-        + '      <thead><tr>'
-        + '        <th>Serie</th>'
-        + '        <th class="ctr">Antig.</th>'
-        + '        <th>Unidad</th>'
-        + '        <th>Color</th>'
-        + '        <th class="num col-extra">$ FC</th>'
-        + '        <th class="ctr col-extra">Pago</th>'
-        + '        <th class="num col-extra">Oferta</th>'
-        + '        <th class="num col-extra">Rdo</th>'
-        + '        <th class="num col-extra">Lista</th>'
-        + '        <th class="num col-extra">Dto</th>'
-        + '        <th class="ctr col-extra">Expo</th>'
-        + '      </tr></thead>'
-        + '      <tbody>';
-
-  if (!visibles.length) {
-    html += '<tr><td colspan="11" class="empty">No hay unidades que coincidan con los filtros.</td></tr>';
-  } else {
-    const sorted = ordenarUnidades(visibles);
-    for (const u of sorted) html += filaUnidad(u);
-  }
-
-  html += '      </tbody>'
-        + '    </table>'
-        + '  </div>'
-        + '</div>';
-
-  wrap.innerHTML = html;
-
-  // Wire del search (mantengo el foco al re-render)
-  const sinp = document.getElementById('stockSearch');
-  if (sinp) {
-    sinp.addEventListener('input', (e) => {
-      filtros.search = e.target.value;
-      renderStock();
-      const ns = document.getElementById('stockSearch');
-      if (ns) {
-        ns.focus();
-        ns.setSelectionRange(filtros.search.length, filtros.search.length);
-      }
-    });
-  }
-}
-
 // Orden: siempre por antigüedad descendente (más viejas arriba), sin importar
 // el salón. Para ver lo de un salón puntual se usa el filtro de exposición.
-function ordenarUnidades(arr) {
-  return arr.slice().sort((a, b) => (b.antigDias || 0) - (a.antigDias || 0));
-}
-
 function kpi(label, value, sub, cls) {
   return '<div class="card ' + (cls || '') + '">'
        + '  <div class="label">' + escapeHtml(label) + '</div>'
        + '  <div class="value">' + escapeHtml(String(value)) + '</div>'
        + (sub ? '  <div class="sub">' + escapeHtml(sub) + '</div>' : '')
        + '</div>';
-}
-
-function grupoFiltro(label, key, opts) {
-  let h = '<div class="filter-group">';
-  h += '<span class="lbl">' + escapeHtml(label) + ':</span>';
-  for (const o of opts) {
-    const active = filtros[key] === o.v;
-    h += '<button class="chip ' + (active ? 'active' : '') + '" onclick="setFiltro(\'' + key + '\', \'' + o.v + '\')">' + escapeHtml(o.l) + '</button>';
-  }
-  h += '</div>';
-  return h;
-}
-function setFiltro(key, val) {
-  filtros[key] = val;
-  renderStock();
-}
-
-function toggleVistaResumida() {
-  vistaResumida = !vistaResumida;
-  renderStock();
-}
-
-function toggleVistaResumidaVentas() {
-  vistaResumidaVentas = !vistaResumidaVentas;
-  renderVentas();
-}
-
-function toggleRanking() {
-  rankingOpen = !rankingOpen;
-  renderVentas();
-}
-
-function aplicarFiltros(arr) {
-  const q = filtros.search.trim().toLowerCase();
-  return arr.filter(u => {
-    // Regla base: no mostrar vendidas, salvo que sigan marcadas en exposición
-    // (sirve de recordatorio para reemplazar la unidad en el salón).
-    if (u.vendido && !u.exposicion) return false;
-
-    if (filtros.pago === 'pagas'   && u.pagoEstado !== 'pagada') return false;
-    if (filtros.pago === 'impagas' && u.pagoEstado !== 'impaga') return false;
-
-    if (filtros.expo === 'indep'     && u.exposicion !== 'INDEPENDENCIA') return false;
-    if (filtros.expo === 'erios'     && u.exposicion !== 'ENTRE RIOS')    return false;
-    if (filtros.expo === 'expuestas' && !u.exposicion)                    return false;
-
-    if (q) {
-      const blob = (u.serie + ' ' + u.unidad + ' ' + u.color).toLowerCase();
-      if (blob.indexOf(q) < 0) return false;
-    }
-    return true;
-  });
-}
-
-function filaUnidad(u) {
-  // Badge de exposición (con cartel especial si ya está vendida)
-  let expoBadge;
-  if (u.exposicion) {
-    const cls = u.exposicion === 'ENTRE RIOS' ? 'expo-er' : 'expo-in';
-    if (u.vendido) {
-      expoBadge = '<span class="badge reemplazar" title="Vendida — reemplazar en ' + escapeHtml(u.exposicion) + '">'
-                + '🔄 REEMPLAZAR · ' + escapeHtml(u.exposicion) + '</span>';
-    } else {
-      expoBadge = '<span class="badge ' + cls + '">' + escapeHtml(u.exposicion) + '</span>';
-    }
-  } else {
-    expoBadge = '<span class="muted">—</span>';
-  }
-
-  let pagoBadge;
-  if (u.pagoEstado === 'pagada') {
-    pagoBadge = '<span class="badge paga" title="' + escapeHtml(u.pagoStr || 'PAGA') + '">'
-              + (u.pagoFechaIso ? 'Pago ' + fmtFechaCorta(u.pagoFechaIso) : 'PAGA')
-              + '</span>';
-  } else if (u.pagoEstado === 'impaga') {
-    pagoBadge = '<span class="badge impaga">IMPAGA</span>';
-  } else {
-    pagoBadge = '<span class="badge otro">' + escapeHtml(u.pagoStr) + '</span>';
-  }
-
-  // En mobile, cada td se transforma en card apilada — el data-label es lo que
-  // aparece como "etiqueta" a la izquierda. Si una columna está vacía, escondemos
-  // el row entero con .hidden-empty para que la card quede prolija.
-  const rowCls = u.vendido && u.exposicion
-    ? 'expo vendida-en-expo'
-    : (u.exposicion ? 'expo' : '');
-
-  let html = '<tr class="' + rowCls + '">';
-  html += '<td data-label="Serie"><span class="serie">' + escapeHtml(u.serie) + '</span></td>';
-  html += '<td class="ctr" data-label="Antig."><span title="Fact. ' + escapeHtml(u.fechaFcStr || '') + '">' + (u.antigDias !== null ? u.antigDias + ' d' : '—') + '</span></td>';
-  html += '<td data-label="Unidad">' + escapeHtml(u.unidad) + '</td>';
-  html += '<td data-label="Color">' + escapeHtml(u.color) + '</td>';
-  html += '<td class="num col-extra" data-label="$ FC">' + fmtPesos(u.montoFc) + '</td>';
-  html += '<td class="ctr col-extra" data-label="Pago">' + pagoBadge + '</td>';
-  html += '<td class="num col-extra" data-label="Oferta">' + fmtPesos(u.ofertaActual) + '</td>';
-  html += '<td class="num col-extra" data-label="Rdo">' + fmtPct(u.rdoActualPct) + '</td>';
-  html += '<td class="num col-extra" data-label="Lista">' + fmtPesos(u.lista) + '</td>';
-  html += '<td class="num col-extra" data-label="Dto">' + fmtPct(u.dtoActualPct) + '</td>';
-  html += '<td class="ctr col-extra" data-label="Expo">' + expoBadge + '</td>';
-  html += '</tr>';
-
-  return html;
 }
 
 // =======================================================================
@@ -5589,265 +5115,15 @@ function filaUnidad(u) {
 //   % dto pedido: nuevo_rdo = rdo_actual − (dto_pedido − dto_actual)
 //   precio pedido: nuevo_rdo = rdo_actual − ((oferta − precio_pedido) / lista) × 100
 
-function toggleCalcSection() {
-  calcOpen = !calcOpen;
-  if (!calcOpen) calcSerie = '';
-  renderStock();
-}
-
-function setCalcUnidad(serie) {
-  calcSerie = serie || '';
-  renderStock();
-  if (calcSerie) {
-    setTimeout(() => {
-      const inp = document.getElementById('calcDtoInput');
-      if (inp) inp.focus();
-    }, 0);
-  } else {
-    // limpieza: foco al combo para que pueda elegir otra rápido
-    setTimeout(() => {
-      const inp = document.getElementById('calcUnidadInput');
-      if (inp) inp.focus();
-    }, 0);
-  }
-}
-
 // Label del combo: solo el modelo (col C `unidad`). Asumimos que las unidades
 // del mismo modelo comparten oferta/lista/rdo/dto, por lo que basta una entrada
 // por modelo en el desplegable.
-function _calcLabel(u) {
-  return u.unidad;
-}
-
 // El usuario escribe o elige una opción del datalist. Cuando lo escrito
 // coincide exacto con el label de una unidad, la seleccionamos. Si va
 // tipiando algo parcial todavía no matchea — esperamos.
-function onCalcUnidadInput(text) {
-  const t = String(text || '').trim();
-  if (!t) {
-    // Vaciaron el input → limpio la selección
-    if (calcSerie) { calcSerie = ''; renderStock(); }
-    return;
-  }
-  const u = stockData.unidades.find(x => _calcLabel(x) === t);
-  if (u && u.serie !== calcSerie) {
-    calcSerie = u.serie;
-    renderStock();
-    setTimeout(() => {
-      const inp = document.getElementById('calcDtoInput');
-      if (inp) inp.focus();
-    }, 0);
-  }
-}
-
-function renderCalcSection() {
-  // Elegibles: solo en stock (no vendidas) y con lista > 0.
-  // Dedupe por modelo (col C `unidad`): si hay 10 Amarok Comfortline, una sola
-  // entrada. Tomamos la primera ocurrencia — los precios deberían ser iguales
-  // para todas las unidades del mismo modelo.
-  const elegiblesAll = stockData.unidades.filter(u => !u.vendido && u.lista > 0);
-  const seen = new Set();
-  const elegibles = [];
-  for (const u of elegiblesAll) {
-    const k = (u.unidad || '').trim();
-    if (!k || seen.has(k)) continue;
-    seen.add(k);
-    elegibles.push(u);
-  }
-  elegibles.sort((a, b) => (a.unidad || '').localeCompare(b.unidad || ''));
-
-  const u = calcSerie ? stockData.unidades.find(x => x.serie === calcSerie) : null;
-
-  let html = '<div class="calc-section">';
-  html += '  <div class="calc-section-head">'
-        + '    <button class="calc-back" onclick="toggleCalcSection()">← Volver al stock</button>'
-        + '    <h3>🧮 Calculadora de precio</h3>'
-        + '    <p>Elegí un modelo y probá un % de dto o un precio pedido. El cálculo es en vivo, no toca la planilla.</p>'
-        + '  </div>';
-
-  // Combo input + datalist (1 entrada por modelo). El value del input matchea
-  // _calcLabel(u) = u.unidad. Cuando matchea exacto, seleccionamos.
-  const currentLabel = u ? _calcLabel(u) : '';
-
-  html += '  <div class="calc-select-row">'
-        + '    <label for="calcUnidadInput">Modelo:</label>'
-        + '    <input type="text" id="calcUnidadInput" class="calc-combo"'
-        + '           list="calcUnidadList"'
-        + '           value="' + escapeHtml(currentLabel) + '"'
-        + '           oninput="onCalcUnidadInput(this.value)"'
-        + '           placeholder="Escribí el modelo...">'
-        + '    <datalist id="calcUnidadList">';
-  for (const e of elegibles) {
-    html += '      <option value="' + escapeHtml(_calcLabel(e)) + '">';
-  }
-  html += '    </datalist>';
-  if (calcSerie) {
-    html += '    <button class="calc-clear" onclick="setCalcUnidad(\'\')" title="Limpiar selección">✕</button>';
-  }
-  html += '  </div>';
-
-  // Bloques (solo si hay unidad elegida)
-  if (u) {
-    html += '  <div class="calc-ctx-row">'
-          + '    <div><span class="lab">Oferta actual</span><span class="val">' + fmtPesos(u.ofertaActual) + '</span></div>'
-          + '    <div><span class="lab">Rdo actual</span><span class="val">' + fmtPct(u.rdoActualPct) + '</span></div>'
-          + '    <div><span class="lab">Lista</span><span class="val">' + fmtPesos(u.lista) + '</span></div>'
-          + '    <div><span class="lab">Dto actual</span><span class="val">' + fmtPct(u.dtoActualPct) + '</span></div>'
-          + '  </div>';
-
-    html += '  <div class="calc-box">';
-    html += '    <div class="calc-block">'
-          + '      <div class="ttl">Por % de descuento pedido</div>'
-          + '      <div class="calc-input-row">'
-          + '        <label>% dto pedido:</label>'
-          + '        <input class="ipt" type="number" step="0.1" id="calcDtoInput" oninput="recalcDto()" placeholder="' + fmtNumLite(u.dtoActualPct) + '" />'
-          + '      </div>'
-          + '      <div class="calc-result neutral" id="calcDtoResult">'
-          + '        <span class="lab">Rdo con dto pedido</span>'
-          + '        <span><span class="val">—</span><span class="delta"></span></span>'
-          + '      </div>'
-          + '    </div>';
-    html += '    <div class="calc-block">'
-          + '      <div class="ttl">Por precio pedido ($)</div>'
-          + '      <div class="calc-input-row">'
-          + '        <label>$ precio pedido:</label>'
-          + '        <input class="ipt" type="number" step="1000" id="calcPrecioInput" oninput="recalcPrecio()" placeholder="' + Math.round(u.ofertaActual) + '" />'
-          + '      </div>'
-          + '      <div class="calc-result neutral" id="calcPrecioResult">'
-          + '        <span class="lab">Rdo con precio pedido</span>'
-          + '        <span><span class="val">—</span><span class="delta"></span></span>'
-          + '      </div>'
-          + '    </div>';
-    html += '  </div>';
-  }
-
-  html += '</div>';
-  return html;
-}
-
-function recalcDto() {
-  const u = stockData.unidades.find(x => x.serie === calcSerie);
-  if (!u) return;
-  const inp = document.getElementById('calcDtoInput');
-  const out = document.getElementById('calcDtoResult');
-  if (!inp || !out) return;
-
-  const v = parseFloat(inp.value);
-  if (isNaN(v) || inp.value === '') {
-    out.className = 'calc-result neutral';
-    out.querySelector('.val').textContent = '—';
-    out.querySelector('.delta').textContent = '';
-    return;
-  }
-  const nuevoRdo = u.rdoActualPct - (v - u.dtoActualPct);
-  const delta = nuevoRdo - u.rdoActualPct;
-  out.className = 'calc-result ' + (nuevoRdo < 0 ? 'bad' : nuevoRdo < u.rdoActualPct ? 'neutral' : 'good');
-  out.querySelector('.val').textContent = fmtPct(nuevoRdo);
-  out.querySelector('.delta').textContent = (delta >= 0 ? '+' : '') + fmtPct(delta, 2);
-}
-
-function recalcPrecio() {
-  const u = stockData.unidades.find(x => x.serie === calcSerie);
-  if (!u) return;
-  const inp = document.getElementById('calcPrecioInput');
-  const out = document.getElementById('calcPrecioResult');
-  if (!inp || !out) return;
-
-  const v = parseFloat(inp.value);
-  if (isNaN(v) || inp.value === '' || u.lista <= 0) {
-    out.className = 'calc-result neutral';
-    out.querySelector('.val').textContent = '—';
-    out.querySelector('.delta').textContent = '';
-    return;
-  }
-  const drop = ((u.ofertaActual - v) / u.lista) * 100;
-  const nuevoRdo = u.rdoActualPct - drop;
-  const delta = nuevoRdo - u.rdoActualPct;
-  out.className = 'calc-result ' + (nuevoRdo < 0 ? 'bad' : nuevoRdo < u.rdoActualPct ? 'neutral' : 'good');
-  out.querySelector('.val').textContent = fmtPct(nuevoRdo);
-  out.querySelector('.delta').textContent = (delta >= 0 ? '+' : '') + fmtPct(delta, 2);
-}
-
 // =======================================================================
 // VENTAS · fetch
 // =======================================================================
-async function loadVentas(forzar) {
-  if (ventasData && !forzar) { renderVentas(); return; }
-
-  // Primer pintado: restaurar de localStorage y refrescar en bg.
-  if (!ventasData && !forzar) {
-    const cached = lsCacheGet('ventas');
-    if (cached) {
-      ventasData = cached;
-      if (!mesSeleccionado || !cached.meses.find(m => m.mesKey === mesSeleccionado)) {
-        const conMesActual = cached.meses.find(m => m.mesKey === cached.mesActual);
-        mesSeleccionado = conMesActual ? cached.mesActual : (cached.meses[0] ? cached.meses[0].mesKey : '');
-      }
-      renderVentas();
-      marcarActualizando('updatedAtVentas', cached.updatedAt);
-      _fetchVentasSilent();
-      return;
-    }
-  }
-
-  const btn  = document.getElementById('btnRefreshVentas');
-  const wrap = document.getElementById('ventasContent');
-  if (btn) { btn.disabled = true; btn.textContent = 'Cargando...'; }
-  wrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>Cargando ventas...</div></div>';
-
-  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) {
-    wrap.innerHTML = '<div class="errbox"><div class="ttl">⚙️ Falta conectar la planilla</div>'
-      + '<div>Pegá la URL del Apps Script en <code>index.html</code>.</div></div>';
-    if (btn) { btn.disabled = false; btn.textContent = 'Actualizar'; }
-    return;
-  }
-
-  try {
-    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=ventas' + (forzar ? '&fresh=1' : '');
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    if (data && data.error) throw new Error(data.error);
-    ventasData = data;
-    lsCacheSet('ventas', data);
-    // Default: mes vigente si tiene datos, sino el más reciente disponible
-    if (!mesSeleccionado || !data.meses.find(m => m.mesKey === mesSeleccionado)) {
-      const conMesActual = data.meses.find(m => m.mesKey === data.mesActual);
-      mesSeleccionado = conMesActual ? data.mesActual : (data.meses[0] ? data.meses[0].mesKey : '');
-    }
-    renderVentas();
-    const upd = document.getElementById('updatedAtVentas');
-    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
-    _snapshotearVentasNuevas();
-  } catch (e) {
-    console.error(e);
-    wrap.innerHTML = '<div class="errbox"><div class="ttl">⚠️ No se pudieron cargar las ventas</div>'
-      + '<div>' + escapeHtml(e.message || String(e)) + '</div></div>';
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Actualizar'; }
-  }
-}
-
-async function _fetchVentasSilent() {
-  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return;
-  try {
-    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=ventas&fresh=1';
-    const res = await fetch(url);
-    if (!res.ok) return;
-    const data = await res.json();
-    if (data && data.error) return;
-    ventasData = data;
-    lsCacheSet('ventas', data);
-    if (!mesSeleccionado || !data.meses.find(m => m.mesKey === mesSeleccionado)) {
-      const conMesActual = data.meses.find(m => m.mesKey === data.mesActual);
-      mesSeleccionado = conMesActual ? data.mesActual : (data.meses[0] ? data.meses[0].mesKey : '');
-    }
-    renderVentas();
-    marcarActualizado('updatedAtVentas', data.updatedAt);
-    _snapshotearVentasNuevas();
-  } catch { /* silencioso */ }
-}
-
 // =======================================================================
 // BARATITO · snapshot por venta
 // =======================================================================
@@ -5956,203 +5232,9 @@ function _matchOfertaParaVenta(modeloVenta, ofertas) {
   return null;
 }
 
-function _calcStatusBaratito(diff) {
-  if (diff > BARATITO_TOLERANCIA) return 'mejor';
-  if (diff < -BARATITO_TOLERANCIA) return 'peor';
-  return 'baratito';
-}
-
-async function _snapshotearVentasNuevas() {
-  if (!ventasData || !Array.isArray(ventasData.ventas) || !ventasData.ventas.length) return;
-  const snapshots = ventasData.baratitoSnapshots || {};
-
-  // Defensivo: si la hoja de snapshots está vacía (primera vez con el feature),
-  // pedimos al backend que inicialice el baseline marcando todas las PVs
-  // actuales como 'pre_feature'. NO snapshoteamos retroactivo — solo PVs que
-  // aparezcan después de este punto generan snapshot real.
-  if (Object.keys(snapshots).length === 0 && ventasData.ventas.length > 0) {
-    try {
-      const body = new URLSearchParams();
-      body.set('payload', JSON.stringify({
-        token: APPS_SCRIPT_TOKEN, accion: 'initbaratitobaseline',
-      }));
-      await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
-      // Re-fetch silencioso para traer el baseline recién creado
-      await _fetchVentasSilent();
-    } catch (e) {
-      console.warn('initbaratitobaseline falló:', e);
-    }
-    return;
-  }
-
-  // Pendientes: tienen preventaNum y o no tienen snapshot o el snapshot guardado
-  // es 'sin_oferta' (lo reintentamos por si mejoró el matching de modelos).
-  // 'pre_feature' nunca se reintenta — es el baseline histórico.
-  const pendientes = ventasData.ventas.filter(v => {
-    const k = String(v.preventaNum || '').trim();
-    if (!k) return false;
-    const existente = snapshots[k];
-    if (!existente) return true;
-    return existente.status === 'sin_oferta';
-  });
-  if (!pendientes.length) return;
-
-  let ofertas;
-  try {
-    ofertas = await _fetchPortalOfertas(false);
-  } catch (e) {
-    console.warn('No pude leer ofertas del portal, no snapshot:', e);
-    return;
-  }
-
-  const nuevos = [];
-  for (const v of pendientes) {
-    const pvKey = String(v.preventaNum).trim();
-    const match = _matchOfertaParaVenta(v.modelo, ofertas);
-    if (!match) {
-      nuevos.push({
-        pvKey, modelo: v.modelo,
-        baratitoFyf: 0, baratitoSinFyf: 0,
-        montoFc: v.montoFc || 0, acc: v.acc || 0,
-        clientePago: (v.montoFc || 0) + (v.acc || 0),
-        diff: 0, status: 'sin_oferta',
-      });
-      continue;
-    }
-    const baratitoFyf = match.ofertaFyf;
-    const baratitoSinFyf = baratitoFyf - FYF;
-    const clientePago = (v.montoFc || 0) + (v.acc || 0);
-    const diff = clientePago - baratitoSinFyf;
-    nuevos.push({
-      pvKey, modelo: v.modelo,
-      baratitoFyf, baratitoSinFyf,
-      montoFc: v.montoFc || 0, acc: v.acc || 0,
-      clientePago, diff,
-      status: _calcStatusBaratito(diff),
-    });
-  }
-  if (!nuevos.length) return;
-
-  // Merge optimista para repintar ya, antes de esperar el POST
-  for (const s of nuevos) snapshots[s.pvKey] = s;
-  ventasData.baratitoSnapshots = snapshots;
-  lsCacheSet('ventas', ventasData);
-  renderVentas();
-
-  // Persistir en la espejo
-  try {
-    const body = new URLSearchParams();
-    body.set('payload', JSON.stringify({
-      token: APPS_SCRIPT_TOKEN, accion: 'setbaratitosnapshot', snapshots: nuevos,
-    }));
-    await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
-  } catch (e) {
-    console.warn('setbaratitosnapshot POST falló (los locales siguen disponibles):', e);
-  }
-}
-
-function setMesVentas(mesKey) {
-  mesSeleccionado = mesKey || '';
-  renderVentas();
-}
-
 // =======================================================================
 // VENTAS · render
 // =======================================================================
-function renderVentas() {
-  renderResumen();
-  const wrap = document.getElementById('ventasContent');
-  if (!ventasData || !Array.isArray(ventasData.ventas)) {
-    wrap.innerHTML = '<div class="empty">Sin datos.</div>';
-    return;
-  }
-
-  const todas = ventasData.ventas;
-  const meses = ventasData.meses || [];
-  const delMes = todas.filter(v => v.mesKey === mesSeleccionado);
-
-  // KPIs del mes
-  const cantidad   = delMes.length;
-  const gciaPctAvg = delMes.length
-    ? delMes.reduce((a, v) => a + (v.gciaVtaPct || 0), 0) / delMes.length
-    : 0;
-  // Gcia neta acumulada: tomamos la última fila del mes (la planilla ya
-  // calcula el acumulado del mes en col Z, fila a fila).
-  const ultima = delMes[delMes.length - 1];
-  const acumMes = ultima ? ultima.gciaNetaAcum : 0;
-
-  let html = '';
-
-  // ----- Selector de mes + toggle vista resumida -----
-  html += '<div class="mes-row">';
-  html += '  <label for="mesSel">Mes:</label>';
-  html += '  <select id="mesSel" onchange="setMesVentas(this.value)">';
-  if (!meses.length) {
-    html += '    <option value="">— Sin meses con ventas —</option>';
-  } else {
-    for (const m of meses) {
-      const sel = m.mesKey === mesSeleccionado ? ' selected' : '';
-      html += '    <option value="' + m.mesKey + '"' + sel + '>' + escapeHtml(m.label) + ' · ' + m.cuenta + '</option>';
-    }
-  }
-  html += '  </select>';
-  html += '  <button class="rank-toggle ' + (rankingOpen ? 'open' : '') + '" onclick="toggleRanking()">🏆 ' + (rankingOpen ? 'Ocultar ranking' : 'Ranking de vendedores') + '</button>';
-  html += '  <label class="toggle-resumida">'
-        + '    <input type="checkbox" ' + (vistaResumidaVentas ? 'checked' : '') + ' onchange="toggleVistaResumidaVentas()"> Vista resumida'
-        + '  </label>';
-  html += '</div>';
-
-  // ----- KPIs -----
-  html += '<div class="cards">';
-  html += kpi('Ventas en el mes', cantidad, '', cantidad ? 'good' : '');
-  html += kpi('Gcia. neta acumulada', fmtPesos(acumMes), 'al cierre del mes', acumMes > 0 ? 'good' : (acumMes < 0 ? 'bad' : ''));
-  html += kpi('Gcia. % promedio', fmtPct(gciaPctAvg * 100), '', '');
-  html += '</div>';
-
-  // ----- Ranking de vendedores del mes (solo si está abierto) -----
-  if (rankingOpen) {
-    html += renderRankingVendedores(delMes, mesSeleccionado);
-  }
-
-  // ----- Tabla -----
-  html += '<div class="table-wrap">'
-        + '  <div class="table-head">'
-        + '    <h3>' + (meses.find(m => m.mesKey === mesSeleccionado)?.label || 'Sin mes seleccionado') + '</h3>'
-        + '    <div class="count">' + cantidad + ' ' + (cantidad === 1 ? 'venta' : 'ventas') + '</div>'
-        + '  </div>'
-        + '  <div class="table-scroll">'
-        + '    <table class="ventas-tbl responsive-cards ' + (vistaResumidaVentas ? 'resumida' : '') + '">'
-        + '      <thead><tr>'
-        + '        <th class="ctr">#</th>'
-        + '        <th>Fecha PV</th>'
-        + '        <th># PV</th>'
-        + '        <th class="num">Monto FC</th>'
-        + '        <th class="num col-extra">IVA</th>'
-        + '        <th class="num col-extra">Acc</th>'
-        + '        <th class="num col-extra">Costo hist.</th>'
-        + '        <th class="col-extra">Serie</th>'
-        + '        <th>Modelo</th>'
-        + '        <th class="col-extra">Color</th>'
-        + '        <th>vs Baratito</th>'
-        + '        <th class="num">Gcia $</th>'
-        + '        <th class="num">Gcia %</th>'
-        + '      </tr></thead>'
-        + '      <tbody>';
-
-  if (!delMes.length) {
-    html += '<tr><td colspan="13" class="empty">No hay ventas registradas en ' + escapeHtml(meses.find(m => m.mesKey === mesSeleccionado)?.label || 'este mes') + '.</td></tr>';
-  } else {
-    for (const v of delMes) html += filaVenta(v);
-  }
-
-  html += '      </tbody>'
-        + '    </table>'
-        + '  </div>'
-        + '</div>';
-
-  wrap.innerHTML = html;
-}
-
 // Vendedores oficiales. `desde` (opcional, formato 'yyyy-mm') = mes desde el
 // cual el vendedor está activo; meses anteriores NO lo cuentan ni lo muestran
 // en el ranking (útil para incorporaciones nuevas).
@@ -6238,55 +5320,6 @@ function renderRankingVendedores(delMes, mesKey) {
 
   html += '</div>';
   return html;
-}
-
-function filaVenta(v) {
-  let html = '<tr>';
-  html += '<td class="ctr" data-label="#">' + (v.ventaNum || '—') + '</td>';
-  html += '<td data-label="Fecha PV">' + escapeHtml(v.fechaPvStr || fmtFechaCorta(v.fechaPvIso)) + '</td>';
-  html += '<td data-label="# PV">' + escapeHtml(v.preventaNum || '—') + '</td>';
-  html += '<td class="num" data-label="Monto FC">' + fmtPesos(v.montoFc) + '</td>';
-  html += '<td class="num col-extra" data-label="IVA">' + (v.iva ? fmtPct(v.iva, 1) : '—') + '</td>';
-  html += '<td class="num col-extra" data-label="Acc">' + (v.acc ? fmtPesos(v.acc) : (v.accStr || '—')) + '</td>';
-  html += '<td class="num col-extra" data-label="Costo hist.">' + fmtPesos(v.costoHist) + '</td>';
-  html += '<td class="col-extra" data-label="Serie"><span class="serie">' + escapeHtml(v.serie) + '</span></td>';
-  html += '<td data-label="Modelo">' + escapeHtml(v.modelo) + '</td>';
-  html += '<td class="col-extra" data-label="Color">' + escapeHtml(v.color) + '</td>';
-  html += '<td data-label="vs Baratito">' + badgeBaratito(v) + '</td>';
-  const gciaCls = (v.gciaVtaPesos || 0) < 0 ? 'gcia-neg' : 'gcia-pos';
-  html += '<td class="num ' + gciaCls + '" data-label="Gcia $">' + fmtPesos(v.gciaVtaPesos) + '</td>';
-  html += '<td class="num ' + gciaCls + '" data-label="Gcia %">' + fmtPct(v.gciaVtaPct != null ? v.gciaVtaPct * 100 : null) + '</td>';
-  html += '</tr>';
-  return html;
-}
-
-function badgeBaratito(v) {
-  const snap = (ventasData && ventasData.baratitoSnapshots) ? ventasData.baratitoSnapshots[String(v.preventaNum || '').trim()] : null;
-  if (!snap) {
-    // Snapshot todavía no calculado (loading o sin preventaNum)
-    if (!v.preventaNum) return '<span class="bar-badge bar-na" title="Sin # preventa">—</span>';
-    return '<span class="bar-badge bar-loading" title="Calculando contra oferta vigente...">…</span>';
-  }
-  if (snap.status === 'pre_feature') {
-    // PV histórica del baseline: no hay snapshot de la oferta original.
-    return '<span class="bar-badge bar-na" title="Histórica — sin oferta de referencia al momento de la venta">—</span>';
-  }
-  if (snap.status === 'sin_oferta') {
-    return '<span class="bar-badge bar-na" title="' + escapeHtml(snap.modelo) + ' no tenía oferta vigente al momento del snapshot">sin oferta</span>';
-  }
-  if (snap.status === 'baratito') {
-    return '<span class="bar-badge bar-eq" title="Cliente pagó ' + fmtPesos(snap.clientePago)
-      + ' vs baratito s/FYF ' + fmtPesos(snap.baratitoSinFyf) + ' · diferencia ' + fmtPesos(snap.diff) + '">baratito</span>';
-  }
-  if (snap.status === 'mejor') {
-    return '<span class="bar-badge bar-up" title="Cliente pagó ' + fmtPesos(snap.clientePago)
-      + ' vs baratito s/FYF ' + fmtPesos(snap.baratitoSinFyf) + '">mejor +' + fmtPesosCompact(snap.diff) + '</span>';
-  }
-  if (snap.status === 'peor') {
-    return '<span class="bar-badge bar-down" title="Cliente pagó ' + fmtPesos(snap.clientePago)
-      + ' vs baratito s/FYF ' + fmtPesos(snap.baratitoSinFyf) + '">peor −' + fmtPesosCompact(Math.abs(snap.diff)) + '</span>';
-  }
-  return '<span class="bar-badge bar-na">—</span>';
 }
 
 // Formato corto para badges: $120k, $1,2M
@@ -6402,8 +5435,10 @@ function _urlIncentivos(mesKey, fresh) {
 
 async function loadIncentivos(forzar) {
   // El matching cc/condiciones se hace server-side desde Supabase (tabla
-  // incentivos). Patentamientos sí se usa para el cruce por serie+PV.
-  if (!patentData) loadPatentamientos(false);
+  // incentivos). Patentamientos + ventas (Oversoft) se usan para el cruce
+  // serie/PV → modelo canónico en _findModeloPorSerie (subida de PDFs de NC).
+  if (!patentData)   loadPatentamientos(false);
+  if (!ventasOvData) loadVentasOv(false);
 
   // Conteo de pagos guardados (en background, para mostrar en la upload zone).
   _contarPagosVW().then(n => { totalPagosGuardados = n; renderIncentivos(); });
@@ -7017,23 +6052,18 @@ function _findModeloPorSerie(serie) {
       modeloDePatent = c.modelo || null;
     }
   }
-  // 1) Si tenemos PV, buscamos modelo canónico en ventas
-  if (pvDePatent && ventasData && Array.isArray(ventasData.ventas)) {
-    const v = ventasData.ventas.find(x => String(x.preventaNum).trim() === pvDePatent);
+  // 1) Si tenemos PV, buscamos modelo canónico en ventas (Oversoft+BT)
+  if (pvDePatent && ventasOvData && Array.isArray(ventasOvData.ventas)) {
+    const v = ventasOvData.ventas.find(x => String(x.preventaNum).trim() === pvDePatent);
     if (v && v.modelo) return v.modelo;
   }
   // 2) Match directo en ventas por serie
-  if (ventasData && Array.isArray(ventasData.ventas)) {
-    const v = ventasData.ventas.find(x => x.serie === s);
+  if (ventasOvData && Array.isArray(ventasOvData.ventas)) {
+    const v = ventasOvData.ventas.find(x => x.serie === s);
     if (v && v.modelo) return v.modelo;
   }
   // 3) Fallback: modelo de patentamientos (puede tener typos)
   if (modeloDePatent) return modeloDePatent;
-  // 4) Stock
-  if (stockData && Array.isArray(stockData.unidades)) {
-    const u = stockData.unidades.find(x => x.serie === s);
-    if (u) return u.unidad || u.modelo || null;
-  }
   return null;
 }
 
