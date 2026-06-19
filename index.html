@@ -1405,6 +1405,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
         <button class="subtab active" data-subtab="admventas"      onclick="setAdmSubtab('admventas')">Adm. ventas</button>
         <button class="subtab"        data-subtab="patentamientos" onclick="setAdmSubtab('patentamientos')">Patentamientos</button>
         <button class="subtab"        data-subtab="trimestre"      onclick="setAdmSubtab('trimestre')">Trimestre</button>
+        <button class="subtab"        data-subtab="gastos"         onclick="setAdmSubtab('gastos')">Gastos / Conciliación</button>
       </div>
 
       <div class="subpanel active" id="subpanelAdmVentasMain">
@@ -1435,6 +1436,18 @@ table.patent-tbl.resumida .col-extra { display: none; }
           </div>
         </div>
         <div id="trimestreContent"></div>
+      </div>
+
+      <div class="subpanel" id="subpanelAdmVentasGastos">
+        <div class="toolbar">
+          <div class="updated" id="updatedAtGastos">Gasto real por PV (lo que cargó el sistema) conciliado contra sellados por provincia y quebranto VWFS. Tocá una PV para ver el detalle.</div>
+          <div class="actions">
+            <select id="gastosMes" onchange="loadConciliaGastos(true)" style="padding:6px 8px;border:1px solid var(--border,#ccc);border-radius:6px"></select>
+            <button class="refresh" onclick="loadConciliaGastos(true)">Actualizar</button>
+          </div>
+        </div>
+        <div id="gastosResumen" style="margin-bottom:10px"></div>
+        <div id="gastosContent"><div class="empty">Cargando…</div></div>
       </div>
     </section>
 
@@ -3553,12 +3566,125 @@ function setAdmSubtab(name) {
   document.getElementById('subpanelAdmVentasMain').classList.toggle('active',      name === 'admventas');
   document.getElementById('subpanelAdmVentasPatent').classList.toggle('active',    name === 'patentamientos');
   document.getElementById('subpanelAdmVentasTrimestre').classList.toggle('active', name === 'trimestre');
+  document.getElementById('subpanelAdmVentasGastos').classList.toggle('active',    name === 'gastos');
   if (name === 'admventas'      && !admVentasData) loadAdmVentas(false);
   if (name === 'patentamientos' && !patentData)    loadPatentamientos(false);
   if (name === 'trimestre') {
     if (!patentData) loadPatentamientos(false);  // al llegar la data, el hook de
     else             renderTrimestre();          // loadPatentamientos pinta Trimestre.
   }
+  if (name === 'gastos' && !gastosData) loadConciliaGastos(false);
+}
+
+// ===================== GASTOS / CONCILIACIÓN por PV =====================
+let gastosData = null;
+const gastosAbiertos = new Set();   // PVs con el detalle desplegado (sobrevive re-render)
+function _gMoney(n) { return (Math.round(Number(n) || 0)).toLocaleString('es-AR'); }
+function _gMesOpciones() {
+  // últimos 8 meses desde 2026-06 (inicio del control) hasta el mes actual
+  const out = [], now = new Date();
+  let y = now.getFullYear(), m = now.getMonth() + 1;
+  for (let i = 0; i < 12; i++) {
+    const k = y + '-' + ('0' + m).slice(-2);
+    if (k < '2026-06') break;
+    out.push(k);
+    m--; if (m === 0) { m = 12; y--; }
+  }
+  return out;
+}
+async function loadConciliaGastos(forzar) {
+  const sel = document.getElementById('gastosMes');
+  if (sel && !sel.options.length) {
+    sel.innerHTML = _gMesOpciones().map(k => '<option value="' + k + '">' + k + '</option>').join('');
+  }
+  const mes = (sel && sel.value) || _gMesOpciones()[0];
+  const cont = document.getElementById('gastosContent');
+  if (forzar || !gastosData || gastosData.mes !== mes) cont.innerHTML = '<div class="empty">Cargando…</div>';
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=conciliagastos&mes=' + mes + (forzar ? '&fresh=1' : '');
+    const res = await fetch(url);
+    const d = await res.json();
+    if (d.error) { cont.innerHTML = '<div class="empty">Error: ' + escapeHtml(d.error) + '</div>'; return; }
+    gastosData = d;
+    renderConciliaGastos();
+  } catch (e) {
+    cont.innerHTML = '<div class="empty">Error de red: ' + escapeHtml(String(e)) + '</div>';
+  }
+}
+function toggleGasto(pv) {
+  if (gastosAbiertos.has(pv)) gastosAbiertos.delete(pv); else gastosAbiertos.add(pv);
+  renderConciliaGastos();
+}
+function renderConciliaGastos() {
+  const d = gastosData; if (!d) return;
+  const up = document.getElementById('updatedAtGastos');
+  if (up && d.updatedAt) up.textContent = 'Gasto real por PV conciliado · actualizado ' + new Date(d.updatedAt).toLocaleString('es-AR') + '. Tocá una PV para ver el detalle.';
+  // Resumen
+  document.getElementById('gastosResumen').innerHTML =
+    '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
+    '<div style="flex:1;min-width:130px;background:#f5f7fb;border-radius:8px;padding:10px 12px"><div style="font-size:12px;color:#666">Gasto total del mes</div><div style="font-size:18px;font-weight:700">$' + _gMoney(d.sumGastos) + '</div></div>' +
+    '<div style="flex:1;min-width:130px;background:#f5f7fb;border-radius:8px;padding:10px 12px"><div style="font-size:12px;color:#666">PVs</div><div style="font-size:18px;font-weight:700">' + d.total + ' <span style="font-size:12px;font-weight:400;color:#888">(' + d.conAlerta + ' con alerta)</span></div></div>' +
+    '<div style="flex:1;min-width:130px;background:' + (d.cobradoDeMas > 0 ? '#fdecea' : '#f5f7fb') + ';border-radius:8px;padding:10px 12px"><div style="font-size:12px;color:#666">Cobrado de más</div><div style="font-size:18px;font-weight:700;color:' + (d.cobradoDeMas > 0 ? '#c0392b' : '#333') + '">$' + _gMoney(d.cobradoDeMas) + '</div></div>' +
+    '<div style="flex:1;min-width:130px;background:' + (d.faltaCobrar > 0 ? '#fff5e6' : '#f5f7fb') + ';border-radius:8px;padding:10px 12px"><div style="font-size:12px;color:#666">Falta cobrar</div><div style="font-size:18px;font-weight:700;color:' + (d.faltaCobrar > 0 ? '#b9770e' : '#333') + '">$' + _gMoney(d.faltaCobrar) + '</div></div>' +
+    '</div>';
+  if (!d.filas.length) { document.getElementById('gastosContent').innerHTML = '<div class="empty">No hay PVs facturadas en el mes.</div>'; return; }
+  let html = '<table style="width:100%;border-collapse:collapse;font-size:13px">';
+  html += '<thead><tr style="text-align:left;border-bottom:2px solid #ddd;color:#555">' +
+    '<th style="padding:6px 8px"></th><th style="padding:6px 8px">PV</th><th style="padding:6px 8px">Provincia</th><th style="padding:6px 8px">Patenta</th>' +
+    '<th style="padding:6px 8px;text-align:right">Total gasto</th><th style="padding:6px 8px">Conciliación</th></tr></thead><tbody>';
+  d.filas.forEach(f => {
+    const abierto = gastosAbiertos.has(f.pv);
+    const alerta = f.estado === 'alerta';
+    const estadoHtml = alerta
+      ? '<span style="color:#c0392b;font-weight:600">⚠ ' + f.alertas.length + ' alerta' + (f.alertas.length > 1 ? 's' : '') + '</span>'
+      : '<span style="color:#27ae60">✓ OK</span>';
+    html += '<tr onclick="toggleGasto(\'' + f.pv + '\')" style="cursor:pointer;border-bottom:1px solid #eee;' + (alerta ? 'background:#fff8f7' : '') + '">' +
+      '<td style="padding:6px 8px;color:#999">' + (abierto ? '▾' : '▸') + '</td>' +
+      '<td style="padding:6px 8px;font-weight:600">' + escapeHtml(f.pv) + '</td>' +
+      '<td style="padding:6px 8px">' + escapeHtml(f.prov || '—') + '</td>' +
+      '<td style="padding:6px 8px">' + (f.patenta === 'TG' ? 'TG' : '<span style="color:#888">cliente</span>') + '</td>' +
+      '<td style="padding:6px 8px;text-align:right">$' + _gMoney(f.total) + '</td>' +
+      '<td style="padding:6px 8px">' + estadoHtml + '</td></tr>';
+    if (abierto) {
+      html += '<tr><td colspan="6" style="padding:0 8px 12px 30px;background:#fafbfc">' + _gastoDetalleHtml(f) + '</td></tr>';
+    }
+  });
+  html += '</tbody></table>';
+  document.getElementById('gastosContent').innerHTML = html;
+}
+function _gastoDetalleHtml(f) {
+  let h = '';
+  if (f.alertas && f.alertas.length) {
+    h += '<div style="margin:8px 0;padding:8px 10px;background:#fdecea;border-radius:6px;color:#922">';
+    h += f.alertas.map(a => '⚠ ' + escapeHtml(a)).join('<br>');
+    h += '</div>';
+  }
+  // desglose por grupo
+  const g = f.desglose || {};
+  h += '<div style="margin:6px 0;color:#666;font-size:12px">Base $' + _gMoney(g.base) + ' · Patentamiento $' + _gMoney(g.patent) + ' · Prenda $' + _gMoney(g.prenda) + ' · Financiación $' + _gMoney(g.financ) + '</div>';
+  if (f.fin) {
+    h += '<div style="margin:6px 0;color:#555;font-size:12px">Financia: <b>' + escapeHtml(f.fin.financiador || '—') + '</b> · monto $' + _gMoney(f.fin.montoFin) + ' · quebranto ' + f.fin.pct + '% ' + (f.fin.ok ? '<span style="color:#27ae60">✓ plan válido</span>' : '<span style="color:#c0392b">⚠ revisar</span>') + '</div>';
+  }
+  // detalle por concepto
+  h += '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:6px">';
+  h += '<thead><tr style="text-align:left;color:#888;border-bottom:1px solid #ddd"><th style="padding:3px 6px">Concepto</th><th style="padding:3px 6px;text-align:right">Cobrado</th><th style="padding:3px 6px;text-align:right">Correcto</th><th style="padding:3px 6px;text-align:right">Diferencia</th></tr></thead><tbody>';
+  f.lineas.forEach(l => {
+    const malo = l.estado === 'mal' || l.estado === 'falta';
+    const revisar = l.estado === 'revisar';
+    const difTxt = l.dif ? (l.dif > 0 ? '+' : '') + _gMoney(l.dif) : '';
+    const difColor = l.dif > 0 ? '#c0392b' : (l.dif < 0 ? '#b9770e' : '#999');
+    h += '<tr style="border-bottom:1px solid #f0f0f0;' + (malo ? 'background:#fdecea' : (revisar ? 'background:#fff8ec' : '')) + '">' +
+      '<td style="padding:3px 6px">' + escapeHtml(l.concepto) + (malo ? ' <b style="color:#c0392b">●</b>' : '') + '</td>' +
+      '<td style="padding:3px 6px;text-align:right">$' + _gMoney(l.cobrado) + '</td>' +
+      '<td style="padding:3px 6px;text-align:right;color:#666">' + (l.correcto != null ? '$' + _gMoney(l.correcto) : '') + '</td>' +
+      '<td style="padding:3px 6px;text-align:right;font-weight:600;color:' + difColor + '">' + difTxt + '</td></tr>';
+  });
+  h += '</tbody></table>';
+  if (f.difFavor) {
+    h += '<div style="margin-top:6px;text-align:right;font-weight:600;color:' + (f.difFavor > 0 ? '#c0392b' : '#b9770e') + '">' +
+      (f.difFavor > 0 ? 'Cobró de más: $' + _gMoney(f.difFavor) : 'Falta cobrar: $' + _gMoney(-f.difFavor)) + '</div>';
+  }
+  return h;
 }
 
 // =======================================================================

@@ -85,6 +85,7 @@ function doGet(e) {
     if (tipo === 'motor')           return jsonResponse(_cached('motor', CACHE_TTL_SEC, fresh, getBaratitoMotor));     // MOTOR: calcula desde Supabase (no la planilla)
     if (tipo === 'snapshotbt')      return jsonResponse(snapshotBTMensual(String(params.mes || '') || null, String(params.hoja || '') || null, String(params.dry || '') === '1', true)); // sync MANUAL de la BT a Supabase (force=true; el automático está apagado)
     if (tipo === 'admventas')       return jsonResponse(_cached('admventas', CACHE_TTL_SEC, fresh, getAdmVentas)); // adm de ventas: Oversoft + campos manuales
+    if (tipo === 'conciliagastos')  return jsonResponse(_cached('conciliagastos_' + (params.mes || ''), CACHE_TTL_SEC, fresh, () => getConciliacionGastos(params))); // gastos reales por PV + conciliación (sellado/quebranto/faltantes)
     if (tipo === 'migraradmventas') return jsonResponse(migrarAdmVentasDesdeHoja()); // una-vez: vuelca lo ya cargado en la hoja a adm_ventas
     if (tipo === 'comprasvw')       return jsonResponse(_cached('comprasvw', CACHE_TTL_SEC, fresh, getComprasVW)); // compras a VW: carga Valeria + conciliación Oversoft
     if (tipo === 'migrarcomprasvw') return jsonResponse(migrarComprasVW()); // una-vez: vuelca lo de saldos (>=2026) a compras_vw, conciliado con Oversoft
@@ -708,6 +709,150 @@ function getAdmVentas() {
     };
   });
   return { ventas: ventas, total: ventas.length, desde: ADM_VENTAS_DESDE, updatedAt: new Date().toISOString() };
+}
+
+// ===================== CONCILIACIÓN DE GASTOS por PV =====================
+// Lee el gasto REAL que cargó el sistema: el comprobante ServiciosA/B con la
+// MISMA referencia ('PV 0XXXX/1') que el AutomovilesA/B de la venta, y su detalle
+// por concepto (comprobantesdetallesgastos). Lo concilia contra:
+//  · la tasa de sellado de la provincia (SELLO_INSC, base = arancel ÷ su %),
+//  · el quebranto del plan VWFS (portal_campanas) sobre el monto financiado real
+//    (detcash, renglón FIN*),
+//  · gastos faltantes (informe inhibido $65.000 cuando financian — solo PVs nuevas).
+// Solo sucursal 1 (VW). Control vigente desde GASTOS_DESDE.
+const GASTOS_DESDE     = '2026-06-01';
+const INHIBIDO_DESDE   = '2026-06-19';  // el informe inhibido se exige en PVs nuevas (>= esta fecha)
+const INFORME_INHIBIDO = 65000;
+const SELLO_INSC = {
+  'CAPITAL FEDERAL': 0.03, 'BUENOS AIRES': 0.025, 'CATAMARCA': 0.01, 'CHACO': 0.01,
+  'CHUBUT': 0.02, 'CORDOBA': 0.015, 'CORRIENTES': 0.01, 'ENTRE RIOS': 0.0225,
+  'FORMOSA': 0.03, 'JUJUY': 0.02, 'LA PAMPA': 0.03, 'LA RIOJA': 0.0075,
+  'MENDOZA': 0.03, 'MISIONES': 0.03, 'NEUQUEN': 0.014, 'RIO NEGRO': 0.02,
+  'SALTA': 0.025, 'SAN JUAN': 0, 'SAN LUIS': 0.015, 'SANTA CRUZ': 0.03,
+  'SANTA FE': 0.012, 'SANTIAGO DEL ESTERO': 0, 'TIERRA DEL FUEGO': 0.01, 'TUCUMAN': 0,
+};
+function _gIva(l)  { return (Number(l.montogravado) || 0) * 1.21 + (Number(l.montoexento) || 0); }
+function _gNeto(l) { return (Number(l.montogravado) || 0) + (Number(l.montoexento) || 0); }
+function _gCod(c)  { const m = String(c || '').match(/^(\d{2})/); return m ? Number(m[1]) : 0; }
+function _gRate(c) { const m = String(c || '').match(/([0-9][0-9.,]*)\s*%/); return m ? Number(m[1].replace(',', '.')) / 100 : null; }
+
+function getConciliacionGastos(params) {
+  const mes = String((params && params.mes) || '').match(/^\d{4}-\d{2}$/) ? params.mes : _yyyyMm(new Date());
+  const desde = (mes + '-01') < GASTOS_DESDE ? GASTOS_DESDE : mes + '-01';
+  const y = Number(mes.slice(0, 4)), mo = Number(mes.slice(5, 7));
+  const nm = (mo === 12) ? (y + 1) + '-01-01' : y + '-' + ('0' + (mo + 1)).slice(-2) + '-01';
+  const ovs = (path) => {
+    const res = UrlFetchApp.fetch(OVERSOFT_URL + path, { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true });
+    return res.getResponseCode() < 300 ? JSON.parse(res.getContentText()) : [];
+  };
+  const esSuc1 = (ref) => ref.indexOf('PV ') === 0 && /\/1$/.test(ref);
+
+  // 1) comprobante de la venta (auto) -> provincia + fecha por PV (sucursal 1)
+  const autos = ovs('/comprobantes?tipo=ilike.Automoviles*&fecha=gte.' + desde + '&fecha=lt.' + nm + '&select=referencia,provincia,fecha,preciolistaneto&limit=3000');
+  const meta = {};
+  autos.forEach((r) => {
+    const ref = String(r.referencia || ''); if (!esSuc1(ref)) return;
+    const pv = ref.replace('PV ', '');
+    if (!meta[pv]) meta[pv] = { prov: String(r.provincia || ''), fecha: String(r.fecha || '').slice(0, 10), lista: Number(r.preciolistaneto) || 0 };
+  });
+  // 2) comprobante de gastos (Servicios) -> dedup por PV (mayor total, no anulado)
+  const serv = ovs('/comprobantes?tipo=ilike.Servicios*&fecha=gte.' + desde + '&fecha=lt.' + nm + '&anulada=eq.false&select=comprobanteid,referencia,total&limit=4000');
+  const gComp = {};
+  serv.forEach((r) => {
+    const ref = String(r.referencia || ''); if (!esSuc1(ref)) return;
+    const pv = ref.replace('PV ', ''), t = Number(r.total) || 0;
+    if (!gComp[pv] || t > gComp[pv].total) gComp[pv] = { id: r.comprobanteid, total: t };
+  });
+  // 3) tasas de quebranto válidas (planes VWFS). portal_campanas tiene RLS: el anon
+  // no lo lee, así que va con la service key (la misma de las escrituras).
+  let qbRates = [];
+  try {
+    const svc = PropertiesService.getScriptProperties().getProperty('SUPA_SERVICE');
+    if (svc) {
+      const res = UrlFetchApp.fetch(SUPA_URL + '/portal_campanas?select=quebranto_pct', { headers: { apikey: svc, Authorization: 'Bearer ' + svc }, muteHttpExceptions: true });
+      if (res.getResponseCode() < 300) qbRates = JSON.parse(res.getContentText()).map((c) => Number(c.quebranto_pct) || 0);
+    }
+  } catch (e) {}
+
+  const filas = [];
+  let totDeMas = 0, totFaltan = 0;
+  Object.keys(gComp).forEach((pv) => {
+    const m = meta[pv] || { prov: '', fecha: '', lista: 0 };
+    const det = ovs('/comprobantesdetallesgastos?comprobanteid=eq.' + gComp[pv].id + '&select=concepto,montogravado,montoexento');
+    let base = 0, patent = 0, prenda = 0, financ = 0;
+    let arMonto = 0, arRate = null, seMonto = 0, q21Neto = 0, tieneInsPrenda = false, tieneSelloPrenda = false, tieneInhib = false;
+    const lineas = [];
+    det.forEach((l) => {
+      const cod = _gCod(l.concepto), iva = _gIva(l), neto = _gNeto(l);
+      if (cod === 12 || cod === 13) { arMonto = neto; arRate = _gRate(l.concepto); }
+      if (cod >= 14 && cod <= 16) seMonto = neto;
+      if (cod === 18) tieneInsPrenda = true;
+      if (cod === 20) tieneSelloPrenda = true;
+      if (cod === 21) q21Neto += neto;
+      if (/inhib/i.test(String(l.concepto))) tieneInhib = true;
+      if (cod >= 9 && cod <= 16) patent += iva;
+      else if (cod >= 17 && cod <= 20) prenda += iva;
+      else if (cod === 21) financ += iva;
+      else base += iva;
+      lineas.push({ cod: cod, concepto: String(l.concepto || ''), cobrado: Math.round(iva), correcto: null, dif: 0, estado: 'ok' });
+    });
+    const prov = m.prov.toUpperCase();
+    const patenta = patent > 1 ? 'TG' : 'CLIENTE';
+    const expRate = SELLO_INSC.hasOwnProperty(prov) ? SELLO_INSC[prov] : null;
+    const baseImp = arRate ? arMonto / arRate : 0;
+    const alertas = [];
+
+    // PUNTO 4 — sellado vs tasa de la provincia
+    if (patenta === 'TG' && seMonto > 0 && baseImp > 0) {
+      const ln = lineas.filter((x) => x.cod >= 14 && x.cod <= 16)[0];
+      if (expRate === null) { if (ln) ln.estado = 'revisar'; alertas.push('Provincia ' + m.prov + ' sin tasa de referencia'); }
+      else {
+        const correcto = Math.round(baseImp * expRate);
+        const dif = Math.round(seMonto - correcto);   // + = cobró de más
+        if (ln) { ln.correcto = correcto; ln.dif = dif; ln.estado = (Math.abs(dif) < Math.max(1000, baseImp * 0.0005)) ? 'ok' : 'mal'; }
+        if (ln && ln.estado === 'mal') { alertas.push('Sellado ' + (Math.round((seMonto / baseImp) * 1000) / 10) + '% vs ' + (expRate * 100) + '% (' + (dif > 0 ? 'cobró de más' : 'cobró de menos') + ' ' + Math.abs(dif).toLocaleString('es-AR') + ')'); if (dif > 0) totDeMas += dif; else totFaltan += -dif; }
+      }
+    }
+    // PUNTO 8 — quebranto vs plan VWFS (sobre monto financiado real de detcash)
+    let fin = null;
+    if (financ > 0) {
+      let montoFin = 0, financiador = '';
+      const dc = ovs('/detcash?referencia=eq.' + encodeURIComponent('PV ' + pv) + '&motivo=ilike.FIN*&select=importe,motivo');
+      dc.forEach((r) => { const imp = Number(r.importe) || 0; if (imp > 0) { montoFin += imp; const fi = _finInfo(r.motivo); if (fi) financiador = fi.nombre; } });
+      const impliedQb = montoFin > 0 ? q21Neto / montoFin : 0;
+      const planOk = qbRates.some((q) => Math.abs(q / 100 - impliedQb) < 0.003);
+      const esFijoSinQb = q21Neto <= 120000;
+      const ok = planOk || esFijoSinQb;
+      fin = { montoFin: Math.round(montoFin), financiador: financiador, quebrantoNeto: Math.round(q21Neto), pct: Math.round(impliedQb * 1000) / 10, ok: ok };
+      const lnq = lineas.filter((x) => x.cod === 21)[0];
+      if (lnq && !ok) { lnq.estado = 'revisar'; alertas.push('Quebranto ' + fin.pct + '% no coincide con ningún plan VWFS'); }
+    }
+    // PUNTO 5 — prenda incompleta (sellado de prenda sin inscripción)
+    if (tieneSelloPrenda && !tieneInsPrenda) alertas.push('Sellado de prenda sin inscripción de prenda');
+    // PUNTO 7 — informe inhibido (solo PVs nuevas que financian)
+    if (financ > 0 && m.fecha >= INHIBIDO_DESDE && !tieneInhib) {
+      lineas.push({ cod: 99, concepto: 'Informe inhibido (falta)', cobrado: 0, correcto: INFORME_INHIBIDO, dif: -INFORME_INHIBIDO, estado: 'falta' });
+      alertas.push('Falta informe inhibido $' + INFORME_INHIBIDO.toLocaleString('es-AR'));
+      totFaltan += INFORME_INHIBIDO;
+    }
+
+    const difFavor = lineas.reduce((a, x) => a + (Number(x.dif) || 0), 0);
+    filas.push({
+      pv: pv, prov: m.prov, fecha: m.fecha, patenta: patenta,
+      total: Math.round(base + patent + prenda + financ),
+      desglose: { base: Math.round(base), patent: Math.round(patent), prenda: Math.round(prenda), financ: Math.round(financ) },
+      fin: fin, lineas: lineas, alertas: alertas, difFavor: Math.round(difFavor),
+      estado: alertas.length ? 'alerta' : 'ok',
+    });
+  });
+  filas.sort((a, b) => a.pv.localeCompare(b.pv));
+  return {
+    mes: mes, filas: filas, total: filas.length,
+    conAlerta: filas.filter((f) => f.estado === 'alerta').length,
+    sumGastos: filas.reduce((a, f) => a + f.total, 0),
+    cobradoDeMas: Math.round(totDeMas), faltaCobrar: Math.round(totFaltan),
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 // ====== VENTAS desde Oversoft + margen desde la BT (reemplazo de getVentas) ======
