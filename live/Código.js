@@ -2887,58 +2887,43 @@ function _getPagosVWSheet() {
 }
 
 function getPagosVW(params) {
-  const sh = _getPagosVWSheet();
-  const lastRow = sh.getLastRow();
-  if (lastRow < 2) return { pagos: [], total: 0 };
-  const data = sh.getRange(2, 1, lastRow - 1, PAGOS_VW_HEADERS.length).getValues();
-  const pagos = data.map(r => {
-    const o = {};
-    for (let i = 0; i < PAGOS_VW_HEADERS.length; i++) o[PAGOS_VW_HEADERS[i]] = r[i];
-    return o;
-  }).filter(p => p.nc_num);
-  // Filtro opcional por mes
+  // NCs de VW desde Supabase (tabla pagos_vw), ya no del Sheet.
   const mes = String(params.mes || '');
-  const filtrados = mes ? pagos.filter(p => p.mes_incentivo === mes) : pagos;
-  return { pagos: filtrados, total: filtrados.length };
+  const filtro = mes ? '&mes_incentivo=eq.' + encodeURIComponent(mes) : '';
+  const pagos = _supaGet('/pagos_vw?select=' + PAGOS_VW_HEADERS.join(',') + filtro + '&limit=20000');
+  return { pagos: pagos, total: pagos.length };
 }
 
 function savePagosVW(pagos) {
   if (!Array.isArray(pagos) || !pagos.length) return { guardados: 0, duplicados: 0 };
-  const sh = _getPagosVWSheet();
-  const lastRow = sh.getLastRow();
+  // NCs ya existentes en Supabase (para reportar duplicados, igual que antes).
   const existentes = new Set();
-  if (lastRow >= 2) {
-    const nums = sh.getRange(2, 1, lastRow - 1, 1).getValues();
-    for (const r of nums) if (r[0]) existentes.add(String(r[0]).trim());
-  }
+  for (const r of _supaGet('/pagos_vw?select=nc_num&limit=20000')) existentes.add(String(r.nc_num).trim());
   const ahora = new Date().toISOString();
-  const filasNuevas = [];
+  const rows = [];
   let duplicados = 0;
+  const vistos = new Set();
   for (const p of pagos) {
     const ncNum = String(p.ncNum || '').trim();
-    if (!ncNum) continue;
+    if (!ncNum || vistos.has(ncNum)) continue;
+    vistos.add(ncNum);
     if (existentes.has(ncNum)) { duplicados++; continue; }
-    existentes.add(ncNum);
-    filasNuevas.push([
-      "'" + ncNum,                                    // ' fuerza texto, evita autoformato científico
-      p.fechaNc || '',
-      "'" + (p.serie || ''),                          // texto, las series suelen tener ceros adelante
-      "'" + (p.vin || ''),
-      p.modelo || '',
-      p.tipoDetectado || 'desconocido',
-      Number(p.montoNeto) || 0,
-      Number(p.montoTotal) || 0,
-      "'" + (p.mesIncentivo || ''),                   // '2026-04' como texto, no como fecha
-      p.textoTipo || '',
-      ahora,
-    ]);
+    rows.push({
+      nc_num: ncNum, fecha_nc: p.fechaNc || '', serie: String(p.serie || ''), vin: String(p.vin || ''),
+      modelo: p.modelo || '', tipo_detectado: p.tipoDetectado || 'desconocido',
+      monto_neto: Number(p.montoNeto) || 0, monto_total: Number(p.montoTotal) || 0,
+      mes_incentivo: String(p.mesIncentivo || ''), texto_tipo: p.textoTipo || '', importado_at: ahora,
+    });
   }
-  if (filasNuevas.length) {
-    sh.getRange(sh.getLastRow() + 1, 1, filasNuevas.length, PAGOS_VW_HEADERS.length).setValues(filasNuevas);
+  if (rows.length) {
+    const h = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' };
+    for (let i = 0; i < rows.length; i += 300) {
+      const res = UrlFetchApp.fetch(SUPA_URL + '/pagos_vw?on_conflict=nc_num', { method: 'post', headers: h, payload: JSON.stringify(rows.slice(i, i + 300)), muteHttpExceptions: true });
+      if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200), guardados: i };
+    }
   }
-  // Invalidar cache de incentivos así la próxima request muestra los nuevos
   try { CacheService.getScriptCache().removeAll(['incentivos_', 'incentivos__']); } catch (e) {}
-  return { guardados: filasNuevas.length, duplicados, total: existentes.size };
+  return { guardados: rows.length, duplicados: duplicados, total: existentes.size + rows.length };
 }
 
 function deletePagoVW(ncNum) {
@@ -2960,32 +2945,15 @@ function deletePagoVW(ncNum) {
 // con la suma de los pagos de cada tipo para esa serie en el mes_incentivo.
 // Si una unidad cobra el mismo tipo en 2 NCs distintos, se suma.
 function _pagosPorSerieDelMes(ss, mesKey) {
+  // {serie: {tipo: monto_total sumado}} para el mes, desde Supabase (pagos_vw).
+  // El param ss queda por compatibilidad de firma (ya no se usa el Sheet).
   const out = {};
-  const sh = ss.getSheetByName('pagos_vw');
-  if (!sh) return out;
-  const lastRow = sh.getLastRow();
-  if (lastRow < 2) return out;
-  const data = sh.getRange(2, 1, lastRow - 1, PAGOS_VW_HEADERS.length).getValues();
-  // Index col por header
-  const idxSerie = PAGOS_VW_HEADERS.indexOf('serie');
-  const idxTipo  = PAGOS_VW_HEADERS.indexOf('tipo_detectado');
-  const idxTotal = PAGOS_VW_HEADERS.indexOf('monto_total');   // con IVA, lo que matchea BT
-  const idxMes   = PAGOS_VW_HEADERS.indexOf('mes_incentivo');
-  for (const r of data) {
-    // mes_incentivo puede venir como string '2026-04' o como Date si Sheets lo
-    // auto-convirtió. Normalizamos a YYYY-MM en ambos casos.
-    let mesCelda = '';
-    if (r[idxMes] instanceof Date) {
-      mesCelda = r[idxMes].getFullYear() + '-' + String(r[idxMes].getMonth() + 1).padStart(2, '0');
-    } else {
-      mesCelda = String(r[idxMes] || '').trim().substring(0, 7);  // recorta si venía con día/hora
-    }
-    if (mesCelda !== mesKey) continue;
-    const serie = String(r[idxSerie] || '').trim();
-    const tipo  = String(r[idxTipo] || '').trim();
+  for (const r of _supaGet('/pagos_vw?select=serie,tipo_detectado,monto_total&mes_incentivo=eq.' + encodeURIComponent(mesKey) + '&limit=20000')) {
+    const serie = String(r.serie || '').trim();
+    const tipo  = String(r.tipo_detectado || '').trim();
     if (!serie || !tipo) continue;
     if (!out[serie]) out[serie] = {};
-    out[serie][tipo] = (out[serie][tipo] || 0) + (Number(r[idxTotal]) || 0);
+    out[serie][tipo] = (out[serie][tipo] || 0) + (Number(r.monto_total) || 0);
   }
   return out;
 }
