@@ -1450,27 +1450,27 @@ function _setSecret(body) {
   return { ok: true, nombre: nombre };
 }
 
-// Precios de la competencia desde "Resumen Competencia 2" (misma planilla madre;
-// la genera el Apps Script del Sheet Tito scrapeando elcerokm + espasa).
-// Cols: A=Tu Modelo · D=ElCeroKm (c/fyf) · G=Espasa (sin fyf) · H=Espasa (+fyf) · K=actualizado.
-// Para comparar contra nuestro precio (c/FYF) usar D y H.
+// Precios de la competencia desde SUPABASE (tabla competencia_precios, que llena
+// el scraper de portal-precios: ElCeroKm + Espasa). Reemplaza la lectura de la
+// hoja "Resumen Competencia 2" (verificado 19-jun: 47/47 modelos matchean y los
+// valores de ElCeroKm son idénticos). Clave por _ntrim(modelo_tga); el motor
+// busca por _ntrim(nombre_bt)/_ntrim(nombre_corto).
 function _readCompetencia() {
   const out = { porModelo: {}, actualizado: null };
   try {
-    const sh = SpreadsheetApp.openById(MADRE_ID).getSheetByName('Resumen Competencia 2');
-    if (!sh) return out;
-    const last = sh.getLastRow();
-    if (last < 2) return out;
-    const v = sh.getRange(2, 1, last - 1, 11).getValues();
-    for (const r of v) {
-      const k = _ntrim(r[0]);
+    for (const r of _supaGet('/competencia_precios?select=modelo_tga,fuente,precio,updated_at')) {
+      const k = _ntrim(r.modelo_tga);
       if (!k) continue;
-      const el0km = Number(r[3]) || 0;
-      const espasaFyf = Number(r[7]) || 0;
-      if (el0km || espasaFyf) out.porModelo[k] = { el0km: el0km, espasaFyf: espasaFyf };
-      if (!out.actualizado && r[10]) out.actualizado = String(r[10]);
+      if (!out.porModelo[k]) out.porModelo[k] = { el0km: 0, espasaFyf: 0 };
+      const p = Number(r.precio) || 0;
+      if (r.fuente === 'elcerokm') out.porModelo[k].el0km = p;
+      else if (r.fuente === 'espasa') out.porModelo[k].espasaFyf = p;
+      if (r.updated_at && (!out.actualizado || r.updated_at > out.actualizado)) out.actualizado = r.updated_at;
     }
   } catch (e) {}
+  for (const k in out.porModelo) {
+    if (!out.porModelo[k].el0km && !out.porModelo[k].espasaFyf) delete out.porModelo[k];
+  }
   return out;
 }
 
@@ -1500,7 +1500,7 @@ function getBaratitoMotor() {
   const precByNc = btPorMes[mesUsado];
 
   // 2) catálogo, 3) incentivos de TODOS los meses, 4) dto
-  const cat = _supaGet('/catalogo_modelos?select=codigo,nombre_corto,nombre_bt,familia&activo=eq.true');
+  const cat = _supaGet('/catalogo_modelos?select=codigo,nombre_corto,nombre_bt,familia&activo=eq.true&order=orden.asc.nullslast,nombre_corto.asc');
   const incPorMes = {};  // mes → nc → {tipo: civa}
   const incDetPorMes = {};  // mes → nc → [ {tipo, montoCiva, montoSiva, condicion, circular} ]  (para mostrar de qué circular viene cada incentivo)
   for (const r of _supaGet('/incentivos?select=mes,nombre_corto,tipo,monto_civa,monto_siva,condicion,circular')) {
@@ -1611,22 +1611,9 @@ function getBaratitoMotor() {
       codigo:        c.codigo, familia: c.familia,
     });
   }
-  // Orden de la PLANILLA (solo cosmético, pedido de Fer 11-jun): mismos puestos
-  // que la col B de "Actual BT" en la madre. Modelos que no figuran van al final
-  // manteniendo su orden relativo. Si la madre no responde, queda el orden actual.
-  try {
-    const sh = SpreadsheetApp.openById(MADRE_ID).getSheetByName('Actual BT');
-    const filas = sh.getRange(3, 2, Math.max(1, sh.getLastRow() - 2), 1).getValues();
-    const ordenBt = {};
-    let pos = 0;
-    for (const f of filas) {
-      const k = _ntrim(f[0]);
-      if (k && ordenBt[k] === undefined) ordenBt[k] = pos++;
-    }
-    out.forEach((m, i) => { m._ord = (ordenBt[_ntrim(m.modelo)] !== undefined) ? ordenBt[_ntrim(m.modelo)] : 9999 + i; });
-    out.sort((a, b) => a._ord - b._ord);
-    out.forEach(m => { delete m._ord; });
-  } catch (e) {}
+  // Orden: ya viene del catálogo (catalogo_modelos.orden, congelado en Supabase
+  // desde el orden de Baratito). `out` se arma iterando `cat` ya ordenado, así
+  // que no hace falta leer "Actual BT" (antes se leía la madre para esto).
 
   let stockCatalogado = 0;
   for (const m of out) stockCatalogado += (Number(m.stock) || 0);
