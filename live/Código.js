@@ -62,6 +62,7 @@ function doGet(e) {
   const fresh = String(params.fresh || '') === '1';
   try {
     if (tipo === 'stock')           return jsonResponse(_cached('stock',          CACHE_TTL_SEC, fresh, getStock));
+    if (tipo === 'stockhist')       return jsonResponse(getStockHist());          // monto/fecha/color/nombre históricos congelados (para Stock Oversoft)
     if (tipo === 'ventas')          return jsonResponse(_cached('ventas',         CACHE_TTL_SEC, fresh, getVentas));
     if (tipo === 'ventasv2')        return jsonResponse(getVentasV2());           // ventas: mes actual por fórmula (Oversoft+BT) + meses cerrados congelados (ventas_hist)
     if (tipo === 'importarventashist') return jsonResponse(importarVentasHist());  // una-vez/re-ejecutable: congela los resultados de la hoja PVs (meses cerrados)
@@ -1945,6 +1946,13 @@ function _testSaldosCompras() {
 // =======================================================================
 // STOCK
 // =======================================================================
+// Datos históricos congelados (monto/fecha/color/nombre) de las unidades que
+// estaban en la planilla. Se usan como respaldo en el Stock Oversoft cuando
+// Compras VW (Valeria) no tiene el dato. Reemplaza la lectura viva de la hoja.
+function getStockHist() {
+  return { unidades: _supaGet('/stock_hist?select=serie,monto,fecha,color,unidad,pago_estado&limit=20000') };
+}
+
 function getStock() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName('stock') || ss.getSheets()[0];

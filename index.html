@@ -5020,6 +5020,20 @@ async function _fetchJson(tipo, forzar) {
   return data;
 }
 
+// Reconstruye la fecha de factura ISO desde Compras VW (Valeria): el mes con año
+// ("mayo-26") + el día de fecha_fc ("21-may") → "2026-05-21". '' si no se puede.
+function _fechaValeria(cv) {
+  if (!cv || !cv.fecha_fc) return '';
+  const MM = { ene: '01', feb: '02', mar: '03', abr: '04', may: '05', jun: '06', jul: '07', ago: '08', sep: '09', oct: '10', nov: '11', dic: '12' };
+  const mes = String(cv.mes || '').toLowerCase();         // "mayo-26"
+  const ff  = String(cv.fecha_fc || '').toLowerCase();    // "21-may"
+  const mm = (mes.match(/(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)/) || [])[1];
+  const yy = (mes.match(/-\s*(\d{2})\b/) || [])[1];
+  const dd = (ff.match(/(\d{1,2})/) || [])[1];
+  if (!mm || !yy || !dd) return '';
+  return '20' + yy + '-' + MM[mm] + '-' + String(dd).padStart(2, '0');
+}
+
 async function loadOversoftStock(forzar, silent) {
   if (oversoftStockData && !forzar) { renderOversoftStock(); return; }
   const btn  = document.getElementById('btnRefreshOvsStock');
@@ -5046,45 +5060,47 @@ async function loadOversoftStock(forzar, silent) {
 
     // planilla (monto + fecha que cargó Fer), saldos (venc.), catálogo y compras
     // (lo que carga Valeria: color + fecha de compra) en paralelo. Todo best-effort.
-    const [planilla, saldos, catalogo, compras] = await Promise.all([
-      (stockData ? Promise.resolve(stockData) : _fetchJson('stock', forzar)),
+    const [hist, saldos, catalogo, compras] = await Promise.all([
+      _fetchJson('stockhist', forzar).catch(e => { console.warn('stockhist:', e); return { unidades: [] }; }),
       _fetchJson('saldoscompras', forzar).catch(e => { console.warn('saldos:', e); return { unidades: [], _error: String(e.message || e) }; }),
       (orFiltro ? oversoft('modelos', 'select=modelo,descripcionoperativa&or=(' + orFiltro + ')&limit=500') : Promise.resolve([]))
         .catch(e => { console.warn('modelos:', e); return []; }),
       _fetchJson('comprasvw', forzar).catch(e => { console.warn('comprasvw:', e); return { compras: [] }; }),
     ]);
-    if (!stockData && planilla) { stockData = planilla; lsCacheSet('stock', planilla); }
 
-    const planMap  = new Map((stockData.unidades || []).map(u => [_OVS_norm(u.serie), u]));
-    const saldoMap = new Map((saldos.unidades   || []).map(s => [_OVS_norm(s.serie), s]));
-    const catMap   = new Map((Array.isArray(catalogo) ? catalogo : []).map(m => [_OVS_norm(m.modelo), m.descripcionoperativa]));
-    // Compras VW (carga de Valeria): trae el color y la fecha de factura aunque la
-    // unidad todavía no esté en la planilla ni recibida en Oversoft.
+    // monto/fecha/color/nombre: Compras VW (Valeria) PRIMERO; si no, el dato
+    // histórico congelado (stock_hist); si no, Oversoft. Ya NO se lee la planilla.
+    const histMap   = new Map((hist.unidades || []).map(u => [_OVS_norm(u.serie), u]));
+    const saldoMap  = new Map((saldos.unidades || []).map(s => [_OVS_norm(s.serie), s]));
+    const catMap    = new Map((Array.isArray(catalogo) ? catalogo : []).map(m => [_OVS_norm(m.modelo), m.descripcionoperativa]));
     const compraMap = new Map((compras.compras || []).map(c => [_OVS_norm(c.serie), c]));
 
     const unidades = (Array.isArray(ovs) ? ovs : []).map(r => {
       const k = _OVS_norm(r.serie);
-      const p = planMap.get(k);
+      const h = histMap.get(k);     // dato histórico congelado (ex-planilla)
       const s = saldoMap.get(k);
       const cv = compraMap.get(k);  // lo que cargó Valeria en Compras VW
-      // Fecha de compra: planilla → Compras (fecha_fc) → recepción Oversoft.
-      const fechaCompraIso = (p && p.fechaFcIso) ? p.fechaFcIso
-                           : (cv && cv.fecha_fc) ? String(cv.fecha_fc).slice(0, 10)
+      // Fecha de compra: Valeria (mes+fecha_fc) → histórico congelado → recepción Oversoft.
+      const fechaVal = _fechaValeria(cv);
+      const fechaCompraIso = fechaVal ? fechaVal
+                           : (h && h.fecha) ? String(h.fecha).slice(0, 10)
                            : (r.fechaderecepcion ? String(r.fechaderecepcion).slice(0, 10) : '');
-      const monto = (p && p.montoFc) ? p.montoFc : (s ? (s.total || 0) : (cv && cv.importe_saldo ? cv.importe_saldo : 0));
+      // Monto: Valeria (importe_saldo) → histórico congelado → saldos.
+      const monto = (cv && cv.importe_saldo) ? cv.importe_saldo
+                  : (h && h.monto) ? h.monto
+                  : (s ? (s.total || 0) : 0);
       let pago = 'sindato', vence = '';
       if (s) { pago = s.impaga ? 'impaga' : 'paga'; vence = s.vence || ''; }
       else if (cv) { pago = cv.impaga ? 'impaga' : 'paga'; vence = cv.vence || ''; }
-      else if (p && p.pagoEstado) { pago = p.pagoEstado === 'impaga' ? 'impaga' : (p.pagoEstado === 'pagada' ? 'paga' : 'sindato'); }
-      // Nombre comercial: catálogo Oversoft → planilla → Compras → saldos → código crudo.
+      else if (h && h.pago_estado) { pago = h.pago_estado === 'impaga' ? 'impaga' : (h.pago_estado === 'pagada' ? 'paga' : 'sindato'); }
+      // Nombre comercial: catálogo Oversoft → Valeria → histórico → saldos → código crudo.
       const nombre = catMap.get(_OVS_norm(r.modelo))
-                   || (p && p.unidad ? p.unidad
-                      : (cv && (cv.modeloOficial || cv.modelo_valeria) ? (cv.modeloOficial || cv.modelo_valeria)
+                   || (cv && (cv.modeloOficial || cv.modelo_valeria) ? (cv.modeloOficial || cv.modelo_valeria)
+                      : (h && h.unidad ? h.unidad
                         : (s && s.modelo ? s.modelo : r.modelo)));
-      // Color: planilla → Compras (lo que cargó Valeria) → color crudo de Oversoft
-      // (suele venir como código numérico, por eso es el último recurso).
-      const color = (p && p.color) ? p.color
-                  : (cv && cv.color) ? cv.color
+      // Color: Valeria → histórico → color crudo de Oversoft.
+      const color = (cv && cv.color) ? cv.color
+                  : (h && h.color) ? h.color
                   : (r.color != null ? String(r.color) : '');
       return {
         serie: r.serie, modelo: nombre, codigo: r.modelo,
@@ -5093,7 +5109,7 @@ async function loadOversoftStock(forzar, silent) {
         tipo: r.recibida ? 'fisico' : 'arecibir',
         fechaCompraIso, monto, pago, vence,
         antigDias: fechaCompraIso ? Math.floor((Date.now() - new Date(fechaCompraIso)) / 86400000) : null,
-        enPlanilla: !!p, enSaldos: !!s, enCompras: !!cv,
+        enPlanilla: !!h, enSaldos: !!s, enCompras: !!cv,
       };
     });
 
