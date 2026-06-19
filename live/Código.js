@@ -82,7 +82,7 @@ function doGet(e) {
     if (tipo === 'precios')         return jsonResponse(_cached('precios', CACHE_TTL_SEC, fresh, getPreciosActualBT)); // espejo de precios/ganancia de "Actual BT"
     if (tipo === 'precioslista')    return jsonResponse(getPreciosLista(String(params.mes || ''))); // precios_lista (lista+costo) editable en el portal — reemplaza "Actual BT"
     if (tipo === 'motor')           return jsonResponse(_cached('motor', CACHE_TTL_SEC, fresh, getBaratitoMotor));     // MOTOR: calcula desde Supabase (no la planilla)
-    if (tipo === 'snapshotbt')      return jsonResponse(snapshotBTMensual(String(params.mes || '') || null, String(params.hoja || '') || null, String(params.dry || '') === '1')); // sync de la BT a Supabase (hoja override + dry para preview)
+    if (tipo === 'snapshotbt')      return jsonResponse(snapshotBTMensual(String(params.mes || '') || null, String(params.hoja || '') || null, String(params.dry || '') === '1', true)); // sync MANUAL de la BT a Supabase (force=true; el automático está apagado)
     if (tipo === 'admventas')       return jsonResponse(_cached('admventas', CACHE_TTL_SEC, fresh, getAdmVentas)); // adm de ventas: Oversoft + campos manuales
     if (tipo === 'migraradmventas') return jsonResponse(migrarAdmVentasDesdeHoja()); // una-vez: vuelca lo ya cargado en la hoja a adm_ventas
     if (tipo === 'comprasvw')       return jsonResponse(_cached('comprasvw', CACHE_TTL_SEC, fresh, getComprasVW)); // compras a VW: carga Valeria + conciliación Oversoft
@@ -1315,7 +1315,14 @@ function delCompraVW(body) {
 // se actualiza a mitad de mes (lista nueva, fe de erratas), el histórico se
 // corrige solo en la próxima corrida.
 const SNAPSHOT_ORIGEN = 'snapshot Actual BT';
-function snapshotBTMensual(mesOverride, hojaOverride, dryRun) {
+function snapshotBTMensual(mesOverride, hojaOverride, dryRun, force) {
+  // APAGADO (19-jun): el esqueleto de precios se carga/edita en el PORTAL
+  // (solapa Precios → precios_lista). El sync automático desde "Actual BT" queda
+  // neutralizado para que el Sheet NUNCA pise lo cargado en el portal. Las
+  // llamadas automáticas (trigger diario + hook del motor) NO pasan `force` y
+  // salen acá. Para correrlo a mano (carga puntual / preview dry) está
+  // tipo=snapshotbt, que pasa force=true.
+  if (!force) return { ok: true, apagado: true, nota: 'Sync BT->Supabase apagado: los precios se cargan en el portal (solapa Precios).' };
   const mes = mesOverride || _yyyyMm(new Date());
   const svc = PropertiesService.getScriptProperties().getProperty('SUPA_SERVICE');
   if (!svc) return { error: 'falta SUPA_SERVICE en Script Properties (doPost setsecret)' };
