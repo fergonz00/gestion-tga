@@ -61,9 +61,9 @@ function doGet(e) {
   const tipo  = String(params.tipo  || 'stock').toLowerCase();
   const fresh = String(params.fresh || '') === '1';
   try {
-    if (tipo === 'stock')           return jsonResponse(_cached('stock',          CACHE_TTL_SEC, fresh, getStock));
+    if (tipo === 'stock')           return jsonResponse(_cachedBig('stock',       CACHE_TTL_WARM, fresh, getStock));  // >100KB → cache chunked + precalentado
     if (tipo === 'stockhist')       return jsonResponse(getStockHist());          // monto/fecha/color/nombre históricos congelados (para Stock Oversoft)
-    if (tipo === 'ventas')          return jsonResponse(_cached('ventas',         CACHE_TTL_SEC, fresh, getVentas));
+    if (tipo === 'ventas')          return jsonResponse(_cachedBig('ventas',      CACHE_TTL_WARM, fresh, getVentas));  // >100KB → cache chunked + precalentado
     if (tipo === 'ventasv2')        return jsonResponse(getVentasV2());           // ventas: mes actual por fórmula (Oversoft+BT) + meses cerrados congelados (ventas_hist)
     if (tipo === 'importarventashist') return jsonResponse(importarVentasHist());  // una-vez/re-ejecutable: congela los resultados de la hoja PVs (meses cerrados)
     if (tipo === 'congelarmes')     return jsonResponse(congelarMes(String(params.mes || ''))); // congela (guarda) el resultado de la fórmula de un mes
@@ -78,6 +78,7 @@ function doGet(e) {
     if (tipo === 'industria')         return jsonResponse(getIndustria());          // sin cache (es chico)
     if (tipo === 'ventasdebug')     return jsonResponse(getVentasDebug(params));  // sin cache
     if (tipo === 'oversoft')        return jsonResponse(getOversoft(params));     // proxy a la réplica Supabase
+    if (tipo === 'oversoftsync')    return jsonResponse(getOversoftSync() || { iso: null, ok: false }); // sello de última sincronización de la réplica (indicador global)
     if (tipo === 'saldoscompras')   return jsonResponse(_cached('saldoscompras', CACHE_TTL_SEC, fresh, getSaldosCompras)); // proxy a saldos-tga (paga/impaga + vencimiento)
     if (tipo === 'madre')           return jsonResponse(getMadreSheet(params));   // lectura cruda de una pestaña de la planilla madre
     if (tipo === 'precios')         return jsonResponse(_cached('precios', CACHE_TTL_SEC, fresh, getPreciosActualBT)); // espejo de precios/ganancia de "Actual BT"
@@ -87,7 +88,7 @@ function doGet(e) {
     if (tipo === 'admventas')       return jsonResponse(_cached('admventas', CACHE_TTL_SEC, fresh, getAdmVentas)); // adm de ventas: Oversoft + campos manuales
     if (tipo === 'conciliagastos')  return jsonResponse(_cached('conciliagastos_' + (params.mes || ''), CACHE_TTL_SEC, fresh, () => getConciliacionGastos(params))); // gastos reales por PV + conciliación (sellado/quebranto/faltantes)
     if (tipo === 'migraradmventas') return jsonResponse(migrarAdmVentasDesdeHoja()); // una-vez: vuelca lo ya cargado en la hoja a adm_ventas
-    if (tipo === 'comprasvw')       return jsonResponse(_cached('comprasvw', CACHE_TTL_SEC, fresh, getComprasVW)); // compras a VW: carga Valeria + conciliación Oversoft
+    if (tipo === 'comprasvw')       return jsonResponse(_cachedBig('comprasvw', CACHE_TTL_WARM, fresh, getComprasVW)); // compras a VW (>100KB) → cache chunked + precalentado
     if (tipo === 'migrarcomprasvw') return jsonResponse(migrarComprasVW()); // una-vez: vuelca lo de saldos (>=2026) a compras_vw, conciliado con Oversoft
     if (tipo === 'flujo')           return jsonResponse(_cached('flujo', CACHE_TTL_SEC, fresh, getFlujoFinanciero)); // flujo de caja: cobros pendientes (ingresos) vs pagos a VW (egresos)
     if (tipo === 'exposicion')      return jsonResponse(getExposicion());          // stock en exposición por salón (tabla exposicion_unidades, wjfgl)
@@ -1131,7 +1132,8 @@ function _listaNumDelMes(mes) {
   return (ex.length && ex[0].lista_num) ? ex[0].lista_num : parseInt(mes.replace('-', ''), 10);
 }
 function _invalidarCachePrecios() {
-  try { const c = CacheService.getScriptCache(); c.remove('motor'); c.remove('precios'); c.remove('ventas'); } catch (e) {}
+  try { const c = CacheService.getScriptCache(); c.remove('motor'); c.remove('precios'); } catch (e) {}
+  try { _cacheDrop('ventas'); } catch (e) {}
 }
 
 // Guarda UNA fila (precio lista y/o costo) de un modelo en un mes.
@@ -1449,7 +1451,7 @@ function migrarComprasVW() {
     if (res.getResponseCode() >= 300) return { error: 'insert falló: ' + res.getContentText().slice(0, 300), insertados: insertados };
     insertados += lote.length;
   }
-  try { CacheService.getScriptCache().remove('comprasvw'); } catch (e) {}
+  try { _cacheDrop('comprasvw'); } catch (e) {}
   return { ok: true, candidatos: rows.length, conciliados: rows.filter(r => r.conciliado).length };
 }
 function saveCompraVW(body) {
@@ -1469,7 +1471,7 @@ function saveCompraVW(body) {
   const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
   const res = UrlFetchApp.fetch(SUPA_URL + '/compras_vw?on_conflict=serie', { method: 'post', headers: hh, payload: JSON.stringify(row), muteHttpExceptions: true });
   if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200) };
-  try { CacheService.getScriptCache().remove('comprasvw'); } catch (e) {}
+  try { _cacheDrop('comprasvw'); } catch (e) {}
   return { ok: true, serie: serie };
 }
 // FLUJO FINANCIERO: junta los cobros pendientes de las ventas vigentes
@@ -1505,7 +1507,7 @@ function delCompraVW(body) {
   const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON };
   const res = UrlFetchApp.fetch(SUPA_URL + '/compras_vw?serie=eq.' + encodeURIComponent(serie), { method: 'delete', headers: hh, muteHttpExceptions: true });
   if (res.getResponseCode() >= 300) return { error: 'borrar falló: ' + res.getContentText().slice(0, 200) };
-  try { CacheService.getScriptCache().remove('comprasvw'); } catch (e) {}
+  try { _cacheDrop('comprasvw'); } catch (e) {}
   return { ok: true, serie: serie };
 }
 
@@ -1935,6 +1937,83 @@ function _cached(key, ttlSec, fresh, fn) {
     cache.put(key, JSON.stringify(data), ttlSec);
   } catch (e) { /* >100KB o cuota, no cacheable */ }
   return data;
+}
+
+// ---------------------------------------------------------------------------
+// CACHE "GRANDE" (responses > 100KB) + PRECALENTADO POR TRIGGER
+// ---------------------------------------------------------------------------
+// CacheService limita cada VALOR a 100KB. comprasvw (~290KB), stock (~133KB) y
+// ventas (~128KB) lo superan → con _cached() NO se cacheaban nunca y cada carga
+// recalculaba (compras tardaba ~14s SIEMPRE). Acá partimos el JSON en trozos de
+// ~45.000 chars (≤100KB aun con acentos = 2 bytes) bajo claves key_c0, key_c1…
+// y un manifest key_meta con la cantidad de trozos. Si falta un trozo (venció),
+// se trata como miss y se recalcula.
+const CACHE_TTL_WARM = 2400;  // 40 min: sobrevive al ciclo de precalentado de 30'
+
+function _cacheBigPut(key, s, ttlSec) {
+  const cache = CacheService.getScriptCache();
+  const CHUNK = 45000;
+  const n = Math.ceil(s.length / CHUNK) || 1;
+  const obj = {};
+  for (let i = 0; i < n; i++) obj[key + '_c' + i] = s.substring(i * CHUNK, (i + 1) * CHUNK);
+  obj[key + '_meta'] = String(n);
+  cache.putAll(obj, ttlSec);
+}
+function _cacheBigGet(key) {
+  const cache = CacheService.getScriptCache();
+  const meta = cache.get(key + '_meta');
+  if (!meta) return null;
+  const n = parseInt(meta, 10);
+  const keys = [];
+  for (let i = 0; i < n; i++) keys.push(key + '_c' + i);
+  const all = cache.getAll(keys);
+  let s = '';
+  for (let i = 0; i < n; i++) {
+    const part = all[key + '_c' + i];
+    if (part == null) return null;  // un trozo venció → cache inválido, refetch
+    s += part;
+  }
+  return s;
+}
+// Invalida un cache grande (y de paso la clave plana vieja por si quedó algo).
+function _cacheDrop(key) {
+  const cache = CacheService.getScriptCache();
+  try {
+    const meta = cache.get(key + '_meta');
+    const keys = [key, key + '_meta'];
+    if (meta) { const n = parseInt(meta, 10); for (let i = 0; i < n; i++) keys.push(key + '_c' + i); }
+    cache.removeAll(keys);
+  } catch (e) { /* noop */ }
+}
+function _cachedBig(key, ttlSec, fresh, fn) {
+  if (!fresh) {
+    const hit = _cacheBigGet(key);
+    if (hit) {
+      try { const p = JSON.parse(hit); p._cached = true; return p; } catch (e) { /* corrupto */ }
+    }
+  }
+  const data = fn();
+  try { _cacheBigPut(key, JSON.stringify(data), ttlSec); } catch (e) { /* no cacheable */ }
+  return data;
+}
+
+// Trigger cada 30': recalcula los 3 endpoints pesados y los deja calientes en
+// el cache chunked, así el usuario no paga el recompute. ~21s total por corrida.
+function precalentarCache() {
+  const jobs = [['comprasvw', getComprasVW], ['stock', getStock], ['ventas', getVentas]];
+  jobs.forEach(function (j) {
+    try { _cachedBig(j[0], CACHE_TTL_WARM, true, j[1]); }
+    catch (e) { Logger.log('precalentar ' + j[0] + ': ' + e); }
+  });
+}
+// Correr UNA vez a mano desde el editor para instalar el trigger de 30 min.
+function instalarPrecalentado() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'precalentarCache') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('precalentarCache').timeBased().everyMinutes(30).create();
+  precalentarCache();  // calentar ya mismo
+  return 'Trigger de 30 min instalado + cache precalentado.';
 }
 
 // Devuelve TODAS las filas de la hoja ventas sin filtrar (excepto vacías
@@ -3406,7 +3485,7 @@ function _sembrarComprasVWdesdeReparto(vins) {
   if (!payload.length) return 0;
   var hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' };
   var r2 = UrlFetchApp.fetch(SUPA_URL + '/compras_vw?on_conflict=serie', { method: 'post', headers: hh, payload: JSON.stringify(payload), muteHttpExceptions: true });
-  try { CacheService.getScriptCache().remove('comprasvw'); } catch (e) {}
+  try { _cacheDrop('comprasvw'); } catch (e) {}
   return (r2.getResponseCode() < 300) ? payload.length : 0;
 }
 function desmarcarComprado(body) {
@@ -3430,7 +3509,7 @@ function darOkReparto(body) {
     var hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
     UrlFetchApp.fetch(SUPA_URL + '/compras_vw?serie=eq.' + encodeURIComponent(_serieDeVin(vin)), {
       method: 'patch', headers: hh, payload: JSON.stringify({ conciliado: true }), muteHttpExceptions: true });
-    CacheService.getScriptCache().remove('comprasvw');
+    _cacheDrop('comprasvw');
   } catch (e) {}
   return { ok: true };
 }
@@ -3807,7 +3886,7 @@ function saveBaratitoSnapshots(snapshots) {
       .setValues(filasNuevas);
   }
   // Invalidar cache de ventas así la próxima request trae los snapshots nuevos
-  try { CacheService.getScriptCache().remove('ventas'); } catch (e) {}
+  try { _cacheDrop('ventas'); } catch (e) {}
   return { guardados: filasNuevas.length, actualizados: actualizados, duplicados: duplicados };
 }
 
@@ -3868,7 +3947,7 @@ function resetBaratitoBaseline() {
   if (filas.length) {
     sh.getRange(2, 1, filas.length, VENTAS_BARATITO_HEADERS.length).setValues(filas);
   }
-  try { CacheService.getScriptCache().remove('ventas'); } catch (e) {}
+  try { _cacheDrop('ventas'); } catch (e) {}
   return { ok: true, pre_feature: filas.length };
 }
 
