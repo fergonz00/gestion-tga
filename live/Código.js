@@ -69,7 +69,6 @@ function doGet(e) {
     if (tipo === 'instalartriggercongelar') return jsonResponse(instalarTriggerCongelar()); // trigger mensual: congela el mes que cierra
     if (tipo === 'patentamientos')  return jsonResponse(_cached('patentamientos', CACHE_TTL_SEC, fresh, getPatentamientos));
     if (tipo === 'incentivos')      return jsonResponse(_cached('incentivos_' + (params.mes || ''), CACHE_TTL_SEC, fresh, () => getIncentivos(params)));
-    if (tipo === 'cmpincentivos')   return jsonResponse(_cmpIncentivos(String(params.mes || ''))); // TEMP: compara cc de la BT espejo (Sheet) vs tabla incentivos (Supabase)
     if (tipo === 'pagosvw')         return jsonResponse(getPagosVW(params));      // sin cache
     if (tipo === 'objetivos')         return jsonResponse(getObjetivosPat());       // sin cache (es chico)
     if (tipo === 'objetivoscompras')  return jsonResponse(getObjetivosCompras());   // sin cache (es chico)
@@ -2505,7 +2504,10 @@ function getIncentivos(params) {
   const mesKey = String(params.mes || _yyyyMm(new Date()));
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const bt = _readBT(ss, mesKey);
+  // cc/condiciones comerciales por modelo desde Supabase (tabla incentivos),
+  // NO de la BT espejo del Sheet (verificado 19-jun: coincide; donde difería el
+  // Sheet estaba mal — Vento/Tiguan abril, Tera High/Outfit mayo ya corregido).
+  const bt = _btDesdeSupabase(mesKey);
   if (!bt.encontrado) {
     return {
       mesKey,
@@ -2666,41 +2668,35 @@ function _mesesConciliables(ss, pat) {
   return Array.from(meses).sort().reverse();
 }
 
-// TEMP (verificación #5): compara, por modelo, el cc/condiciones comerciales que
-// la solapa Incentivos lee de la BT espejo (Sheet) vs la tabla `incentivos`
-// (Supabase) — para confirmar que coinciden antes de migrar la lectura.
-// BT espejo (_readBT): cc90=col U (perf s/iva), cc90Iva=col V (perf c/iva),
-// tactico/whosale/adic1/adic2 = cols Y/Z/AA/AB (todos c/iva).
-function _cmpIncentivos(mes) {
-  const m = /^\d{4}-\d{2}$/.test(String(mes || '')) ? mes : _yyyyMm(new Date());
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const bt = (_readBT(ss, m) || {}).porModelo || {};   // keyed _normModeloKey(nombre_bt)
+// Condiciones comerciales por modelo desde la tabla `incentivos` (Supabase),
+// con la MISMA forma que _readBT (BT espejo del Sheet): porModelo[_normModeloKey]
+// = { cc90 (perf s/iva), cc90Iva (perf c/iva), tactico, whosale, adicional1,
+// adicional2 (todos c/iva) }. Reemplaza la lectura del Sheet en getIncentivos.
+function _btDesdeSupabase(mesKey) {
   const cat = _supaGet('/catalogo_modelos?select=nombre_corto,nombre_bt&activo=eq.true');
-  const sup = {};
-  for (const r of _supaGet('/incentivos?select=nombre_corto,tipo,monto_siva,monto_civa&mes=eq.' + m)) {
-    if (!sup[r.nombre_corto]) sup[r.nombre_corto] = {};
-    sup[r.nombre_corto][r.tipo] = { siva: Number(r.monto_siva) || 0, civa: Number(r.monto_civa) || 0 };
+  const ncToBt = {};
+  for (const c of cat) ncToBt[c.nombre_corto] = c.nombre_bt || c.nombre_corto;
+  const porNc = {};
+  for (const r of _supaGet('/incentivos?select=nombre_corto,tipo,monto_siva,monto_civa&mes=eq.' + mesKey)) {
+    if (!porNc[r.nombre_corto]) porNc[r.nombre_corto] = {};
+    porNc[r.nombre_corto][r.tipo] = { siva: Number(r.monto_siva) || 0, civa: Number(r.monto_civa) || 0 };
   }
-  const difs = [];
-  let comparados = 0;
-  for (const c of cat) {
-    const b = bt[_normModeloKey(c.nombre_bt)] || bt[_normModeloKey(c.nombre_corto)] || null;
-    if (!b) continue;
-    comparados++;
-    const s = sup[c.nombre_corto] || {};
-    const chk = (campo, btv, supv) => {
-      if (Math.abs((Number(btv) || 0) - (Number(supv) || 0)) > 1) {
-        difs.push({ modelo: c.nombre_corto, campo: campo, bt: Math.round(Number(btv) || 0), sup: Math.round(Number(supv) || 0) });
-      }
+  const porModelo = {};
+  for (const nc in porNc) {
+    const s = porNc[nc];
+    const obj = {
+      modelo: ncToBt[nc] || nc,
+      cc90:       (s.performance || {}).siva || 0,
+      cc90Iva:    (s.performance || {}).civa || 0,
+      tactico:    (s.tactico || {}).civa || 0,
+      whosale:    (s.whosale || {}).civa || 0,
+      adicional1: (s.adicional1 || {}).civa || 0,
+      adicional2: (s.adicional2 || {}).civa || 0,
     };
-    chk('perf_siva', b.cc90, (s.performance || {}).siva);
-    chk('perf_civa', b.cc90Iva, (s.performance || {}).civa);
-    chk('tactico', b.tactico, (s.tactico || {}).civa);
-    chk('whosale', b.whosale, (s.whosale || {}).civa);
-    chk('adic1', b.adicional1, (s.adicional1 || {}).civa);
-    chk('adic2', b.adicional2, (s.adicional2 || {}).civa);
+    porModelo[_normModeloKey(ncToBt[nc] || nc)] = obj;   // por nombre_bt (como lo busca el patentamiento)
+    porModelo[_normModeloKey(nc)] = obj;                 // y por nombre_corto, por las dudas
   }
-  return { mes: m, modelosBTespejo: Object.keys(bt).length, modelosSupabase: Object.keys(sup).length, comparados: comparados, totalDifs: difs.length, difs: difs.slice(0, 60) };
+  return { encontrado: true, nombreUsado: 'Supabase incentivos (' + mesKey + ')', porModelo: porModelo };
 }
 
 function _readBT(ss, mesKey) {
