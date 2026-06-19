@@ -80,6 +80,7 @@ function doGet(e) {
     if (tipo === 'saldoscompras')   return jsonResponse(_cached('saldoscompras', CACHE_TTL_SEC, fresh, getSaldosCompras)); // proxy a saldos-tga (paga/impaga + vencimiento)
     if (tipo === 'madre')           return jsonResponse(getMadreSheet(params));   // lectura cruda de una pestaña de la planilla madre
     if (tipo === 'precios')         return jsonResponse(_cached('precios', CACHE_TTL_SEC, fresh, getPreciosActualBT)); // espejo de precios/ganancia de "Actual BT"
+    if (tipo === 'precioslista')    return jsonResponse(getPreciosLista(String(params.mes || ''))); // precios_lista (lista+costo) editable en el portal — reemplaza "Actual BT"
     if (tipo === 'motor')           return jsonResponse(_cached('motor', CACHE_TTL_SEC, fresh, getBaratitoMotor));     // MOTOR: calcula desde Supabase (no la planilla)
     if (tipo === 'snapshotbt')      return jsonResponse(snapshotBTMensual(String(params.mes || '') || null, String(params.hoja || '') || null, String(params.dry || '') === '1')); // sync de la BT a Supabase (hoja override + dry para preview)
     if (tipo === 'admventas')       return jsonResponse(_cached('admventas', CACHE_TTL_SEC, fresh, getAdmVentas)); // adm de ventas: Oversoft + campos manuales
@@ -880,6 +881,110 @@ function instalarTriggerCongelar() {
   return { ok: true, instalado: 'congelarMesAnteriorAuto día 1 ~03:00' };
 }
 
+// ===================== PRECIOS (lista + costo) en Supabase =====================
+// Reemplazo de "Actual BT": el esqueleto de precios vive en precios_lista
+// (Supabase). modelo = nombre_corto del catálogo (la clave con la que el MOTOR y
+// la fórmula de VENTAS buscan precio/costo). Escritura con SUPA_SERVICE (igual
+// que el snapshot). Tras guardar se invalidan los cachés de motor/precios/ventas.
+
+function getPreciosLista(mes) {
+  const m = /^\d{4}-\d{2}$/.test(String(mes || '')) ? mes : _yyyyMm(new Date());
+  const cat = _supaGet('/catalogo_modelos?select=codigo,nombre_corto,nombre_bt&activo=eq.true&order=nombre_corto');
+  const pl = _supaGet('/precios_lista?select=codigo,modelo,precio_lista,costo_concesionario,lista_num,cargado_at&mes=eq.' + m);
+  const porModelo = {};
+  let listaNum = null;
+  for (const p of pl) { porModelo[p.modelo] = p; if (listaNum === null && p.lista_num) listaNum = p.lista_num; }
+  const filas = cat.map(function (c) {
+    const p = porModelo[c.nombre_corto] || null;
+    return {
+      codigo: p ? p.codigo : c.codigo, modelo: c.nombre_corto, nombreBt: c.nombre_bt || '',
+      precioLista: p ? Number(p.precio_lista) : null,
+      costo: (p && p.costo_concesionario != null) ? Number(p.costo_concesionario) : null,
+      cargado: !!p, cargadoAt: p ? p.cargado_at : null,
+    };
+  });
+  const mesesSet = {};
+  for (const r of _supaGet('/precios_lista?select=mes')) mesesSet[r.mes] = 1;
+  return {
+    mes: m, listaNum: listaNum, filas: filas, meses: Object.keys(mesesSet).sort().reverse(),
+    cargados: pl.length, faltan: filas.filter(function (f) { return !f.cargado; }).length,
+    totalCatalogo: cat.length, updatedAt: new Date().toISOString(),
+  };
+}
+
+function _svcHeadersPrecios() {
+  const svc = PropertiesService.getScriptProperties().getProperty('SUPA_SERVICE');
+  if (!svc) return null;
+  return { apikey: svc, Authorization: 'Bearer ' + svc, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' };
+}
+function _listaNumDelMes(mes) {
+  const ex = _supaGet('/precios_lista?select=lista_num&mes=eq.' + mes + '&limit=1');
+  return (ex.length && ex[0].lista_num) ? ex[0].lista_num : parseInt(mes.replace('-', ''), 10);
+}
+function _invalidarCachePrecios() {
+  try { const c = CacheService.getScriptCache(); c.remove('motor'); c.remove('precios'); c.remove('ventas'); } catch (e) {}
+}
+
+// Guarda UNA fila (precio lista y/o costo) de un modelo en un mes.
+function savePrecioLista(body) {
+  const mes = String(body.mes || '');
+  if (!/^\d{4}-\d{2}$/.test(mes)) return { error: 'mes inválido (yyyy-mm)' };
+  const modelo = String(body.modelo || '').trim();
+  if (!modelo) return { error: 'falta modelo (nombre_corto)' };
+  const precio = Number(body.precioLista) || 0;
+  if (precio <= 0) return { error: 'el precio de lista debe ser > 0' };
+  const costo = (body.costo === '' || body.costo == null) ? null : (Number(body.costo) || 0);
+  if (costo != null && costo < 0) return { error: 'costo inválido' };
+  const h = _svcHeadersPrecios();
+  if (!h) return { error: 'falta SUPA_SERVICE en Script Properties' };
+  const row = {
+    lista_num: Number(body.listaNum) || _listaNumDelMes(mes),
+    mes: mes, codigo: String(body.codigo || '').trim() || modelo, modelo: modelo,
+    precio_lista: precio, costo_concesionario: costo, cargado_at: new Date().toISOString(),
+  };
+  const res = UrlFetchApp.fetch(SUPA_URL + '/precios_lista?on_conflict=lista_num,modelo', { method: 'post', headers: h, payload: JSON.stringify([row]), muteHttpExceptions: true });
+  if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200) };
+  _invalidarCachePrecios();
+  return { ok: true };
+}
+
+// Carga MASIVA de una lista nueva. body: { mes, listaNum?, filas:[{modelo,codigo?,precioLista,costo?}] }
+// modelo DEBE ser el nombre_corto del catálogo (si no, el motor/ventas no lo encuentran).
+function guardarPreciosListaBulk(body) {
+  const mes = String(body.mes || '');
+  if (!/^\d{4}-\d{2}$/.test(mes)) return { error: 'mes inválido (yyyy-mm)' };
+  const filasIn = body.filas || [];
+  if (!filasIn.length) return { error: 'sin filas' };
+  const h = _svcHeadersPrecios();
+  if (!h) return { error: 'falta SUPA_SERVICE' };
+  // Validar nombres contra el catálogo (evita escribir un modelo que nadie lee).
+  const validos = {};
+  for (const c of _supaGet('/catalogo_modelos?select=nombre_corto&activo=eq.true')) validos[c.nombre_corto] = 1;
+  const listaNum = Number(body.listaNum) || _listaNumDelMes(mes);
+  const rows = [], errores = [], desconocidos = [];
+  for (const f of filasIn) {
+    const modelo = String(f.modelo || '').trim();
+    const precio = Number(f.precioLista) || 0;
+    if (!modelo || precio <= 0) { errores.push(modelo || '(sin modelo)'); continue; }
+    if (!validos[modelo]) { desconocidos.push(modelo); continue; }   // no está en el catálogo
+    rows.push({
+      lista_num: listaNum, mes: mes, codigo: String(f.codigo || '').trim() || modelo, modelo: modelo,
+      precio_lista: precio, costo_concesionario: (f.costo === '' || f.costo == null) ? null : (Number(f.costo) || 0),
+      cargado_at: new Date().toISOString(),
+    });
+  }
+  if (!rows.length) return { error: 'ninguna fila válida', errores: errores, desconocidos: desconocidos };
+  let ok = 0;
+  for (let i = 0; i < rows.length; i += 200) {
+    const lote = rows.slice(i, i + 200);
+    const res = UrlFetchApp.fetch(SUPA_URL + '/precios_lista?on_conflict=lista_num,modelo', { method: 'post', headers: h, payload: JSON.stringify(lote), muteHttpExceptions: true });
+    if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200), ok: ok };
+    ok += lote.length;
+  }
+  _invalidarCachePrecios();
+  return { ok: true, guardadas: ok, errores: errores, desconocidos: desconocidos };
+}
+
 // MIGRACIÓN una-vez (re-ejecutable): lo que la administrativa YA cargó en la
 // hoja "adm de ventas" (espejo "patentamientos") se vuelca a la tabla
 // adm_ventas. Solo inserta PVs que NO existan en la tabla (lo cargado en el
@@ -1592,6 +1697,8 @@ function doPost(e) {
     if (accion === 'setsecret')            return jsonResponse(_setSecret(body));
     if (accion === 'setadmventa')          return jsonResponse(saveAdmVenta(body));
     if (accion === 'setventamanual')       return jsonResponse(saveVentaManual(body));
+    if (accion === 'setpreciolista')       return jsonResponse(savePrecioLista(body));        // editar 1 fila de precios_lista
+    if (accion === 'setprecioslista')      return jsonResponse(guardarPreciosListaBulk(body)); // carga masiva de una lista nueva
     if (accion === 'setcompravw')          return jsonResponse(saveCompraVW(body));
     if (accion === 'delcompravw')          return jsonResponse(delCompraVW(body));
     if (accion === 'instalartriggersnapshot') return jsonResponse(_instalarTriggerSnapshot());

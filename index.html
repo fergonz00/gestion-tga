@@ -1275,6 +1275,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <button class="tab" data-tab="admventas" onclick="setTab('admventas')">Adm. ventas</button>
       <button class="tab" data-tab="reparto" onclick="setTab('reparto')">Reparto</button>
       <button class="tab" data-tab="incentivos" onclick="setTab('incentivos')">Incentivos</button>
+      <button class="tab" data-tab="precioslista" onclick="setTab('precioslista')">Precios</button>
       <button class="tab" data-tab="industria" onclick="setTab('industria')">Industria</button>
       <!-- Tab discreta: solo aparece entrando con #oversoft en la URL (revealOversoftTab) -->
       <button class="tab hidden" id="tabOversoft" data-tab="oversoft" onclick="setTab('oversoft')">⚙ Oversoft</button>
@@ -1361,6 +1362,19 @@ table.patent-tbl.resumida .col-extra { display: none; }
         </div>
       </div>
       <div id="ventasOvContent"><div class="empty">Cargando…</div></div>
+    </section>
+
+    <!-- Lista de precios (precio de lista + costo) editable, guardada en Supabase
+         (precios_lista). Reemplaza la hoja "Actual BT": de acá leen el motor
+         Baratito y la fórmula de ganancia de Ventas. -->
+    <section class="panel" id="panelPreciosLista">
+      <div class="toolbar">
+        <div class="updated" id="updatedAtPreciosLista">Precio de lista y costo por modelo (Supabase, sin Sheet).</div>
+        <div class="actions">
+          <button class="refresh" onclick="loadPreciosLista(true)">Actualizar</button>
+        </div>
+      </div>
+      <div id="preciosListaContent"><div class="empty">Cargando…</div></div>
     </section>
 
     <!-- Patentamientos dejó de ser solapa propia: ahora es una subtab dentro de
@@ -1575,6 +1589,79 @@ let objetivoIncen = (() => {
 })();
 let vistaResumidaInc = false;     // ocultar cols extra
 let incentivosDataByMes = {};     // cache de BT data por mes para matching multi-mes
+// ---- Lista de precios (precio_lista + costo) editable, guardada en Supabase ----
+let preciosListaData = null;
+let preciosListaMes = '';
+async function loadPreciosLista(forzar) {
+  const cont = document.getElementById('preciosListaContent');
+  if (cont && !preciosListaData) cont.innerHTML = '<div class="empty">Cargando precios…</div>';
+  try {
+    const m = preciosListaMes || '';
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=precioslista' + (m ? '&mes=' + m : '');
+    const res = await fetch(url);
+    preciosListaData = await res.json();
+    if (!preciosListaMes && preciosListaData.mes) preciosListaMes = preciosListaData.mes;
+    renderPreciosLista();
+  } catch (e) {
+    if (cont) cont.innerHTML = '<div class="empty">Error: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+function setPreciosListaMes(m) { preciosListaMes = m; preciosListaData = null; loadPreciosLista(false); }
+async function guardarFilaPrecio(idx) {
+  const f = (preciosListaData.filas || [])[idx];
+  if (!f) return;
+  const inpL = document.getElementById('plL_' + idx);
+  const inpC = document.getElementById('plC_' + idx);
+  const precioLista = inpL ? inpL.value : '';
+  const costo = inpC ? inpC.value : '';
+  if (!precioLista || Number(precioLista) <= 0) { alert('El precio de lista debe ser mayor a 0.'); return; }
+  try {
+    const body = new URLSearchParams();
+    body.set('payload', JSON.stringify({ token: APPS_SCRIPT_TOKEN, accion: 'setpreciolista',
+      mes: preciosListaData.mes, modelo: f.modelo, codigo: f.codigo,
+      precioLista: precioLista, costo: costo, listaNum: preciosListaData.listaNum || '',
+      usuario: window._tgaUser || '' }));
+    const res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    if (inpL) { inpL.style.borderColor = '#1a8a2e'; f.precioLista = Number(precioLista); f.cargado = true; }
+    if (inpC) inpC.style.borderColor = '#1a8a2e';
+  } catch (e) { alert('No se pudo guardar ' + f.modelo + ': ' + e.message); }
+}
+function renderPreciosLista() {
+  const cont = document.getElementById('preciosListaContent');
+  if (!cont || !preciosListaData) return;
+  if (preciosListaData.error) { cont.innerHTML = '<div class="empty">Error: ' + escapeHtml(preciosListaData.error) + '</div>'; return; }
+  const filas = preciosListaData.filas || [];
+  const meses = preciosListaData.meses || [];
+  let sel = '<select onchange="setPreciosListaMes(this.value)" style="padding:5px 8px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px">';
+  for (const m of meses) sel += '<option value="' + m + '"' + (m === preciosListaData.mes ? ' selected' : '') + '>' + m + '</option>';
+  sel += '</select>';
+  let h = '<div style="margin:6px 0 10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">'
+    + '<span>Mes: ' + sel + '</span>'
+    + '<span style="color:var(--vw-grey-3);font-size:12px">Lista N° ' + (preciosListaData.listaNum || '—') + ' · ' + filas.length + ' modelos · ' + (preciosListaData.faltan || 0) + ' sin precio</span>'
+    + '<span style="color:var(--vw-grey-3);font-size:12px">Editás precio de lista o costo y al salir del casillero se guarda. De acá leen el motor y la ganancia de Ventas.</span>'
+    + '</div>';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:13px">';
+  h += '<thead><tr style="text-align:left;border-bottom:2px solid var(--vw-grey-2)">'
+    + '<th style="padding:6px 8px">Modelo</th><th style="padding:6px 8px">Código</th>'
+    + '<th style="padding:6px 8px;text-align:right">Precio de lista</th>'
+    + '<th style="padding:6px 8px;text-align:right">Costo (lo que pagás a VW)</th></tr></thead><tbody>';
+  filas.forEach(function (f, i) {
+    const falta = !f.cargado;
+    h += '<tr style="border-bottom:1px solid var(--vw-grey-1)' + (falta ? ';background:#fff7ed' : '') + '">'
+      + '<td style="padding:5px 8px">' + escapeHtml(f.modelo) + (falta ? ' <span style="color:#c2410c;font-size:11px">(sin precio)</span>' : '') + '</td>'
+      + '<td style="padding:5px 8px;color:var(--vw-grey-3)">' + escapeHtml(f.codigo || '') + '</td>'
+      + '<td style="padding:5px 8px;text-align:right"><input id="plL_' + i + '" type="number" value="' + (f.precioLista != null ? f.precioLista : '') + '" onchange="guardarFilaPrecio(' + i + ')" style="width:130px;text-align:right;padding:3px 5px;border:1px solid var(--vw-grey-2);border-radius:5px;font-size:12px"></td>'
+      + '<td style="padding:5px 8px;text-align:right"><input id="plC_' + i + '" type="number" value="' + (f.costo != null ? f.costo : '') + '" onchange="guardarFilaPrecio(' + i + ')" style="width:130px;text-align:right;padding:3px 5px;border:1px solid var(--vw-grey-2);border-radius:5px;font-size:12px"></td>'
+      + '</tr>';
+  });
+  h += '</tbody></table>';
+  cont.innerHTML = h;
+  const up = document.getElementById('updatedAtPreciosLista');
+  if (up) up.textContent = 'Precio de lista y costo por modelo (Supabase, sin Sheet) · ' + preciosListaData.mes;
+}
+
 let preciosData = null;           // espejo de "Actual BT": { modelos:[{modelo,lista,dtoTG,precioOferta,costoRep,gananciaPct,...}] }
 let pagosParseados = [];          // pagos parseados pero NO guardados aún (preview)
 let parseStatus = '';             // texto de progreso del upload
@@ -3377,6 +3464,7 @@ function setTab(tab) {
     ventasov:       'panelVentasOv',
     incentivos:     'panelIncentivos',
     precios:        'panelPrecios',
+    precioslista:   'panelPreciosLista',
     industria:      'panelIndustria',
     admventas:      'panelAdmVentas',
     reparto:        'panelReparto',
@@ -3393,6 +3481,7 @@ function setTab(tab) {
   }
   if (tab === 'ventas'         && !ventasData)   loadVentas(false);
   if (tab === 'ventasov'       && !ventasOvData) loadVentasOv(false);
+  if (tab === 'precioslista'   && !preciosListaData) loadPreciosLista(false);
   if (tab === 'incentivos'     && !incentivosData) loadIncentivos(false);
   if (tab === 'admventas'      && !admVentasData)  loadAdmVentas(false);
   if (tab === 'reparto')                           loadReparto(false);
