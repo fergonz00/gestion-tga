@@ -2500,6 +2500,22 @@ async function loadComprasVW(forzar) {
     });
   }
   const cont = document.getElementById('comprasVWContent');
+
+  // Primer pintado: si hay cache en localStorage, lo mostramos al instante y
+  // refrescamos en background (igual que Stock/Ventas). Antes esperaba siempre
+  // al backend (pesado), por eso "tardaba mucho".
+  if (!comprasVWData && !forzar) {
+    const cached = lsCacheGet('compras');
+    if (cached) {
+      comprasVWData = cached;
+      (comprasVWData.compras || []).forEach(_cvwCalc);
+      renderComprasVW();
+      marcarActualizando('updatedAtComprasVW', cached.updatedAt);
+      _fetchComprasSilent();
+      return;
+    }
+  }
+
   if (cont && !comprasVWData) cont.innerHTML = '<div class="empty">Cargando facturas (Oversoft)…</div>';
   try {
     const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=comprasvw' + (forzar ? '&fresh=1' : '');
@@ -2507,14 +2523,41 @@ async function loadComprasVW(forzar) {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     comprasVWData = data;
+    lsCacheSet('compras', data);
     // El campo cargable es el BRUTO (total c/imp.). Recalculo neto/IVA hacia atrás
     // en cada fila para que el desglose sea consistente con el bruto, no con el
     // neto que devuelve el backend.
     (comprasVWData.compras || []).forEach(_cvwCalc);
-    const up = document.getElementById('updatedAtComprasVW');
-    if (up && data.updatedAt) up.textContent = 'Compras a VW · ' + data.total + ' facturas';
+    _marcarComprasOk(data);
     renderComprasVW();
-  } catch (e) { console.error('loadComprasVW:', e); if (cont) cont.innerHTML = '<div class="empty">Error cargando: ' + escapeHtml(e.message) + '</div>'; }
+  } catch (e) { console.error('loadComprasVW:', e); if (cont && !comprasVWData) cont.innerHTML = '<div class="empty">Error cargando: ' + escapeHtml(e.message) + '</div>'; }
+}
+
+// Badge de Compras: incluye el conteo de facturas además del "✓ Actualizado".
+function _marcarComprasOk(data) {
+  const el = document.getElementById('updatedAtComprasVW');
+  if (!el) return;
+  el.innerHTML = '<span style="color:#16794a;font-weight:600">✓ Actualizado: '
+    + new Date(data.updatedAt || Date.now()).toLocaleString('es-AR') + '</span>'
+    + ' · ' + (data.total || (data.compras || []).length) + ' facturas';
+}
+
+// Refresco en background de Compras, sin spinner (igual que _fetchStockSilent).
+async function _fetchComprasSilent() {
+  if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return;
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=comprasvw&fresh=1';
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.error) return;
+    comprasVWData = data;
+    lsCacheSet('compras', data);
+    (comprasVWData.compras || []).forEach(_cvwCalc);
+    // No piso la UI si el usuario está con un detalle/pago abierto.
+    if (!comprasVWAbierta && !comprasVWPagando) renderComprasVW();
+    _marcarComprasOk(data);
+  } catch { /* silencioso */ }
 }
 
 async function _postCompraVW(obj) {
@@ -3320,6 +3363,7 @@ const LS_CACHE_KEYS = {
   ventas:         'gestion_cache_ventas',
   patentamientos: 'gestion_cache_patent',
   incentivos:     'gestion_cache_incent',
+  compras:        'gestion_cache_compras',
 };
 function lsCacheGet(tipo) {
   try {
@@ -3331,6 +3375,22 @@ function lsCacheSet(tipo, data) {
   try { localStorage.setItem(LS_CACHE_KEYS[tipo], JSON.stringify(data)); }
   catch { /* quota lleno, lo dejamos pasar */ }
   markSync();  // se llama acá porque lsCacheSet solo se invoca tras un fetch fresco
+}
+
+// Indicador "actualizando… / actualizado" para el span de cada solapa.
+// Al pintar desde cache mostramos la fecha vieja + "🔄 actualizando…"; cuando
+// el fetch fresco vuelve, lo cambiamos a "✓ Actualizado HH:MM".
+function marcarActualizando(elId, fechaCache) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const base = fechaCache ? 'Actualizado: ' + new Date(fechaCache).toLocaleString('es-AR') + ' · ' : '';
+  el.innerHTML = base + '<span style="color:#b8860b;font-weight:600">🔄 actualizando…</span>';
+}
+function marcarActualizado(elId, fecha) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const f = fecha ? new Date(fecha) : new Date();
+  el.innerHTML = '<span style="color:#16794a;font-weight:600">✓ Actualizado: ' + f.toLocaleString('es-AR') + '</span>';
 }
 
 // =======================================================================
@@ -4723,8 +4783,7 @@ async function loadStock(forzar) {
     if (cached) {
       stockData = cached;
       renderStock();
-      const upd = document.getElementById('updatedAtStock');
-      if (upd && cached.updatedAt) upd.textContent = 'Actualizado: ' + new Date(cached.updatedAt).toLocaleString('es-AR');
+      marcarActualizando('updatedAtStock', cached.updatedAt);
       _fetchStockSilent();
       return;
     }
@@ -4776,8 +4835,7 @@ async function _fetchStockSilent() {
     lsCacheSet('stock', data);
     if (!calcOpen) renderStock();
     else           renderResumen();  // si la calc bloquea el render de stock, al menos actualizo el resumen
-    const upd = document.getElementById('updatedAtStock');
-    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+    marcarActualizado('updatedAtStock', data.updatedAt);
   } catch { /* silencioso */ }
 }
 
@@ -5529,8 +5587,7 @@ async function loadVentas(forzar) {
         mesSeleccionado = conMesActual ? cached.mesActual : (cached.meses[0] ? cached.meses[0].mesKey : '');
       }
       renderVentas();
-      const upd = document.getElementById('updatedAtVentas');
-      if (upd && cached.updatedAt) upd.textContent = 'Actualizado: ' + new Date(cached.updatedAt).toLocaleString('es-AR');
+      marcarActualizando('updatedAtVentas', cached.updatedAt);
       _fetchVentasSilent();
       return;
     }
@@ -5589,8 +5646,7 @@ async function _fetchVentasSilent() {
       mesSeleccionado = conMesActual ? data.mesActual : (data.meses[0] ? data.meses[0].mesKey : '');
     }
     renderVentas();
-    const upd = document.getElementById('updatedAtVentas');
-    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+    marcarActualizado('updatedAtVentas', data.updatedAt);
     _snapshotearVentasNuevas();
   } catch { /* silencioso */ }
 }
