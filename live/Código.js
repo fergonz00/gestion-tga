@@ -2291,15 +2291,15 @@ function getPatentamientos() {
       mesKey = String(m.mes_patentamiento).slice(0, 7);
       mesKeyOrigen = 'adm';
     } else {
-      // Sin fecha real ni mes confirmado → MES EN CURSO: la venta nueva cuenta
-      // ya como pendiente del mes corriente (la adm la corrige si va a otro mes).
-      mesKey = _yyyyMm(new Date());
-      mesKeyOrigen = 'default';
+      // Sin fecha real ni mes confirmado en la adm → NO se cuenta en ningún mes
+      // hasta que la adm le asigne el mes de patentamiento (o se patente en Oversoft).
+      mesKey = null;
+      mesKeyOrigen = 'sinmes';
     }
-    if (mesKey < PATENTAMIENTOS_MES_MINIMO) continue;
+    if (mesKey && mesKey < PATENTAMIENTOS_MES_MINIMO) continue;
 
     num++;
-    cuentaPorMes[mesKey] = (cuentaPorMes[mesKey] || 0) + 1;
+    if (mesKey) cuentaPorMes[mesKey] = (cuentaPorMes[mesKey] || 0) + 1;
 
     carpetas.push({
       num:                num,
