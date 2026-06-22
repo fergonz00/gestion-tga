@@ -4345,8 +4345,8 @@ function repartoRotacionSec() {
   const rot = (repartoData && repartoData.rotacion) || null;
   if (!rot || !rot.items || !rot.items.length) return '';
   const lbl = (rot.meses || []).slice().reverse().map(_mesLabelCorto).join('–');
-  let h = '<div class="reparto-card"><button class="reparto-toggle" onclick="repartoToggleBox(\'repartoRotBox\', this)">▾ 📊 Rotación por modelo y color · promedio mensual (' + lbl + ')</button>';
-  h += '<div id="repartoRotBox" class="reparto-box">';
+  let h = '<div class="reparto-card"><button class="reparto-toggle" onclick="repartoToggleBox(\'repartoRotBox\', this)">▸ 📊 Rotación por modelo y color · promedio mensual (' + lbl + ')</button>';
+  h += '<div id="repartoRotBox" class="reparto-box hidden">';
   h += '<p class="reparto-hint">Cuántas se venden por mes y cuántos <strong>meses de stock</strong> tenés al ritmo actual (stock ÷ venta mensual). '
     + '<span class="rot-rapido">Verde</span> = rota rápido, poco stock → reponer · <span class="rot-sobra">gris</span> = sobra stock · <span class="rot-norota">rojo</span> = no se vende. '
     + 'Tocá un modelo para ver el detalle por color.</p>';
