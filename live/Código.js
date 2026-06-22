@@ -361,10 +361,23 @@ function _oversoftMotorData(catByNorm) {
   const hoy = new Date();
   const d6 = new Date(hoy.getFullYear(), hoy.getMonth() - 5, 1);
   const desdeStr = d6.getFullYear() + '-' + String(d6.getMonth() + 1).padStart(2, '0') + '-01';
-  const res3 = UrlFetchApp.fetch(OVERSOFT_URL + '/preventas?select=modelo,fecha,precioventa,tasadeivaid&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + desdeStr + '&limit=5000', h);
+  const res3 = UrlFetchApp.fetch(OVERSOFT_URL + '/preventas?select=modelo,fecha,precioventa,tasadeivaid,unidadid&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + desdeStr + '&limit=5000', h);
   const pvs = (res3.getResponseCode() < 300) ? JSON.parse(res3.getContentText()) : [];
+  // Color de las unidades vendidas: ya NO están en el stock (entregada/asignada),
+  // así que su color se resuelve aparte (unidadid → color), en lotes de 100.
+  const colorDeUid = {};
+  const uidSet = {};
+  for (const pv of pvs) if (pv.unidadid) uidSet[pv.unidadid] = true;
+  const uids = Object.keys(uidSet);
+  for (let i = 0; i < uids.length; i += 100) {
+    try {
+      const resU = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=unidadid,color&unidadid=in.(' + uids.slice(i, i + 100).join(',') + ')', h);
+      if (resU.getResponseCode() < 300) for (const u of JSON.parse(resU.getContentText())) colorDeUid[u.unidadid] = colorDe[String(u.color)] || ('color ' + u.color);
+    } catch (e) {}
+  }
   const ventasPorTrim = {};
   const ventasDet = {};   // nc → [{mes, monto, iva}] para la gcia real por venta
+  const ventasColorPorTrim = {};   // nc → color → mes → cantidad (rotación por color)
   for (const pv of pvs) {
     const nc = ncDe(pv.modelo);
     if (!nc) { anotarSinCat(pv.modelo, 'ventas'); continue; }
@@ -372,6 +385,10 @@ function _oversoftMotorData(catByNorm) {
     const mk = String(pv.fecha).slice(0, 7);
     if (!ventasPorTrim[nc]) ventasPorTrim[nc] = {};
     ventasPorTrim[nc][mk] = (ventasPorTrim[nc][mk] || 0) + 1;
+    const colNom = pv.unidadid ? (colorDeUid[pv.unidadid] || '(sin color)') : '(sin color)';
+    if (!ventasColorPorTrim[nc]) ventasColorPorTrim[nc] = {};
+    if (!ventasColorPorTrim[nc][colNom]) ventasColorPorTrim[nc][colNom] = {};
+    ventasColorPorTrim[nc][colNom][mk] = (ventasColorPorTrim[nc][colNom][mk] || 0) + 1;
     const monto = Number(pv.precioventa) || 0;
     if (monto > 0) {
       if (!ventasDet[nc]) ventasDet[nc] = [];
@@ -380,7 +397,8 @@ function _oversoftMotorData(catByNorm) {
     }
   }
   return { stockPorTrim: stockPorTrim, stockColorPorTrim: stockColorPorTrim, stockTotal: stockTotal,
-           ventasPorTrim: ventasPorTrim, ventasDet: ventasDet, sinCatalogo: Object.values(sinCat) };
+           ventasPorTrim: ventasPorTrim, ventasDet: ventasDet, ventasColorPorTrim: ventasColorPorTrim,
+           sinCatalogo: Object.values(sinCat) };
 }
 
 // Gcia real de UNA venta, % sobre lista — réplica EXACTA de la fórmula de la
@@ -1739,7 +1757,7 @@ function getBaratitoMotor() {
     if (c.nombre_bt)    catByNorm[_ntrim(c.nombre_bt)]    = c.nombre_corto;
   }
   // Stock Y ventas, ambos genuinos desde Oversoft (por trim exacto).
-  let stockPorTrim = {}, stockColorPorTrim = {}, stockTotalOversoft = 0, ventasNc = {}, ventasDet = {}, sinCatalogo = [];
+  let stockPorTrim = {}, stockColorPorTrim = {}, stockTotalOversoft = 0, ventasNc = {}, ventasDet = {}, ventasColorPorTrim = {}, sinCatalogo = [];
   try {
     const od = _oversoftMotorData(catByNorm);
     stockPorTrim = od.stockPorTrim;
@@ -1747,6 +1765,7 @@ function getBaratitoMotor() {
     stockTotalOversoft = od.stockTotal;
     ventasNc = od.ventasPorTrim;
     ventasDet = od.ventasDet || {};
+    ventasColorPorTrim = od.ventasColorPorTrim || {};
     sinCatalogo = od.sinCatalogo || [];
   } catch (e) {}
 
@@ -1812,6 +1831,8 @@ function getBaratitoMotor() {
       incentivosDet: incDetByNc[c.nombre_corto] || [],
       mesIncentivos: mesUsado,
       ventasPorMes:  ventasNc[c.nombre_corto] || {},
+      // ventas por color y por mes (rotación por color en el Reparto)
+      ventasColorPorMes: ventasColorPorTrim[c.nombre_corto] || {},
       // stock por color (Oversoft) + ajustes de precio por color ('*' = todos)
       colores:       Object.entries(stockColorPorTrim[c.nombre_corto] || {})
                        .map(([col, n]) => ({ color: col, stock: n }))
@@ -3359,8 +3380,9 @@ function getReparto() {
 
   // Ventas + stock por modelo (cruce por NOMBRE con el motor) + desglose por color.
   var motorByNorm = {};
+  var motor = null;
   try {
-    var motor = _cached('motor', CACHE_TTL_SEC, false, getBaratitoMotor);
+    motor = _cached('motor', CACHE_TTL_SEC, false, getBaratitoMotor);
     (motor.modelos || []).forEach(function (m) {
       var v = { ventasPorMes: m.ventasPorMes, stock: m.stock, colores: m.colores || [] };
       if (m.modelo) motorByNorm[_repartoNtrim(m.modelo)] = v;
@@ -3421,7 +3443,54 @@ function getReparto() {
       alerta: r.estado_compra === 'comprado' && !ov && dias !== null && dias >= 2
     });
   });
-  return { periodo: periodo, items: items, colores: colores };
+  return { periodo: periodo, items: items, colores: colores, rotacion: _repartoRotacion(motor) };
+}
+
+// =======================================================================
+// ROTACIÓN (para decidir la compra) — por modelo y, dentro del modelo, por
+// color. Ventana = los 3 meses calendario COMPLETOS anteriores al actual (no
+// se incluye el mes en curso, que es parcial y deformaría el promedio). Para
+// cada modelo/color: vta/mes promedio y "meses de stock" = stock / vta-mes
+// (cuántos meses dura el stock actual al ritmo de venta). Todo sale del motor
+// (Oversoft, ya cacheado), no pega de nuevo.
+// =======================================================================
+function _rotMesesRef() {
+  var out = [], now = new Date();
+  for (var i = 1; i <= 3; i++) {
+    var d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    out.push(d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2));
+  }
+  return out;   // p.ej. ['2026-05','2026-04','2026-03']
+}
+function _repartoRotacion(motor) {
+  var refMeses = _rotMesesRef();
+  var nMes = refMeses.length;
+  var sum = function (vpm) { var s = 0; for (var i = 0; i < refMeses.length; i++) s += Number((vpm || {})[refMeses[i]]) || 0; return s; };
+  var out = [];
+  ((motor && motor.modelos) || []).forEach(function (m) {
+    var v3 = sum(m.ventasPorMes);
+    var stock = Number(m.stock) || 0;
+    if (v3 === 0 && stock === 0) return;   // ni stock ni ventas → no aporta a la decisión
+    var stkCol = {};
+    (m.colores || []).forEach(function (c) { stkCol[c.color] = Number(c.stock) || 0; });
+    var vtaCol = m.ventasColorPorMes || {};
+    var nombres = {};
+    Object.keys(stkCol).forEach(function (k) { nombres[k] = 1; });
+    Object.keys(vtaCol).forEach(function (k) { nombres[k] = 1; });
+    var colores = Object.keys(nombres).map(function (col) {
+      var cv3 = sum(vtaCol[col]);
+      var cstk = stkCol[col] || 0;
+      return { color: col, stock: cstk, venta3m: cv3, ventaMes: cv3 / nMes, mesesStock: cv3 > 0 ? cstk / (cv3 / nMes) : null };
+    }).sort(function (a, b) { return b.venta3m - a.venta3m || b.stock - a.stock; });
+    out.push({
+      modelo: m.modelo, nombreCorto: m.nombreCorto, familia: m.familia,
+      stock: stock, venta3m: v3, ventaMes: v3 / nMes,
+      mesesStock: v3 > 0 ? stock / (v3 / nMes) : null,
+      colores: colores
+    });
+  });
+  out.sort(function (a, b) { return b.venta3m - a.venta3m || b.stock - a.stock; });
+  return { meses: refMeses, items: out };
 }
 
 // =======================================================================

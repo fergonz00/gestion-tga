@@ -1218,6 +1218,16 @@ table.patent-tbl.resumida .col-extra { display: none; }
 .reparto-det-col.match { border-color: var(--vw-blue); background: #eef3fc; font-weight: 600; }
 .reparto-det-buy { margin-top: 6px; font-size: 12px; color: #93231f; font-weight: 500; }
 .reparto-det-ok { margin-top: 6px; font-size: 12px; color: #1a7f37; }
+/* Rotación (panel de compra) */
+.rot-tabla tbody tr.rot-row:hover { background: var(--vw-grey-1); }
+.rot-rapido { color: #1a7f37; font-weight: 700; }   /* rota rápido → reponer */
+.rot-ok { color: var(--vw-grey-5, #1a1a1a); }
+.rot-sobra { color: #8a8a8a; }                       /* sobra stock */
+.rot-norota { color: #b00020; font-weight: 600; }    /* stock que no se vende */
+.rot-col-tabla { width: 100%; border-collapse: collapse; }
+.rot-col-tabla td { padding: 3px 8px; font-size: 12px; border-top: 1px solid var(--vw-grey-2); }
+.rot-col-tabla tr.rot-agotado { background: #eef7f0; }
+.rot-agotado-lbl { color: #1a7f37; font-weight: 600; font-size: 11px; }
 </style>
 
 <!-- pdf.js para parsing client-side de los NCs -->
@@ -4122,6 +4132,9 @@ function renderReparto() {
   html += '<div class="reparto-head"><h3>Reparto de VW · ' + _mesLabel(repartoData.periodo || mesHoy) + '</h3><span class="reparto-sub">' + pend + ' pendientes · ' + comprados + ' comprados · ' + confirmados + ' confirmados</span></div>';
   if (alertas > 0) html += '<div class="reparto-alerta">⚠ ' + alertas + ' unidad' + (alertas !== 1 ? 'es' : '') + ' comprada' + (alertas !== 1 ? 's' : '') + ' hace 2 días o más sin aparecer en Oversoft. Revisá con Valeria.</div>';
 
+  // Rotación por modelo y color (dato clave para decidir qué comprar)
+  html += repartoRotacionSec();
+
   // Cargar mail
   html += '<div class="reparto-card"><button class="reparto-toggle" onclick="repartoToggleBox(\'repartoCargarBox\', this)">▸ Cargar reparto (pegá la tabla del mail de VW)</button>';
   html += '<div id="repartoCargarBox" class="reparto-box hidden"><p class="reparto-hint">Se suman las nuevas; los VIN repetidos se ignoran. Al cambiar de mes, se renueva.</p>';
@@ -4165,6 +4178,7 @@ function renderReparto() {
 
   wrap.innerHTML = html;
   repartoFiltrar();
+  repartoRotFiltrar();
   repartoUpdBtn();
 }
 
@@ -4308,6 +4322,80 @@ function repartoFiltrar() {
 function repartoToggleDetalle(vin) {
   const el = document.getElementById('repdet-' + vin);
   if (el) el.classList.toggle('hidden');
+}
+
+// ---- Rotación por modelo y color (panel de compra) -------------------------
+function _mesLabelCorto(mk) {
+  const M = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  const p = String(mk).split('-'); return M[Number(p[1]) - 1] || mk;
+}
+function _rotFmt(x) {
+  if (x == null) return '—';
+  return (Math.round(x * 10) / 10).toString().replace('.', ',');
+}
+// Celda "meses de stock" con color: <1 rota rápido (reponer), 1–3 ok, >3 sobra,
+// null+stock = no rota (stock parado), null+sin stock = —.
+function _rotMesesCell(ms, stock) {
+  if (ms == null) return (stock > 0) ? '<span class="rot-norota">∞ no rota</span>' : '—';
+  const v = (Math.round(ms * 10) / 10).toString().replace('.', ',');
+  const cls = ms < 1 ? 'rot-rapido' : (ms <= 3 ? 'rot-ok' : 'rot-sobra');
+  return '<span class="' + cls + '">' + v + ' m</span>';
+}
+function repartoRotacionSec() {
+  const rot = (repartoData && repartoData.rotacion) || null;
+  if (!rot || !rot.items || !rot.items.length) return '';
+  const lbl = (rot.meses || []).slice().reverse().map(_mesLabelCorto).join('–');
+  let h = '<div class="reparto-card"><button class="reparto-toggle" onclick="repartoToggleBox(\'repartoRotBox\', this)">▾ 📊 Rotación por modelo y color · promedio mensual (' + lbl + ')</button>';
+  h += '<div id="repartoRotBox" class="reparto-box">';
+  h += '<p class="reparto-hint">Cuántas se venden por mes y cuántos <strong>meses de stock</strong> tenés al ritmo actual (stock ÷ venta mensual). '
+    + '<span class="rot-rapido">Verde</span> = rota rápido, poco stock → reponer · <span class="rot-sobra">gris</span> = sobra stock · <span class="rot-norota">rojo</span> = no se vende. '
+    + 'Tocá un modelo para ver el detalle por color.</p>';
+  h += '<input type="search" id="repartoRotBusq" placeholder="Buscar modelo o familia..." oninput="repartoRotFiltrar()" class="reparto-search" style="margin-bottom:8px">';
+  h += '<div id="repartoRotWrap"></div></div></div>';
+  return h;
+}
+function repartoRotFiltrar() {
+  const wrap = document.getElementById('repartoRotWrap'); if (!wrap) return;
+  const rot = (repartoData && repartoData.rotacion) || { items: [] };
+  const qEl = document.getElementById('repartoRotBusq');
+  const q = (qEl ? qEl.value : '').trim().toLowerCase();
+  const items = (rot.items || []).filter(m => !q
+    || (m.modelo || '').toLowerCase().includes(q) || (m.familia || '').toLowerCase().includes(q));
+  if (!items.length) { wrap.innerHTML = '<div class="empty">Sin datos de rotación' + (q ? ' para la búsqueda.' : '.') + '</div>'; return; }
+  let h = '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla rot-tabla"><thead><tr>'
+    + '<th>Modelo</th><th class="num">Stock</th><th class="num">Vta/mes</th><th class="num">Meses stock</th></tr></thead><tbody>';
+  items.forEach((m, idx) => {
+    h += '<tr class="rot-row" onclick="repartoRotToggle(' + idx + ')">';
+    h += '<td><span class="reparto-chev" id="rotchev-' + idx + '">▸</span> <span class="reparto-modelo">' + escapeHtml((m.modelo || '').replace(/^VW /, '')) + '</span><div class="reparto-fam">' + escapeHtml(m.familia || '') + '</div></td>';
+    h += '<td class="num">' + m.stock + '</td>';
+    h += '<td class="num">' + _rotFmt(m.ventaMes) + '</td>';
+    h += '<td class="num">' + _rotMesesCell(m.mesesStock, m.stock) + '</td></tr>';
+    h += '<tr id="rotdet-' + idx + '" class="reparto-detalle hidden"><td colspan="4">' + _rotColoresHtml(m) + '</td></tr>';
+  });
+  h += '</tbody></table></div></div>';
+  wrap.innerHTML = h;
+}
+function _rotColoresHtml(m) {
+  const cols = m.colores || [];
+  if (!cols.length) return '<div class="reparto-fam">Sin datos por color.</div>';
+  let h = '<div class="reparto-det-ttl">Por color · vta/mes · stock · meses de stock:</div>';
+  h += '<table class="rot-col-tabla"><tbody>';
+  cols.forEach(c => {
+    const agotado = (c.stock || 0) === 0 && (c.venta3m || 0) > 0;
+    h += '<tr' + (agotado ? ' class="rot-agotado"' : '') + '>'
+      + '<td><strong>' + escapeHtml(c.color) + '</strong></td>'
+      + '<td class="num">' + _rotFmt(c.ventaMes) + '/mes</td>'
+      + '<td class="num">stock ' + c.stock + '</td>'
+      + '<td class="num">' + _rotMesesCell(c.mesesStock, c.stock) + '</td>'
+      + '<td>' + (agotado ? '<span class="rot-agotado-lbl">⚠ se vendió todo · reponé este color</span>' : '') + '</td></tr>';
+  });
+  h += '</tbody></table>';
+  return h;
+}
+function repartoRotToggle(idx) {
+  const el = document.getElementById('rotdet-' + idx);
+  const ch = document.getElementById('rotchev-' + idx);
+  if (el) { const hid = el.classList.toggle('hidden'); if (ch) ch.textContent = hid ? '▸' : '▾'; }
 }
 
 // =======================================================================
