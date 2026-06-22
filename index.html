@@ -1294,6 +1294,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
       <!-- La solapa Stock muestra directo el stock de Oversoft (subtabs: Stock / En exposición). -->
       <div class="subtabs" style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
         <button class="subtab active" data-subtab="oversoft" onclick="setStockSubtab('oversoft')">Stock</button>
+        <button class="subtab" data-subtab="analisis" onclick="setStockSubtab('analisis')">Análisis stock</button>
         <button class="subtab" data-subtab="exposicion" onclick="setStockSubtab('exposicion')">En exposición</button>
       </div>
 
@@ -1305,6 +1306,16 @@ table.patent-tbl.resumida .col-extra { display: none; }
           </div>
         </div>
         <div id="oversoftStockContent"></div>
+      </div>
+
+      <div class="subpanel" id="subpanelAnalisisStock">
+        <div class="toolbar">
+          <div class="updated" id="updatedAtAnalisis">Stock por modelo y color + rotación de los últimos 6 meses completos.</div>
+          <div class="actions">
+            <button class="refresh" onclick="loadAnalisisStock(true)">Actualizar</button>
+          </div>
+        </div>
+        <div id="analisisStockContent"><div class="empty">Cargando…</div></div>
       </div>
 
       <div class="subpanel" id="subpanelExposicion">
@@ -3775,16 +3786,189 @@ const _OVS_norm = s => String(s == null ? '' : s).trim().toUpperCase();
 function setStockSubtab(name) {
   document.querySelectorAll('.subtab').forEach(b => b.classList.toggle('active', b.dataset.subtab === name));
   document.getElementById('subpanelOversoft').classList.toggle('active',  name === 'oversoft');
+  const spAna = document.getElementById('subpanelAnalisisStock');
+  if (spAna) spAna.classList.toggle('active', name === 'analisis');
   const spExpo = document.getElementById('subpanelExposicion');
   if (spExpo) spExpo.classList.toggle('active', name === 'exposicion');
   if (name === 'oversoft') {
     if (!oversoftStockData) loadOversoftStock(false);
     else                    renderOversoftStock();
   }
+  if (name === 'analisis') {
+    if (!analisisStockData) loadAnalisisStock(false);
+    else                    renderAnalisisStock();
+  }
   if (name === 'exposicion') {
     if (!exposicionData) loadExposicion(false);
     else                 renderExposicion();
   }
+}
+
+// =======================================================================
+// ANÁLISIS DE STOCK — stock por modelo y, dentro, por color + rotación de los
+// últimos 6 meses completos y "meses de stock". Data del backend
+// (tipo=analisisstock, todo Oversoft).  Meses de stock = stock ÷ (ventas6m÷6).
+// =======================================================================
+let analisisStockData = null;
+let analisisOrden = 'catalogo';        // catalogo | sobrestock | rotacion | stock
+const analisisAbiertos = new Set();    // nombreCorto de modelos con el detalle por color abierto
+let _anaNc = [];                       // índice de fila → nombreCorto (para el onclick)
+
+const _MESES_ABR = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+function _mesAbr(mk) {
+  const m = String(mk||'').match(/^(\d{4})-(\d{2})$/);
+  return m ? (_MESES_ABR[parseInt(m[2],10)-1] + ' ' + m[1].slice(2)) : mk;
+}
+function _anaCard(label, value) {
+  return '<div class="card"><div class="label">'+label+'</div><div class="value">'+value+'</div></div>';
+}
+function _anaLeg(bg, fg, txt) {
+  return '<span style="display:inline-flex;align-items:center;gap:5px"><span style="width:13px;height:13px;border-radius:3px;background:'+bg+';border:1px solid '+fg+'"></span>'+txt+'</span>';
+}
+function _anaOpt(v, label) {
+  return '<option value="'+v+'"'+(analisisOrden===v?' selected':'')+'>'+label+'</option>';
+}
+// "peor" (más arriba en orden sobrestock): parado primero, luego más meses de stock.
+function _mesesRank(it) {
+  if (it.stock > 0 && it.mesesStock == null) return 9999;   // stock parado, sin ventas
+  if (it.mesesStock == null) return -1;                     // sin stock ni ventas
+  return it.mesesStock;
+}
+// Badge coloreado de "meses de stock" según la rotación.
+function _mesesBadge(meses, stock) {
+  if (!stock) return '<span style="color:var(--vw-grey-3)">—</span>';
+  let bg, fg, txt;
+  if (meses == null)   { bg='#fae0d4'; fg='#c0657a'; txt='parado'; }
+  else if (meses < 1)  { bg='#fff3cd'; fg='#a07000'; txt=fmtNumLite(meses)+' m · reponer'; }
+  else if (meses <= 4) { bg='#d4edda'; fg='#2d6a4f'; txt=fmtNumLite(meses)+' m'; }
+  else if (meses <= 8) { bg='#fff3cd'; fg='#a07000'; txt=fmtNumLite(meses)+' m'; }
+  else                 { bg='#fae0d4'; fg='#c0657a'; txt=fmtNumLite(meses)+' m · sobrestock'; }
+  return '<span style="background:'+bg+';color:'+fg+';font-weight:700;padding:3px 9px;border-radius:5px;white-space:nowrap;font-size:12px">'+txt+'</span>';
+}
+// Mini-barras de ventas por mes (de más viejo a más nuevo).
+function _sparkline(vpm, meses) {
+  vpm = vpm || {};
+  let max = 1;
+  meses.forEach(m => { max = Math.max(max, Number(vpm[m])||0); });
+  let h = '<span style="display:inline-flex;align-items:flex-end;gap:2px;height:22px">';
+  meses.forEach(m => {
+    const v = Number(vpm[m])||0;
+    const ph = Math.round(3 + (v/max)*19);
+    const col = v ? 'var(--vw-blue)' : 'var(--vw-grey-2)';
+    h += '<span style="width:7px;height:'+ph+'px;background:'+col+';border-radius:2px" title="'+_mesAbr(m)+': '+v+'"></span>';
+  });
+  return h + '</span>';
+}
+
+async function loadAnalisisStock(forzar) {
+  const wrap = document.getElementById('analisisStockContent');
+  if (analisisStockData && !forzar) { renderAnalisisStock(); return; }
+  wrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>Calculando análisis de stock…</div></div>';
+  try {
+    analisisStockData = await _fetchJson('analisisstock', forzar);
+    renderAnalisisStock();
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty">No se pudo cargar el análisis: ' + escapeHtml(String(e && e.message || e)) + '</div>';
+  }
+}
+
+function _setAnalisisOrden(v) { analisisOrden = v; renderAnalisisStock(); }
+function toggleAnalisisModelo(idx) {
+  const nc = _anaNc[idx];
+  if (nc == null) return;
+  if (analisisAbiertos.has(nc)) analisisAbiertos.delete(nc); else analisisAbiertos.add(nc);
+  renderAnalisisStock();
+}
+
+function renderAnalisisStock() {
+  const d = analisisStockData;
+  const wrap = document.getElementById('analisisStockContent');
+  if (!d || !d.items) { wrap.innerHTML = '<div class="empty">Sin datos.</div>'; return; }
+  const meses = d.meses || [];
+  const upd = document.getElementById('updatedAtAnalisis');
+  if (upd && d.updatedAt) upd.textContent = 'Stock por modelo y color + rotación de los últimos 6 meses · actualizado ' + new Date(d.updatedAt).toLocaleString('es-AR');
+
+  // KPIs globales
+  const ventas6m = d.ventasTotal || 0;
+  const vtaMesGlobal = ventas6m / (meses.length || 6);
+  const mesesGlobal = vtaMesGlobal > 0 ? d.stockCatalogado / vtaMesGlobal : null;
+
+  // ordenar copia (catalogo = orden del backend)
+  const items = d.items.slice();
+  if      (analisisOrden === 'sobrestock') items.sort((a,b) => _mesesRank(b) - _mesesRank(a) || b.stock - a.stock);
+  else if (analisisOrden === 'rotacion')   items.sort((a,b) => b.ventaMes - a.ventaMes || b.stock - a.stock);
+  else if (analisisOrden === 'stock')      items.sort((a,b) => b.stock - a.stock);
+  _anaNc = items.map(i => i.nombreCorto);
+
+  let h = '';
+  h += '<div class="cards">';
+  h += _anaCard('Stock catalogado', d.stockCatalogado + (d.stockSinCatalogo ? ' <span style="font-size:12px;color:var(--vw-grey-3)">(+'+d.stockSinCatalogo+' s/cat.)</span>' : ''));
+  h += _anaCard('Modelos en stock', items.filter(i=>i.stock>0).length);
+  h += _anaCard('Ventas 6 meses', ventas6m);
+  h += _anaCard('Prom. ventas/mes', fmtNumLite(vtaMesGlobal));
+  h += _anaCard('Meses de stock', mesesGlobal!=null ? fmtNumLite(mesesGlobal)+' m' : '—');
+  h += '</div>';
+
+  h += '<div style="font-size:12px;color:var(--vw-grey-4);margin-bottom:10px">'
+     + 'Rotación calculada sobre <strong>'+ (meses.length ? (_mesAbr(meses[0])+' → '+_mesAbr(meses[meses.length-1])) : '—') +'</strong> '
+     + '(6 meses completos; el mes en curso no cuenta). <em>Meses de stock = stock ÷ (ventas 6m ÷ 6)</em>. Tocá un modelo para ver el desglose por color.'
+     + '</div>';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">';
+  h += '<div style="display:flex;gap:14px;align-items:center;font-size:12px;color:var(--vw-grey-4);flex-wrap:wrap">'
+     + _anaLeg('#d4edda','#2d6a4f','sano (1–4 m)') + _anaLeg('#fff3cd','#a07000','reponer / alto') + _anaLeg('#fae0d4','#c0657a','parado / sobrestock')
+     + '</div>';
+  h += '<label style="font-size:12px;color:var(--vw-grey-4)">Ordenar: '
+     + '<select onchange="_setAnalisisOrden(this.value)" style="font-family:inherit;font-size:12px;padding:4px 8px;border:1px solid var(--vw-grey-2);border-radius:5px;margin-left:4px">'
+     + _anaOpt('catalogo','Catálogo') + _anaOpt('sobrestock','Más sobrestock') + _anaOpt('rotacion','Más rotación') + _anaOpt('stock','Más stock')
+     + '</select></label>';
+  h += '</div>';
+
+  h += '<div class="evol-tbl-card"><table class="evol-tbl">';
+  h += '<thead><tr><th style="width:20px"></th><th>Modelo</th><th class="num">Stock</th><th class="num">Vta 6m</th><th class="num">Vta/mes</th><th class="num">Meses stock</th><th style="text-align:center">Tendencia</th></tr></thead><tbody>';
+  items.forEach((it, idx) => {
+    const abierto = analisisAbiertos.has(it.nombreCorto);
+    h += '<tr style="cursor:pointer" onclick="toggleAnalisisModelo('+idx+')">';
+    h += '<td style="color:var(--vw-grey-3);text-align:center">'+(abierto?'▾':'▸')+'</td>';
+    h += '<td><div style="font-weight:700;color:var(--vw-grey-5)">'+escapeHtml(it.modelo)+'</div>'
+       + (it.familia ? '<div style="font-size:11px;color:var(--vw-grey-3)">'+escapeHtml(it.familia)+'</div>' : '')+'</td>';
+    h += '<td class="num" style="font-size:15px">'+it.stock+'</td>';
+    h += '<td class="num">'+it.venta6m+'</td>';
+    h += '<td class="num">'+fmtNumLite(it.ventaMes)+'</td>';
+    h += '<td class="num">'+_mesesBadge(it.mesesStock, it.stock)+'</td>';
+    h += '<td style="text-align:center">'+_sparkline(it.ventasPorMes, meses)+'</td>';
+    h += '</tr>';
+    if (abierto) {
+      h += '<tr class="actual"><td></td><td colspan="6" style="padding:0 14px 12px">';
+      if (!it.colores || !it.colores.length) {
+        h += '<div style="font-size:12px;color:var(--vw-grey-3);padding:8px 0">Sin detalle de color.</div>';
+      } else {
+        h += '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:4px">';
+        h += '<thead><tr style="color:var(--vw-grey-3)">'
+           + '<th style="text-align:left;padding:6px 8px;font-weight:700">Color</th>'
+           + '<th style="text-align:right;padding:6px 8px">Stock</th>'
+           + '<th style="text-align:right;padding:6px 8px">Vta 6m</th>'
+           + '<th style="text-align:right;padding:6px 8px">Vta/mes</th>'
+           + '<th style="text-align:right;padding:6px 8px">Meses stock</th>'
+           + '<th style="text-align:center;padding:6px 8px">Tendencia</th></tr></thead><tbody>';
+        it.colores.forEach(c => {
+          h += '<tr style="border-top:1px solid var(--vw-grey-1)">';
+          h += '<td style="padding:6px 8px;font-weight:600;color:var(--vw-grey-5)">'+escapeHtml(c.color)+'</td>';
+          h += '<td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums">'+c.stock+'</td>';
+          h += '<td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums">'+c.venta6m+'</td>';
+          h += '<td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums">'+fmtNumLite(c.ventaMes)+'</td>';
+          h += '<td style="padding:6px 8px;text-align:right">'+_mesesBadge(c.mesesStock, c.stock)+'</td>';
+          h += '<td style="padding:6px 8px;text-align:center">'+_sparkline(c.ventasPorMes, meses)+'</td>';
+          h += '</tr>';
+        });
+        h += '</tbody></table>';
+      }
+      h += '</td></tr>';
+    }
+  });
+  h += '</tbody></table></div>';
+
+  if (!items.length) h = '<div class="empty">No hay stock ni ventas en el período.</div>';
+  wrap.innerHTML = h;
 }
 
 // =======================================================================

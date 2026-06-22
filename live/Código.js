@@ -89,6 +89,7 @@ function doGet(e) {
     if (tipo === 'exposicion')      return jsonResponse(getExposicion());          // stock en exposición por salón (tabla exposicion_unidades, wjfgl)
     if (tipo === 'reponer')         return jsonResponse(reponerExposicion(params)); // repone una unidad de exposición vendida y avisa por WhatsApp
     if (tipo === 'unidades')        return jsonResponse(_cached('unidades', CACHE_TTL_SEC, fresh, getStockUnidades)); // stock por CHASIS enriquecido (modelo BT, color, antigüedad) para precio especial por unidad
+    if (tipo === 'analisisstock')   return jsonResponse(_cached('analisisstock', CACHE_TTL_SEC, fresh, getAnalisisStock)); // stock por modelo+color + rotación 6 meses + meses de stock
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
@@ -1702,6 +1703,150 @@ function getStockUnidades() {
   }
   out.sort((a, b) => (b.antigDias || 0) - (a.antigDias || 0));
   return { unidades: out, total: out.length, updatedAt: new Date().toISOString() };
+}
+
+// =======================================================================
+// ANÁLISIS DE STOCK — por modelo y, dentro de cada uno, por color; con la
+// rotación de los ÚLTIMOS 6 MESES COMPLETOS (excluye el mes en curso, que es
+// parcial) y los "meses de stock" estimados:
+//     meses de stock = stock actual / (ventas 6 meses / 6)
+// < 1 mes  ⇒ se vende rápido, riesgo de quiebre / reponer.
+// > 6 meses ⇒ sobrestock / rota lento.  Sin ventas ⇒ stock parado.
+// Todo genuino desde Oversoft (stock por trim+color; preventas 0km no anuladas).
+// =======================================================================
+function getAnalisisStock() {
+  const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
+
+  // catálogo: norm(corto|bt) → nombre_corto ; nombre_corto → bt/familia/orden
+  const cat = _supaGet('/catalogo_modelos?select=codigo,nombre_corto,nombre_bt,familia&activo=eq.true&order=orden.asc.nullslast,nombre_corto.asc');
+  const catByNorm = {}; const btByNc = {}; const famByNc = {}; const ordenNc = [];
+  for (const c of cat) {
+    if (c.nombre_corto) {
+      catByNorm[_ntrim(c.nombre_corto)] = c.nombre_corto;
+      btByNc[c.nombre_corto] = c.nombre_bt || c.nombre_corto;
+      famByNc[c.nombre_corto] = c.familia || '';
+      ordenNc.push(c.nombre_corto);
+    }
+    if (c.nombre_bt) catByNorm[_ntrim(c.nombre_bt)] = c.nombre_corto;
+  }
+
+  // descripción operativa por código de compra (paginado, igual que el motor)
+  const desc = {};
+  let off = 0;
+  for (let i = 0; i < 12; i++) {
+    const res = UrlFetchApp.fetch(OVERSOFT_URL + '/modelos?select=codigodecompra,descripcionoperativa&order=modeloid&limit=1000&offset=' + off, h);
+    if (res.getResponseCode() >= 300) break;
+    const ch = JSON.parse(res.getContentText());
+    for (const m of ch) if (m.codigodecompra) desc[String(m.codigodecompra).trim()] = m.descripcionoperativa;
+    if (ch.length < 1000) break;
+    off += 1000;
+  }
+  const ncDe = (codFull) => { const d = desc[String(codFull || '').trim()]; return d ? (catByNorm[_ntrim(d)] || null) : null; };
+
+  // colorid → descripción
+  const colorDe = {};
+  try {
+    const resC = UrlFetchApp.fetch(OVERSOFT_URL + '/colores?select=colorid,descripcion&limit=2000', h);
+    if (resC.getResponseCode() < 300) for (const c of JSON.parse(resC.getContentText())) colorDe[String(c.colorid)] = String(c.descripcion || '').trim();
+  } catch (e) {}
+
+  // STOCK actual por trim + color (no entregada, no asignada, sin preventa)
+  const resU = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo,color&entregada=eq.false&asignada=eq.false&preventa=eq.&limit=3000', h);
+  const us = (resU.getResponseCode() < 300) ? JSON.parse(resU.getContentText()) : [];
+  const stockNc = {}; const stockColorNc = {}; let stockTotal = 0; let stockSinCat = 0;
+  for (const u of us) {
+    stockTotal++;
+    const nc = ncDe(u.modelo);
+    if (!nc) { stockSinCat++; continue; }
+    stockNc[nc] = (stockNc[nc] || 0) + 1;
+    const col = colorDe[String(u.color)] || ('color ' + u.color);
+    if (!stockColorNc[nc]) stockColorNc[nc] = {};
+    stockColorNc[nc][col] = (stockColorNc[nc][col] || 0) + 1;
+  }
+
+  // VENTAS de los últimos 6 meses COMPLETOS (excluye el mes en curso, parcial).
+  const hoy = new Date();
+  const finExcl = new Date(hoy.getFullYear(), hoy.getMonth(), 1);     // 1° del mes actual
+  const ini     = new Date(hoy.getFullYear(), hoy.getMonth() - 6, 1); // 1° de 6 meses atrás
+  const iso = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-01';
+  const refMeses = [];
+  for (let i = 6; i >= 1; i--) { const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1); refMeses.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')); }
+  const res3 = UrlFetchApp.fetch(OVERSOFT_URL + '/preventas?select=modelo,fecha,unidadid&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + iso(ini) + '&fecha=lt.' + iso(finExcl) + '&limit=8000', h);
+  const pvs = (res3.getResponseCode() < 300) ? JSON.parse(res3.getContentText()) : [];
+
+  // color de las unidades vendidas (ya no están en stock): unidadid → color, en lotes de 100
+  const uidSet = {};
+  for (const pv of pvs) if (pv.unidadid) uidSet[pv.unidadid] = true;
+  const uids = Object.keys(uidSet);
+  const colorDeUid = {};
+  for (let i = 0; i < uids.length; i += 100) {
+    try {
+      const resUU = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=unidadid,color&unidadid=in.(' + uids.slice(i, i + 100).join(',') + ')', h);
+      if (resUU.getResponseCode() < 300) for (const u of JSON.parse(resUU.getContentText())) colorDeUid[u.unidadid] = colorDe[String(u.color)] || ('color ' + u.color);
+    } catch (e) {}
+  }
+
+  const ventasNc = {};       // nc → mes → cant
+  const ventasColorNc = {};  // nc → color → mes → cant
+  let ventasTotal = 0, ventasSinCat = 0;
+  for (const pv of pvs) {
+    if (!pv.fecha) continue;
+    const mk = String(pv.fecha).slice(0, 7);
+    if (refMeses.indexOf(mk) < 0) continue;   // por las dudas, solo meses de referencia
+    ventasTotal++;
+    const nc = ncDe(pv.modelo);
+    if (!nc) { ventasSinCat++; continue; }
+    if (!ventasNc[nc]) ventasNc[nc] = {};
+    ventasNc[nc][mk] = (ventasNc[nc][mk] || 0) + 1;
+    const colNom = pv.unidadid ? (colorDeUid[pv.unidadid] || '(sin color)') : '(sin color)';
+    if (!ventasColorNc[nc]) ventasColorNc[nc] = {};
+    if (!ventasColorNc[nc][colNom]) ventasColorNc[nc][colNom] = {};
+    ventasColorNc[nc][colNom][mk] = (ventasColorNc[nc][colNom][mk] || 0) + 1;
+  }
+
+  const N = refMeses.length;   // 6
+  const sumMes = (vpm) => { let s = 0; for (const m of refMeses) s += Number((vpm || {})[m]) || 0; return s; };
+
+  // armar salida: todos los modelos con stock o ventas en la ventana
+  const ncs = {};
+  Object.keys(stockNc).forEach((k) => ncs[k] = 1);
+  Object.keys(ventasNc).forEach((k) => ncs[k] = 1);
+  const items = [];
+  for (const nc of Object.keys(ncs)) {
+    const stock = stockNc[nc] || 0;
+    const vpm = ventasNc[nc] || {};
+    const v6 = sumMes(vpm);
+    const vMes = v6 / N;
+    // colores del modelo (con stock y/o ventas)
+    const colNames = {};
+    Object.keys(stockColorNc[nc] || {}).forEach((c) => colNames[c] = 1);
+    Object.keys(ventasColorNc[nc] || {}).forEach((c) => colNames[c] = 1);
+    const colores = Object.keys(colNames).map((col) => {
+      const cstk = (stockColorNc[nc] || {})[col] || 0;
+      const cvpm = (ventasColorNc[nc] || {})[col] || {};
+      const cv6 = sumMes(cvpm);
+      const cvMes = cv6 / N;
+      return { color: col, stock: cstk, venta6m: cv6, ventaMes: cvMes, mesesStock: cvMes > 0 ? cstk / cvMes : null, ventasPorMes: cvpm };
+    }).sort((a, b) => b.stock - a.stock || b.venta6m - a.venta6m || a.color.localeCompare(b.color));
+    items.push({
+      nombreCorto: nc, modelo: btByNc[nc] || nc, familia: famByNc[nc] || '',
+      stock: stock, venta6m: v6, ventaMes: vMes, mesesStock: vMes > 0 ? stock / vMes : null,
+      ventasPorMes: vpm, colores: colores,
+      orden: ordenNc.indexOf(nc),
+    });
+  }
+  // orden por catálogo; los sin catálogo, al final por stock
+  items.sort((a, b) => {
+    const ao = a.orden < 0 ? 1e9 : a.orden, bo = b.orden < 0 ? 1e9 : b.orden;
+    return ao - bo || (b.stock - a.stock);
+  });
+
+  return {
+    meses: refMeses, items: items,
+    stockTotal: stockTotal, stockCatalogado: stockTotal - stockSinCat, stockSinCatalogo: stockSinCat,
+    ventasTotal: ventasTotal, ventasSinCatalogo: ventasSinCat,
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 function getBaratitoMotor() {
