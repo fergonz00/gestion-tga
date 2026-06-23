@@ -362,7 +362,7 @@ function _oversoftMotorData(catByNorm) {
   const hoy = new Date();
   const d6 = new Date(hoy.getFullYear(), hoy.getMonth() - 5, 1);
   const desdeStr = d6.getFullYear() + '-' + String(d6.getMonth() + 1).padStart(2, '0') + '-01';
-  const res3 = UrlFetchApp.fetch(OVERSOFT_URL + '/preventas?select=modelo,fecha,precioventa,tasadeivaid,unidadid&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + desdeStr + '&limit=5000', h);
+  const res3 = UrlFetchApp.fetch(OVERSOFT_URL + '/preventas?select=numero,modelo,fecha,precioventa,tasadeivaid,unidadid,comentario,comentarioaux&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + desdeStr + '&limit=5000', h);
   const pvs = (res3.getResponseCode() < 300) ? JSON.parse(res3.getContentText()) : [];
   // Color de las unidades vendidas: ya NO están en el stock (entregada/asignada),
   // así que su color se resuelve aparte (unidadid → color), en lotes de 100.
@@ -393,8 +393,14 @@ function _oversoftMotorData(catByNorm) {
     const monto = Number(pv.precioventa) || 0;
     if (monto > 0) {
       if (!ventasDet[nc]) ventasDet[nc] = [];
+      // Autoahorro (/8 con G-O en el comentario): NO cobra condiciones comerciales.
+      // Mismo criterio que getVentasV2; sin esto el prom. gcia real del motor
+      // valuaba las ventas AA con incentivos que no se cobran (las inflaba).
+      const _comAA = String(pv.comentario || '') + ' ' + String(pv.comentarioaux || '');
+      const esAA = String(pv.numero || '').split('/').pop().trim() === '8'
+        && (/\bG\s*-?\s*O\b/i.test(_comAA) || /grupo\s*y\s*orden/i.test(_comAA));
       // IVA por tasadeivaid de Oversoft: 3 = 10,5% (pickups), resto 21%.
-      ventasDet[nc].push({ mes: mk, monto: monto, iva: (Number(pv.tasadeivaid) === 3 ? 0.105 : 0.21) });
+      ventasDet[nc].push({ mes: mk, monto: monto, iva: (Number(pv.tasadeivaid) === 3 ? 0.105 : 0.21), esAA: esAA });
     }
   }
   return { stockPorTrim: stockPorTrim, stockColorPorTrim: stockColorPorTrim, stockTotal: stockTotal,
@@ -1950,8 +1956,9 @@ function getBaratitoMotor() {
       const im = (incPorMes[vd.mes] || {})[c.nombre_corto] || {};
       const listaM = btMes ? Number(btMes.precio_lista) || 0 : 0;
       if (listaM <= 0) { gciaSinBt++; continue; }
-      const ccM = Number(im.performance) || 0;
-      const otrosM = (Number(im.tactico)||0) + (Number(im.whosale)||0) + (Number(im.adicional1)||0) + (Number(im.adicional2)||0) + (Number(im.cupo)||0);
+      // Autoahorro no cobra condiciones comerciales (igual que getVentasV2).
+      const ccM = vd.esAA ? 0 : (Number(im.performance) || 0);
+      const otrosM = vd.esAA ? 0 : ((Number(im.tactico)||0) + (Number(im.whosale)||0) + (Number(im.adicional1)||0) + (Number(im.adicional2)||0) + (Number(im.cupo)||0));
       const y = _gciaVentaPct(vd.monto, vd.iva, listaM, Number(btMes.costo_concesionario) || 0, ccM, otrosM);
       if (y === null) { gciaSinBt++; continue; }
       gciaSum += y; gciaN++;
