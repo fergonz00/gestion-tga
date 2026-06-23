@@ -61,7 +61,7 @@ function doGet(e) {
   const tipo  = String(params.tipo  || 'stock').toLowerCase();
   const fresh = String(params.fresh || '') === '1';
   try {
-    if (tipo === 'stockhist')       return jsonResponse(getStockHist());          // monto/fecha/color/nombre históricos congelados (para Stock Oversoft)
+    if (tipo === 'stockhist')       return jsonResponse(_cached('stockhist', CACHE_TTL_SEC, fresh, getStockHist)); // monto/fecha/color/nombre históricos congelados (para Stock Oversoft)
     if (tipo === 'ventasv2')        return jsonResponse(_cachedBig('ventasv2', CACHE_TTL_WARM, fresh, getVentasV2)); // ventas (>100KB, ~15-20 fetches): cache chunked + precalentado. Mes actual por fórmula (Oversoft+BT) + meses cerrados congelados (ventas_hist)
     if (tipo === 'congelarmes')     return jsonResponse(congelarMes(String(params.mes || ''))); // congela (guarda) el resultado de la fórmula de un mes
     if (tipo === 'instalartriggercongelar') return jsonResponse(instalarTriggerCongelar()); // trigger mensual: congela el mes que cierra
@@ -81,7 +81,7 @@ function doGet(e) {
     if (tipo === 'precioslista')    return jsonResponse(getPreciosLista(String(params.mes || ''))); // precios_lista (lista+costo) editable en el portal — reemplaza "Actual BT"
     if (tipo === 'motor')           return jsonResponse(_cached('motor', CACHE_TTL_SEC, fresh, getBaratitoMotor));     // MOTOR: calcula desde Supabase (no la planilla)
     if (tipo === 'snapshotbt')      return jsonResponse(snapshotBTMensual(String(params.mes || '') || null, String(params.hoja || '') || null, String(params.dry || '') === '1', true)); // sync MANUAL de la BT a Supabase (force=true; el automático está apagado)
-    if (tipo === 'admventas')       return jsonResponse(_cached('admventas', CACHE_TTL_SEC, fresh, getAdmVentas)); // adm de ventas: Oversoft + campos manuales
+    if (tipo === 'admventas')       return jsonResponse(_cachedBig('admventas', CACHE_TTL_WARM, fresh, getAdmVentas)); // adm de ventas (~490KB): cache chunked + precalentado. Oversoft + campos manuales
     if (tipo === 'conciliagastos')  return jsonResponse(_cached('conciliagastos_' + (params.mes || ''), CACHE_TTL_SEC, fresh, () => getConciliacionGastos(params))); // gastos reales por PV + conciliación (sellado/quebranto/faltantes)
     if (tipo === 'migraradmventas') return jsonResponse(migrarAdmVentasDesdeHoja()); // una-vez: vuelca lo ya cargado en la hoja a adm_ventas
     if (tipo === 'comprasvw')       return jsonResponse(_cachedBig('comprasvw', CACHE_TTL_WARM, fresh, getComprasVW)); // compras a VW (>100KB) → cache chunked + precalentado
@@ -1228,7 +1228,7 @@ function migrarAdmVentasDesdeHoja() {
     const res = UrlFetchApp.fetch(SUPA_URL + '/adm_ventas?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(rows), muteHttpExceptions: true });
     if (res.getResponseCode() >= 300) return { error: 'insert falló: ' + res.getContentText().slice(0, 300) };
   }
-  try { CacheService.getScriptCache().removeAll(['admventas', 'patentamientos']); } catch (e) {}
+  try { _cacheDrop('admventas'); CacheService.getScriptCache().remove('patentamientos'); } catch (e) {}
   return { migradas: rows.length, yaExistian: saltadas };
 }
 
@@ -1256,7 +1256,7 @@ function saveAdmVenta(body) {
   const res = UrlFetchApp.fetch(SUPA_URL + '/adm_ventas?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(row), muteHttpExceptions: true });
   if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200) };
   // patentamientos se arma desde adm_ventas → invalidar ambos caches
-  try { CacheService.getScriptCache().removeAll(['admventas', 'patentamientos']); } catch (e) {}
+  try { _cacheDrop('admventas'); CacheService.getScriptCache().remove('patentamientos'); } catch (e) {}
   return { ok: true, preventa: pv };
 }
 
@@ -2179,8 +2179,9 @@ function _cachedBig(key, ttlSec, fresh, fn) {
 // Cubre el Resumen completo (stock Oversoft + ventas + patentamientos + compras) +
 // las solapas pesadas. ~30-40s por corrida.
 function precalentarCache() {
-  // Endpoints grandes (>100KB) → cache chunked.
-  const big = [['comprasvw', getComprasVW], ['ventasv2', getVentasV2]];
+  // Endpoints grandes (>100KB) → cache chunked. admventas ~490KB, comprasvw ~300KB,
+  // ventasv2 ~112KB: con _cached el put fallaba en silencio y NO cacheaban nunca.
+  const big = [['comprasvw', getComprasVW], ['ventasv2', getVentasV2], ['admventas', getAdmVentas]];
   big.forEach(function (j) {
     try { _cachedBig(j[0], CACHE_TTL_WARM, true, j[1]); }
     catch (e) { Logger.log('precalentar ' + j[0] + ': ' + e); }
@@ -2188,7 +2189,7 @@ function precalentarCache() {
   // Endpoints chicos cacheados con _cached → los reescribimos con TTL WARM para
   // que sobrevivan al ciclo (sino vencerian a los 10 min de CACHE_TTL_SEC).
   const small = [['saldoscompras', getSaldosCompras], ['stockhist', getStockHist],
-                 ['patentamientos', getPatentamientos], ['admventas', getAdmVentas]];
+                 ['patentamientos', getPatentamientos]];
   small.forEach(function (j) {
     try { _cached(j[0], CACHE_TTL_WARM, true, j[1]); }
     catch (e) { Logger.log('precalentar ' + j[0] + ': ' + e); }
