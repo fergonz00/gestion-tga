@@ -62,7 +62,7 @@ function doGet(e) {
   const fresh = String(params.fresh || '') === '1';
   try {
     if (tipo === 'stockhist')       return jsonResponse(getStockHist());          // monto/fecha/color/nombre históricos congelados (para Stock Oversoft)
-    if (tipo === 'ventasv2')        return jsonResponse(getVentasV2());           // ventas: mes actual por fórmula (Oversoft+BT) + meses cerrados congelados (ventas_hist)
+    if (tipo === 'ventasv2')        return jsonResponse(_cachedBig('ventasv2', CACHE_TTL_WARM, fresh, getVentasV2)); // ventas (>100KB, ~15-20 fetches): cache chunked + precalentado. Mes actual por fórmula (Oversoft+BT) + meses cerrados congelados (ventas_hist)
     if (tipo === 'congelarmes')     return jsonResponse(congelarMes(String(params.mes || ''))); // congela (guarda) el resultado de la fórmula de un mes
     if (tipo === 'instalartriggercongelar') return jsonResponse(instalarTriggerCongelar()); // trigger mensual: congela el mes que cierra
     if (tipo === 'patentamientos')  return jsonResponse(_cached('patentamientos', CACHE_TTL_SEC, fresh, getPatentamientos));
@@ -2090,7 +2090,9 @@ function doPost(e) {
 // TTL del cache server-side. La primera request del minuto paga ~3-5s leyendo
 // IMPORTRANGE; las siguientes vuelven en ~200ms. Con auto-refresh cada 10 min
 // y el botón "Actualizar" que pasa &fresh=1, 90s es invisible para el usuario.
-const CACHE_TTL_SEC = 90;
+const CACHE_TTL_SEC = 600;   // 10 min. Antes 90s: el cache vencia antes de que volvieras a entrar
+                             // y casi todo recalculaba de cero. La data de fondo (Oversoft) sincroniza
+                             // cada ~5 min, asi que 10 min no te hace perder frescura real.
 
 // Cache del response completo por tipo. Si el valor supera 100KB (límite de
 // CacheService) el put tira excepción, lo ignoramos y devolvemos fresco igual.
@@ -2122,7 +2124,7 @@ function _cached(key, ttlSec, fresh, fn) {
 // ~45.000 chars (≤100KB aun con acentos = 2 bytes) bajo claves key_c0, key_c1…
 // y un manifest key_meta con la cantidad de trozos. Si falta un trozo (venció),
 // se trata como miss y se recalcula.
-const CACHE_TTL_WARM = 2400;  // 40 min: sobrevive al ciclo de precalentado de 30'
+const CACHE_TTL_WARM = 1500;  // 25 min: sobrevive al ciclo de precalentado de 10'
 
 function _cacheBigPut(key, s, ttlSec) {
   const cache = CacheService.getScriptCache();
@@ -2171,23 +2173,38 @@ function _cachedBig(key, ttlSec, fresh, fn) {
   return data;
 }
 
-// Trigger cada 30': recalcula los 3 endpoints pesados y los deja calientes en
-// el cache chunked, así el usuario no paga el recompute. ~21s total por corrida.
+// Trigger cada 10': recalcula TODOS los endpoints pesados (no solo compras) y los
+// deja calientes en el cache, así el usuario nunca paga el recompute al entrar.
+// Cubre el Resumen completo (stock Oversoft + ventas + patentamientos + compras) +
+// las solapas pesadas. ~30-40s por corrida.
 function precalentarCache() {
-  const jobs = [['comprasvw', getComprasVW]];
-  jobs.forEach(function (j) {
+  // Endpoints grandes (>100KB) → cache chunked.
+  const big = [['comprasvw', getComprasVW], ['ventasv2', getVentasV2]];
+  big.forEach(function (j) {
     try { _cachedBig(j[0], CACHE_TTL_WARM, true, j[1]); }
     catch (e) { Logger.log('precalentar ' + j[0] + ': ' + e); }
   });
+  // Endpoints chicos cacheados con _cached → los reescribimos con TTL WARM para
+  // que sobrevivan al ciclo (sino vencerian a los 10 min de CACHE_TTL_SEC).
+  const small = [['saldoscompras', getSaldosCompras], ['stockhist', getStockHist],
+                 ['patentamientos', getPatentamientos], ['admventas', getAdmVentas]];
+  small.forEach(function (j) {
+    try { _cached(j[0], CACHE_TTL_WARM, true, j[1]); }
+    catch (e) { Logger.log('precalentar ' + j[0] + ': ' + e); }
+  });
+  // Stock en vivo de Oversoft (la query del Resumen/Stock): fresh=1 fuerza el refetch
+  // y reescribe la clave de cache que va a leer el front.
+  try { getOversoft({ tabla: 'unidades', qs: OVS_STOCK_QS, fresh: '1' }); }
+  catch (e) { Logger.log('precalentar oversoft unidades: ' + e); }
 }
-// Correr UNA vez a mano desde el editor para instalar el trigger de 30 min.
+// Correr UNA vez a mano desde el editor para instalar el trigger de 10 min.
 function instalarPrecalentado() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'precalentarCache') ScriptApp.deleteTrigger(t);
   });
-  ScriptApp.newTrigger('precalentarCache').timeBased().everyMinutes(30).create();
+  ScriptApp.newTrigger('precalentarCache').timeBased().everyMinutes(10).create();
   precalentarCache();  // calentar ya mismo
-  return 'Trigger de 30 min instalado + cache precalentado.';
+  return 'Trigger de 10 min instalado + cache precalentado (stock+ventas+patent+compras+adm).';
 }
 
 // Devuelve TODAS las filas de la hoja ventas sin filtrar (excepto vacías
@@ -2222,6 +2239,15 @@ const OVERSOFT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 // Whitelist de tablas que el proxy deja consultar (sumá acá cuando agreguen más).
 const OVERSOFT_TABLAS = ['detcash', 'servicios_ordenes', 'unidades', 'modelos'];
 
+// La réplica es de SOLO LECTURA y sincroniza cada ~5 min, asi que cachear los GET
+// del proxy (cache chunked, las unidades superan 100KB) evita pegarle en vivo en
+// cada carga de Stock/Resumen. Se saltea con &fresh=1 (boton Actualizar).
+const OVS_TTL = 900;  // 15 min (sobrevive al ciclo de precalentado de 10')
+
+// Query EXACTA de stock que usa el front (loadOversoftStock en index.html). Debe
+// coincidir char-por-char para que el precalentado caliente la misma clave de cache.
+const OVS_STOCK_QS = 'select=serie,modelo,color,recibida,entregada,asignada,preventa,fechadepedido,fechaderecepcion&entregada=eq.false&asignada=eq.false&preventa=eq.&limit=2000';
+
 function getOversoft(params) {
   const tabla = String(params.tabla || '').trim().toLowerCase();
   if (OVERSOFT_TABLAS.indexOf(tabla) === -1) {
@@ -2230,7 +2256,15 @@ function getOversoft(params) {
 
   const qs        = String(params.qs || '').trim();
   const wantCount = String(params.count || '') === '1';
+  const fresh     = String(params.fresh || '') === '1';
   const url = OVERSOFT_URL + '/' + tabla + (qs ? '?' + qs : '');
+
+  // Cache solo de lecturas normales (no count). Clave = hash MD5 de tabla+qs.
+  const cacheKey = !wantCount ? 'ovs_' + _md5(tabla + '?' + qs) : null;
+  if (cacheKey && !fresh) {
+    const hit = _cacheBigGet(cacheKey);
+    if (hit) { try { return JSON.parse(hit); } catch (e) { /* corrupto, refetch */ } }
+  }
 
   const headers = { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY };
   if (wantCount) headers.Prefer = 'count=exact';
@@ -2244,12 +2278,23 @@ function getOversoft(params) {
   }
 
   const rows = JSON.parse(text);
-  if (!wantCount) return rows;
+  if (!wantCount) {
+    if (cacheKey) { try { _cacheBigPut(cacheKey, JSON.stringify(rows), OVS_TTL); } catch (e) { /* no cacheable */ } }
+    return rows;
+  }
 
   // Content-Range viene como "0-9/123" → total = lo de después de la barra.
   const cr    = res.getAllHeaders()['Content-Range'] || '';
   const total = cr.indexOf('/') > -1 ? Number(cr.split('/')[1]) : rows.length;
   return { count: total, rows: rows };
+}
+
+// MD5 hex de un string (para claves de cache cortas y estables).
+function _md5(s) {
+  const d = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, String(s), Utilities.Charset.UTF_8);
+  let out = '';
+  for (let i = 0; i < d.length; i++) { const b = (d[i] < 0 ? d[i] + 256 : d[i]).toString(16); out += (b.length === 1 ? '0' : '') + b; }
+  return out;
 }
 
 // Corré esta función UNA vez desde el editor (selector de función → Ejecutar)

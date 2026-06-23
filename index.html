@@ -1517,6 +1517,7 @@ async function oversoft(tabla, qs, opts) {
     + '&tabla=' + encodeURIComponent(tabla)
     + '&qs=' + encodeURIComponent(qs || '');
   if (opts.count) url += '&count=1';
+  if (opts.fresh) url += '&fresh=1';   // saltea el cache server-side (boton Actualizar)
   const res  = await fetch(url);
   const data = await res.json();
   if (data && data.error) throw new Error('oversoft: ' + data.error);
@@ -5161,7 +5162,7 @@ async function loadOversoftStock(forzar, silent) {
     // Oversoft: unidades NO asignadas (físico libre + a recibir), sin PV.
     const qs = 'select=serie,modelo,color,recibida,entregada,asignada,preventa,fechadepedido,fechaderecepcion'
              + '&entregada=eq.false&asignada=eq.false&preventa=eq.&limit=2000';
-    const ovs = await oversoft('unidades', qs);
+    const ovs = await oversoft('unidades', qs, { fresh: forzar });
 
     // Nombre comercial DESDE Oversoft (catálogo `modelos`), filtrado por los
     // códigos base del stock (or=like.<base>*; sin espacios para no romper
@@ -5175,7 +5176,7 @@ async function loadOversoftStock(forzar, silent) {
     const [hist, saldos, catalogo, compras] = await Promise.all([
       _fetchJson('stockhist', forzar).catch(e => { console.warn('stockhist:', e); return { unidades: [] }; }),
       _fetchJson('saldoscompras', forzar).catch(e => { console.warn('saldos:', e); return { unidades: [], _error: String(e.message || e) }; }),
-      (orFiltro ? oversoft('modelos', 'select=modelo,descripcionoperativa&or=(' + orFiltro + ')&limit=500') : Promise.resolve([]))
+      (orFiltro ? oversoft('modelos', 'select=modelo,descripcionoperativa&or=(' + orFiltro + ')&limit=500', { fresh: forzar }) : Promise.resolve([]))
         .catch(e => { console.warn('modelos:', e); return []; }),
       _fetchJson('comprasvw', forzar).catch(e => { console.warn('comprasvw:', e); return { compras: [] }; }),
     ]);
