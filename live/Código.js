@@ -65,6 +65,7 @@ function doGet(e) {
     if (tipo === 'ventasv2')        return jsonResponse(_cachedBig('ventasv2', CACHE_TTL_WARM, fresh, getVentasV2)); // ventas (>100KB, ~15-20 fetches): cache chunked + precalentado. Mes actual por fórmula (Oversoft+BT) + meses cerrados congelados (ventas_hist)
     if (tipo === 'congelarmes')     return jsonResponse(congelarMes(String(params.mes || ''))); // congela (guarda) el resultado de la fórmula de un mes
     if (tipo === 'instalartriggercongelar') return jsonResponse(instalarTriggerCongelar()); // trigger mensual: congela el mes que cierra
+    if (tipo === 'instalarprecalentado')    return jsonResponse({ msg: instalarPrecalentado() }); // (re)instala el trigger de 10' + calienta el cache ya
     if (tipo === 'patentamientos')  return jsonResponse(_cached('patentamientos', CACHE_TTL_SEC, fresh, getPatentamientos));
     if (tipo === 'incentivos')      return jsonResponse(_cached('incentivos_' + (params.mes || ''), CACHE_TTL_SEC, fresh, () => getIncentivos(params)));
     if (tipo === 'pagosvw')         return jsonResponse(getPagosVW(params));      // sin cache
