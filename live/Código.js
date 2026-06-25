@@ -3835,7 +3835,8 @@ function _repartoRotacion(motor) {
   ((motor && motor.modelos) || []).forEach(function (m) {
     var v3 = sum(m.ventasPorMes);
     var stock = Number(m.stock) || 0;
-    if (v3 === 0 && stock === 0) return;   // ni stock ni ventas → no aporta a la decisión
+    // Antes se descartaban los modelos sin stock ni ventas; ahora se listan TODOS
+    // los del armado de precios (baratito) aunque esten en cero, en orden de catalogo.
     var stkCol = {};
     (m.colores || []).forEach(function (c) { stkCol[c.color] = Number(c.stock) || 0; });
     var vtaCol = m.ventasColorPorMes || {};
@@ -3854,7 +3855,8 @@ function _repartoRotacion(motor) {
       colores: colores
     });
   });
-  out.sort(function (a, b) { return b.venta3m - a.venta3m || b.stock - a.stock; });
+  // Orden = el del catalogo/baratito (motor.modelos ya viene Polo Track -> ... -> Amarok).
+  // No se reordena por ventas, para que coincida con el panel de precios.
   return { meses: refMeses, items: out };
 }
 
