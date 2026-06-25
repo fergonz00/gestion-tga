@@ -83,6 +83,7 @@ function doGet(e) {
     if (tipo === 'snapshotbt')      return jsonResponse(snapshotBTMensual(String(params.mes || '') || null, String(params.hoja || '') || null, String(params.dry || '') === '1', true)); // sync MANUAL de la BT a Supabase (force=true; el automático está apagado)
     if (tipo === 'admventas')       return jsonResponse(_cachedBig('admventas', CACHE_TTL_WARM, fresh, getAdmVentas)); // adm de ventas (~490KB): cache chunked + precalentado. Oversoft + campos manuales
     if (tipo === 'conciliagastos')  return jsonResponse(_cached('conciliagastos_' + (params.mes || ''), CACHE_TTL_SEC, fresh, () => getConciliacionGastos(params))); // gastos reales por PV + conciliación (sellado/quebranto/faltantes)
+    if (tipo === 'gastosmap')       return jsonResponse(_cached('gastosmap', CACHE_TTL_SEC, fresh, getGastosMap)); // mapa pv→gasto (total+desglose+líneas) de TODOS los meses con control; lo consumen Ventas y Adm.ventas
     if (tipo === 'migraradmventas') return jsonResponse(migrarAdmVentasDesdeHoja()); // una-vez: vuelca lo ya cargado en la hoja a adm_ventas
     if (tipo === 'comprasvw')       return jsonResponse(_cachedBig('comprasvw', CACHE_TTL_WARM, fresh, getComprasVW)); // compras a VW (>100KB) → cache chunked + precalentado
     if (tipo === 'migrarcomprasvw') return jsonResponse(migrarComprasVW()); // una-vez: vuelca lo de saldos (>=2026) a compras_vw, conciliado con Oversoft
@@ -555,7 +556,7 @@ function getAdmVentas() {
   // 1) ventas 0km (no anuladas) desde ADM_VENTAS_DESDE. Orden por prevtaid
   // desc = orden REAL de creación, lo más nuevo arriba (preventas.fecha viene
   // sin hora; el id secuencial sí refleja fecha+hora de carga).
-  const pvs = get('/preventas?select=prevtaid,numero,fecha,cliente,vendedorid,unidadid,usadoid,financiacion_importe,patentacliente,modelo,comentario,comentarioaux&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + ADM_VENTAS_DESDE + '&order=prevtaid.desc&limit=2000');
+  const pvs = get('/preventas?select=prevtaid,numero,fecha,cliente,vendedorid,unidadid,usadoid,financiacion_importe,patentacliente,modelo,precioventa,tasadeivaid,comentario,comentarioaux&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + ADM_VENTAS_DESDE + '&order=prevtaid.desc&limit=2000');
 
   // 2) unidades (serie, chasis, dominio, fecha patentamiento) en lotes
   const uidSet = {};
@@ -655,6 +656,7 @@ function getAdmVentas() {
       pvId: Number(p.prevtaid) || 0,   // orden de creación (id secuencial Oversoft)
       fechaPv: String(p.fecha || '').slice(0, 10),
       modelo: desc[String(p.modelo || '').trim()] || p.modelo,
+      montoFc: Number(p.precioventa) || 0,   // precio de venta facturado al cliente (con IVA) = "monto factura de la unidad"
       cliente: String(cli.nombre || '').trim() || String(p.cliente || ''),
       localidad: String(cli.localidad || '').trim(),
       vendedor: vend[p.vendedorid] || '',
@@ -854,6 +856,32 @@ function getConciliacionGastos(params) {
   };
 }
 
+// Mapa pv→gasto (total + desglose por grupo + líneas por concepto + conciliación)
+// de TODOS los meses con control de gastos (desde GASTOS_DESDE). Reúsa la
+// conciliación por mes. Lo consumen las solapas Ventas y Adm. ventas para
+// mostrar el gasto real por PV con su desglose clickeable. La key es la PV
+// normalizada (_normPv, ej. "8035/1") para matchear con ambas solapas.
+function getGastosMap() {
+  const mesActual = _yyyyMm(new Date());
+  let y = Number(GASTOS_DESDE.slice(0, 4)), mo = Number(GASTOS_DESDE.slice(5, 7));
+  const ya = Number(mesActual.slice(0, 4)), ma = Number(mesActual.slice(5, 7));
+  const meses = [];
+  while (y < ya || (y === ya && mo <= ma)) { meses.push(y + '-' + ('0' + mo).slice(-2)); mo++; if (mo > 12) { mo = 1; y++; } }
+  const map = {};
+  meses.forEach((mes) => {
+    try {
+      const r = getConciliacionGastos({ mes: mes });
+      (r.filas || []).forEach((f) => {
+        map[_normPv(f.pv)] = {
+          total: f.total, desglose: f.desglose, lineas: f.lineas, fin: f.fin,
+          prov: f.prov, patenta: f.patenta, alertas: f.alertas, difFavor: f.difFavor, estado: f.estado, mes: mes,
+        };
+      });
+    } catch (e) {}
+  });
+  return { gastos: map, desde: GASTOS_DESDE, meses: meses, updatedAt: new Date().toISOString() };
+}
+
 // ====== VENTAS desde Oversoft + margen desde la BT (reemplazo de getVentas) ======
 // Arma la lista de ventas como Adm.ventas (Oversoft) y calcula la ganancia por
 // venta con la BT del mes de cada venta (igual que el motor), SIN leer la hoja.
@@ -876,6 +904,21 @@ function getVentasV2(targetMes) {
 
   const vend = {};
   for (const v of get('/vendedores?select=vendedorid,nombre&limit=2000')) vend[v.vendedorid] = String(v.nombre || '').trim();
+
+  // AA confiable: una PV con movimiento VTPDA en detcash es Autoahorro (plan de
+  // ahorro), aunque el comentario no diga "G-O". Es la MISMA señal que usa
+  // getAdmVentas. Antes Ventas exigía /8 + comentario "G-O" → una AA sin esa
+  // leyenda quedaba sin marcar y se le tomaban incentivos que no cobra, inflando
+  // el margen. Solo consulto las PVs del mes objetivo (las que se calculan por
+  // fórmula; los meses cerrados ya vienen congelados de ventas_hist).
+  const mesActualV0 = _yyyyMm(new Date());
+  const mesObjetivo0 = targetMes || mesActualV0;
+  const vtpdaSet = {};
+  const numsObj = pvs.filter(p => String(p.fecha || '').slice(0, 7) === mesObjetivo0).map(p => p.numero).filter(Boolean);
+  for (let i = 0; i < numsObj.length; i += 50) {
+    const lote = numsObj.slice(i, i + 50).map(n => '"' + n + '"').join(',');
+    for (const r of get('/detcash?select=referencia&origen=eq.VTPDA&referencia=in.(' + encodeURIComponent(lote) + ')&limit=1000')) vtpdaSet[r.referencia] = true;
+  }
 
   // desc modelo (codigodecompra → descripcion operativa)
   const desc = {}; let off = 0;
@@ -929,16 +972,32 @@ function getVentasV2(targetMes) {
     // comentario menciona "G-O" / "GO" / "grupo y orden" (referencia del plan).
     // Una /8 que en realidad es venta normal (sin G-O) SÍ cobra incentivos.
     const _comAA = String(p.comentario || '') + ' ' + String(p.comentarioaux || '');
-    const esAA = String(p.numero || '').split('/').pop().trim() === '8'
-      && (/\bG\s*-?\s*O\b/i.test(_comAA) || /grupo\s*y\s*orden/i.test(_comAA));
+    const esAA = !!vtpdaSet[p.numero]
+      || (String(p.numero || '').split('/').pop().trim() === '8'
+        && (/\bG\s*-?\s*O\b/i.test(_comAA) || /grupo\s*y\s*orden/i.test(_comAA)));
 
-    let gciaPct = null, gciaPesos = null, listaM = 0;
+    let gciaPct = null, gciaPesos = null, listaM = 0, breakdown = null;
     if (btMes && monto > 0) {
       listaM = Number(btMes.precio_lista) || 0;
+      const costoC = Number(btMes.costo_concesionario) || 0;
       const im = (incPorMes[mesKey] || {})[nc.nombre_corto] || {};
       const ccM = esAA ? 0 : (Number(im.performance) || 0);
-      const otrosM = esAA ? 0 : ((Number(im.tactico) || 0) + (Number(im.whosale) || 0) + (Number(im.adicional1) || 0) + (Number(im.adicional2) || 0) + (Number(im.cupo) || 0));
-      gciaPct = _gciaVentaPct(monto, ivaFrac, listaM, Number(btMes.costo_concesionario) || 0, ccM, otrosM);
+      const tacM = esAA ? 0 : (Number(im.tactico) || 0);
+      const whoM = esAA ? 0 : (Number(im.whosale) || 0);
+      const a1M  = esAA ? 0 : (Number(im.adicional1) || 0);
+      const a2M  = esAA ? 0 : (Number(im.adicional2) || 0);
+      const cupM = esAA ? 0 : (Number(im.cupo) || 0);
+      const otrosM = tacM + whoM + a1M + a2M + cupM;
+      // mismos costos que usa _gciaVentaPct (comisión 1,5% y IIBB max(1,4% vta neta, 10% margen neto))
+      const dtoFrac = listaM > 0 ? (1 - monto / listaM) : 0;
+      const comV  = (dtoFrac > 0.05) ? (monto / (1 + ivaFrac)) * 0.015 : 0.015 * monto;
+      const iibbV = Math.max(0.014 * monto * (1 - ivaFrac), 0.1 * (monto - costoC) * (1 - ivaFrac));
+      breakdown = {
+        esAA: esAA,
+        costos: { comision: Math.round(comV), iibb: Math.round(iibbV), costoRep: Math.round(costoC) },
+        incentivos: { cc: Math.round(ccM), tactico: Math.round(tacM), whosale: Math.round(whoM), adic1: Math.round(a1M), adic2: Math.round(a2M), cupo: Math.round(cupM), total: Math.round(ccM + otrosM) },
+      };
+      gciaPct = _gciaVentaPct(monto, ivaFrac, listaM, costoC, ccM, otrosM);
       // _gciaVentaPct devuelve gcia/(lista·(1−IVA)). La GANANCIA en $ (= col X de
       // la hoja) es gcia = pct · lista · (1−IVA). (Antes faltaba el (1−IVA) → las
       // pérdidas/ganancias salían infladas ~27%.)
@@ -974,6 +1033,8 @@ function getVentasV2(targetMes) {
       accesorios: acc,
       comentario: comentario,
       mencionaAcc: mencionaAcc,
+      esAA: esAA,
+      breakdown: breakdown,
       sinBt: !btMes,
       _dbg: btMes ? { nc: nc.nombre_corto, lista: Number(btMes.precio_lista)||0, costo: Number(btMes.costo_concesionario)||0,
         cc: Number(((incPorMes[mesKey]||{})[nc.nombre_corto]||{}).performance)||0,
@@ -3408,12 +3469,66 @@ function _repartoNtrim(s) {
   return s.replace(/[^a-z0-9]/g, '');
 }
 
+// Soporta DOS layouts del mail de VW:
+//  - VIEJO (posicional): Canal | Zona | CE | CodModelo | MY | Familia | Descripcion | CodColor | Chasis | Comision | Status
+//  - NUEVO (con header):  Origen | Numero de comision | AÑO | Chasis | Descripcion | Color exterior | MY | Zona | CE | Status
+// El nuevo se detecta por su header (tiene "Chasis" en una columna distinta a la 9
+// del viejo) y se mapea por NOMBRE de columna; si no hay ese header, cae al
+// parser posicional de siempre (formato viejo) sin cambios.
 function parseReparto(texto) {
-  var out = [], vistos = {};
   var lineas = String(texto || '').split(/\r?\n/);
+
+  // ---- ¿Header del formato NUEVO? ----
+  var colMap = null, headerIdx = -1;
   for (var i = 0; i < lineas.length; i++) {
-    if (!lineas[i].trim()) continue;
-    var f = lineas[i].split('\t').map(function (x) { return x.trim(); });
+    var hl = lineas[i].toLowerCase();
+    if (hl.indexOf('chasis') < 0 || (hl.indexOf('origen') < 0 && hl.indexOf('comisi') < 0)) continue;
+    var cells = lineas[i].split('\t').map(function (x) { return x.toLowerCase().trim(); });
+    var byEq = function (tok) { for (var k = 0; k < cells.length; k++) if (cells[k] === tok) return k; return -1; };
+    var byInc = function (tok) { for (var k = 0; k < cells.length; k++) if (cells[k].indexOf(tok) >= 0) return k; return -1; };
+    var idxChasis = byInc('chasis'); if (idxChasis < 0) idxChasis = byEq('vin');
+    if (idxChasis < 0 || idxChasis === 8) continue; // col 8 = lo trata el parser viejo
+    colMap = {
+      vin: idxChasis,
+      canal: byInc('origen') >= 0 ? byInc('origen') : byInc('canal'),
+      comision: byInc('comisi'),            // 1ra coincidencia = "Numero de comision"
+      my: byEq('my'),
+      descripcion: byInc('descrip'),
+      color_codigo: byInc('color'),
+      zona: byInc('zona'),
+      centrega: byEq('ce'),
+      status: byInc('status')
+    };
+    headerIdx = i;
+    break;
+  }
+
+  var out = [], vistos = {};
+
+  if (colMap) {
+    var g = function (f, idx) { return (idx >= 0 && f[idx] != null) ? String(f[idx]).trim() : ''; };
+    for (var n = 0; n < lineas.length; n++) {
+      if (n === headerIdx || !lineas[n].trim()) continue;
+      var fn = lineas[n].split('\t');
+      var vinN = g(fn, colMap.vin).toUpperCase();
+      if (!vinN || vinN.length < 11 || vinN === 'VIN' || vinN === 'CHASIS') continue;
+      if (vistos[vinN]) continue;
+      vistos[vinN] = true;
+      var comN = Number(g(fn, colMap.comision).replace(/[^\d.-]/g, ''));
+      out.push({
+        canal: g(fn, colMap.canal), zona: g(fn, colMap.zona), centrega: g(fn, colMap.centrega),
+        modelo_codigo: '', my: g(fn, colMap.my), familia: '',
+        descripcion: g(fn, colMap.descripcion), color_codigo: g(fn, colMap.color_codigo),
+        vin: vinN, comision: (isFinite(comN) && comN > 0) ? comN : null, status: g(fn, colMap.status)
+      });
+    }
+    return out;
+  }
+
+  // ---- Formato VIEJO (posicional), sin cambios ----
+  for (var j = 0; j < lineas.length; j++) {
+    if (!lineas[j].trim()) continue;
+    var f = lineas[j].split('\t').map(function (x) { return x.trim(); });
     if (f.length < 9) continue;
     if ((f[0] || '').toLowerCase() === 'canal') continue;
     var vin = (f[8] || '').toUpperCase();

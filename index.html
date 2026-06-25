@@ -1218,6 +1218,13 @@ table.patent-tbl.resumida .col-extra { display: none; }
 .reparto-det-col.match { border-color: var(--vw-blue); background: #eef3fc; font-weight: 600; }
 .reparto-det-buy { margin-top: 6px; font-size: 12px; color: #93231f; font-weight: 500; }
 .reparto-det-ok { margin-top: 6px; font-size: 12px; color: #1a7f37; }
+/* Antigüedad por chasis */
+.reparto-antig-flag { font-size: 12px; }
+.reparto-chasis-list { display: flex; flex-direction: column; gap: 4px; }
+.reparto-chasis-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: #fff; border: 1px solid var(--vw-grey-2); border-radius: 6px; padding: 4px 8px; font-size: 12px; }
+.reparto-chasis-col { color: var(--vw-grey-4); flex: 1 1 auto; }
+.reparto-antig-ok { color: var(--vw-grey-4); }
+.reparto-antig-bad { color: #93231f; font-weight: 700; }
 /* Rotación (panel de compra) */
 .rot-tabla tbody tr.rot-row:hover { background: var(--vw-grey-1); }
 .rot-rapido { color: #1a7f37; font-weight: 700; }   /* rota rápido → reponer */
@@ -1948,6 +1955,7 @@ async function loadAdmVentas(forzar) {
     admVentasData = data;
     const up = document.getElementById('updatedAtAdmVentas');
     if (up && data.updatedAt) up.textContent = data.total + ' carpetas desde ' + (data.desde || '').slice(0, 7) + ' · Oversoft en vivo · actualizado ' + new Date(data.updatedAt).toLocaleString('es-AR');
+    await loadGastosMap(forzar);             // factura + gasto real por PV (desglose clickeable)
     renderAdmVentas();
   } catch (e) { console.error('loadAdmVentas:', e); }
 }
@@ -2053,6 +2061,7 @@ function renderAdmVentas() {
   for (const v of rows) {
     const key = _admKey(v.preventa);
     const m = v.manual || {};
+    const gasto = _gastoDe(v.preventa);
     const fs = _admFinEstado(v);
     const chipC = TIPO_CHIP[v.tipo] || TIPO_CHIP['CONTADO'];
     // texto del chip: para OTROS muestro el banco; "/usado" se agrega como pill
@@ -2072,7 +2081,10 @@ function renderAdmVentas() {
     h += '<tr id="admrow_' + key + '">'
        + '<td data-label="PV"><b>' + escapeHtml(v.preventa) + '</b>' + btnCom + (extra.length ? '<br><small style="color:var(--vw-grey-3)">' + extra.join(' · ') + '</small>' : '') + '</td>'
        + '<td data-label="Fecha">' + _fechaDMA(v.fechaPv) + '</td>'
-       + '<td data-label="Modelo">' + escapeHtml(v.modelo) + '</td>'
+       + '<td data-label="Modelo">' + escapeHtml(v.modelo)
+         + (v.montoFc > 0 ? '<br><small style="color:#555">Factura <b>' + fmtPesos(v.montoFc) + '</b></small>' : '')
+         + (gasto ? '<br><small><button onclick="toggleAdmGasto(\'' + key + '\')" title="Ver desglose de gastos por concepto" style="border:0;background:none;cursor:pointer;color:#0a66c2;font-weight:600;font-size:11px;padding:0">Gastos $' + _gMoney(gasto.total) + ' ▸</button></small>' : '')
+         + '</td>'
        + '<td data-label="Cliente" title="' + escapeHtml(String(v.cliente) + (v.localidad ? ' — ' + v.localidad : '')) + '">' + escapeHtml(String(v.cliente).slice(0, 17)) + (v.localidad ? '<br><small style="color:var(--vw-grey-3)">' + escapeHtml(String(v.localidad).slice(0, 17)) + '</small>' : '') + '</td>'
        + '<td data-label="Vendedor">' + escapeHtml(v.vendedor) + '</td>'
        + '<td data-label="Serie" title="' + escapeHtml(v.chasis) + '">' + escapeHtml(v.serie) + '</td>'
@@ -2120,6 +2132,12 @@ function renderAdmVentas() {
       h += '<tr id="admcom_' + key + '"' + (admVentasComAbiertos.has(key) ? '' : ' style="display:none"') + '>'
          + '<td colspan="19" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">'
          + '💬 <b>Comentario de la PV ' + escapeHtml(v.preventa) + ':</b> ' + escapeHtml(v.comentario) + '</td></tr>';
+    }
+    if (gasto) {
+      h += '<tr id="admgasto_' + key + '"' + (admGastoAbiertos.has(key) ? '' : ' style="display:none"') + '>'
+         + '<td colspan="19" style="background:#fafbfc;border-left:3px solid #0a66c2;padding:8px 14px 12px 30px;text-align:left">'
+         + '<div style="font-weight:700;font-size:12px;margin-bottom:4px">Gastos cobrados al cliente · PV ' + escapeHtml(v.preventa) + ' · total $' + _gMoney(gasto.total) + '</div>'
+         + _gastoDetalleHtml(gasto) + '</td></tr>';
     }
   }
   if (!rows.length) h += '<tr><td colspan="19" class="empty">Sin carpetas para ese filtro.</td></tr>';
@@ -2349,6 +2367,7 @@ async function loadVentasOv(forzar) {
     ventasOvData = await res.json();
     setOvsSync(ventasOvData.syncOversoft);   // aprovecha el sello que ya trae ventasv2
     if (!ventasOvMes && ventasOvData.mesActual) ventasOvMes = ventasOvData.mesActual;
+    await loadGastosMap(forzar);             // gasto real por PV (desglose clickeable)
     renderVentasOv();
   } catch (e) {
     if (cont) cont.innerHTML = '<div class="empty">Error: ' + escapeHtml(e.message) + '</div>';
@@ -2391,7 +2410,7 @@ function renderVentasOv() {
     + '<span style="font-size:13px;color:var(--vw-grey-3)">' + rows.length + ' ventas · ganancia total <b style="color:#0a7a30">' + fmtPesos(totG) + '</b></span></div>';
   h += '<div style="overflow-x:auto"><table class="ventas-tbl"><thead><tr style="text-align:left">'
     + '<th>PV</th><th>Fecha</th><th>Modelo</th><th>Vend.</th><th style="text-align:right">Monto</th>'
-    + '<th style="text-align:right">Ganancia</th><th style="text-align:right">%</th><th style="text-align:right">Accesorios</th></tr></thead><tbody>';
+    + '<th style="text-align:right">Gastos</th><th style="text-align:right">Ganancia</th><th style="text-align:right">%</th><th style="text-align:right">Accesorios</th></tr></thead><tbody>';
   for (const v of rows) {
     const key = String(v.preventaNum || '').replace(/[^0-9]/g, '');
     const pvArg = String(v.preventaNum || '').replace(/'/g, '');
@@ -2399,22 +2418,34 @@ function renderVentasOv() {
     const accFlag = v.mencionaAcc ? ' <span title="El comentario menciona accesorios — cargá el monto" style="background:#cc6600;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">acc</span>' : '';
     const g = (typeof v.gciaVtaPesos === 'number');
     const gColor = g ? (v.gciaVtaPesos >= 0 ? '#0a7a30' : '#cc3300') : 'var(--vw-grey-3)';
+    const gasto = _gastoDe(v.preventaNum);
+    const puedeDet = !!(gasto || v.breakdown);
+    const gastoCell = gasto
+      ? '<button onclick="toggleVentasOvDet(\'' + key + '\')" title="Ver desglose de gastos, incentivos y costos" style="border:0;background:none;cursor:pointer;color:#0a66c2;font-weight:600;font-size:12px;padding:0">$' + _gMoney(gasto.total) + ' ▸</button>'
+      : (v.breakdown
+          ? '<button onclick="toggleVentasOvDet(\'' + key + '\')" title="Ver desglose de incentivos y costos" style="border:0;background:none;cursor:pointer;color:#888;font-size:12px;padding:0">ver ▸</button>'
+          : '<span style="color:#ccc">—</span>');
     h += '<tr' + (v.mencionaAcc ? ' style="background:#fff8e1"' : '') + '>'
-      + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + accFlag + '</td>'
+      + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + accFlag + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + '</td>'
       + '<td>' + _fechaDMA(v.fechaPvIso) + '</td>'
       + '<td>' + escapeHtml(v.modelo) + '</td>'
       + '<td>' + escapeHtml(v.vendedor || '') + '</td>'
       + '<td style="text-align:right">' + fmtPesos(v.montoFc) + '</td>'
+      + '<td style="text-align:right">' + gastoCell + '</td>'
       + '<td style="text-align:right;color:' + gColor + ';font-weight:600">' + (g ? fmtPesos(v.gciaVtaPesos) : 's/BT') + '</td>'
       + '<td style="text-align:right;color:' + gColor + '">' + (v.gciaVtaPct != null ? (v.gciaVtaPct * 100).toFixed(1) + '%' : '—') + '</td>'
       + '<td style="text-align:right"><input type="number" value="' + (v.accesorios || 0) + '" onchange="guardarAccesorios(\'' + pvArg + '\', this.value)" style="width:108px;text-align:right;padding:3px 5px;border:1px solid ' + (v.accesorios ? '#0a66c2' : 'var(--vw-grey-2)') + ';border-radius:5px;font-size:12px"></td>'
       + '</tr>';
     if (v.comentario) {
       h += '<tr id="vovcom_' + key + '"' + (ventasOvComAbiertos.has(key) ? '' : ' style="display:none"') + '>'
-        + '<td colspan="8" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">💬 ' + escapeHtml(v.comentario) + '</td></tr>';
+        + '<td colspan="9" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">💬 ' + escapeHtml(v.comentario) + '</td></tr>';
+    }
+    if (puedeDet) {
+      h += '<tr id="vovdet_' + key + '"' + (ventasOvDetAbiertos.has(key) ? '' : ' style="display:none"') + '>'
+        + '<td colspan="9" style="background:#f7f9fc;border-left:3px solid #0a66c2;padding:10px 14px;text-align:left">' + _ventaDetHtml(v, gasto) + '</td></tr>';
     }
   }
-  if (!rows.length) h += '<tr><td colspan="8" class="empty">Sin ventas.</td></tr>';
+  if (!rows.length) h += '<tr><td colspan="9" class="empty">Sin ventas.</td></tr>';
   h += '</tbody></table></div>';
   h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Ganancia = venta − costo de reposición (con incentivos) − comisión − IIBB + accesorios. Las marcadas <span style="background:#cc6600;color:#fff;border-radius:8px;padding:0 5px">acc</span> mencionan accesorios en el comentario (💬) — cargá el monto y se suma. "s/BT" = mes sin BT cargada. (Versión nueva: sale de Oversoft, sin Sheet.)</div>';
   cont.innerHTML = h;
@@ -3732,6 +3763,91 @@ function _gastoDetalleHtml(f) {
   return h;
 }
 
+// ===== MAPA DE GASTOS por PV (compartido por Ventas y Adm. ventas) =====
+// tipo=gastosmap devuelve { gastos: { "8035/1": {total, desglose, lineas, ...} } }
+// con la PV ya normalizada (sin "PV", sin ceros a la izquierda). Reúsa el detalle
+// de la solapa Gastos (_gastoDetalleHtml). Se cachea en el front (un solo fetch).
+let gastosMapData = null;
+function _pvKey(pv) {
+  const s = String(pv || '').toUpperCase().replace('PV', '').trim();
+  const p = s.split('/');
+  return (p[0].replace(/^0+/, '') || '0') + (p[1] ? '/' + p[1] : '');
+}
+async function loadGastosMap(forzar) {
+  if (gastosMapData && !forzar) return gastosMapData;
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=gastosmap' + (forzar ? '&fresh=1' : '');
+    const res = await fetch(url);
+    gastosMapData = await res.json();
+  } catch (e) { gastosMapData = { gastos: {} }; }
+  return gastosMapData;
+}
+function _gastoDe(pv) {
+  const m = (gastosMapData && gastosMapData.gastos) || {};
+  return m[_pvKey(pv)] || null;
+}
+function _gKv(label, val) {
+  return '<tr><td style="padding:2px 14px 2px 0;color:#555">' + label + '</td><td style="text-align:right">$' + _gMoney(val) + '</td></tr>';
+}
+
+// Detalle desplegable de una venta (solapa Ventas): incentivos tomados + otros
+// costos (los que usa el cálculo de ganancia) + gastos cobrados al cliente.
+let ventasOvDetAbiertos = new Set();
+function toggleVentasOvDet(key) {
+  const tr = document.getElementById('vovdet_' + key);
+  if (!tr) return;
+  const abrir = tr.style.display === 'none';
+  tr.style.display = abrir ? '' : 'none';
+  if (abrir) ventasOvDetAbiertos.add(key); else ventasOvDetAbiertos.delete(key);
+}
+function _ventaDetHtml(v, gasto) {
+  const b = v.breakdown;
+  let h = '<div style="display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start">';
+  // Incentivos tomados
+  h += '<div style="min-width:230px">';
+  h += '<div style="font-weight:700;font-size:12px;margin-bottom:4px">Incentivos tomados</div>';
+  if (!b) h += '<div style="color:#888;font-size:12px">Mes sin BT — sin datos.</div>';
+  else if (b.esAA) h += '<div style="color:#7a5b00;font-size:12px;max-width:230px">Autoahorro (G-O): no cobra condiciones comerciales → <b>$0</b>.</div>';
+  else {
+    const i = b.incentivos;
+    h += '<table style="font-size:12px;border-collapse:collapse">'
+      + _gKv('Performance (CC)', i.cc) + _gKv('Táctico', i.tactico) + _gKv('Whosale', i.whosale)
+      + _gKv('Adicional 1', i.adic1) + _gKv('Adicional 2', i.adic2) + _gKv('Cupo', i.cupo)
+      + '<tr style="border-top:1px solid #ccc"><td style="padding:3px 14px 2px 0;font-weight:700">Total incentivos</td><td style="text-align:right;font-weight:700">$' + _gMoney(i.total) + '</td></tr>'
+      + '</table>';
+  }
+  h += '</div>';
+  // Otros costos (comisión, IIBB)
+  h += '<div style="min-width:200px">';
+  h += '<div style="font-weight:700;font-size:12px;margin-bottom:4px">Otros costos</div>';
+  if (!b) h += '<div style="color:#888;font-size:12px">—</div>';
+  else {
+    const c = b.costos;
+    h += '<table style="font-size:12px;border-collapse:collapse">'
+      + _gKv('Comisión vendedor', c.comision) + _gKv('IIBB', c.iibb) + '</table>'
+      + '<div style="color:#888;font-size:11px;margin-top:3px">Costo de reposición: $' + _gMoney(c.costoRep) + '</div>';
+  }
+  h += '</div>';
+  // Gastos cobrados al cliente (conciliación)
+  h += '<div style="min-width:320px;flex:1">';
+  h += '<div style="font-weight:700;font-size:12px;margin-bottom:4px">Gastos cobrados al cliente' + (gasto ? ' · total $' + _gMoney(gasto.total) : '') + '</div>';
+  if (gasto) h += _gastoDetalleHtml(gasto);
+  else h += '<div style="color:#888;font-size:12px">Sin gastos cargados (control desde jun-2026, sucursal 1).</div>';
+  h += '</div>';
+  h += '</div>';
+  return h;
+}
+
+// Detalle de gastos desplegable en Adm. ventas (solo el desglose por concepto).
+let admGastoAbiertos = new Set();
+function toggleAdmGasto(key) {
+  const tr = document.getElementById('admgasto_' + key);
+  if (!tr) return;
+  const abrir = tr.style.display === 'none';
+  tr.style.display = abrir ? '' : 'none';
+  if (abrir) admGastoAbiertos.add(key); else admGastoAbiertos.delete(key);
+}
+
 // =======================================================================
 // OVERSOFT — prueba de conexión (usa el helper oversoft(), ver más abajo)
 // =======================================================================
@@ -4197,7 +4313,7 @@ function repartoToggleSel(vin) { if (repartoSel[vin]) delete repartoSel[vin]; el
 function repartoUpdBtn() {
   const n = Object.keys(repartoSel).length;
   const b = document.getElementById('repartoBtnComprar');
-  if (b) { b.textContent = 'Comprar seleccionadas (' + n + ')'; b.disabled = n === 0; }
+  if (b) { b.textContent = 'Marcar elegidas (' + n + ')'; b.disabled = n === 0; }
   const l = document.getElementById('repartoBtnLimpiar'); if (l) l.style.display = n ? '' : 'none';
 }
 function repartoToggleBox(id, btn) {
@@ -4214,11 +4330,20 @@ async function repartoCargar() {
   if (r && r.ok) { repartoMsg = '✓ ' + r.nuevos + ' nuevas, ' + r.total + ' en total'; await loadReparto(true); }
   else { repartoMsg = 'Error: ' + ((r && r.error) || 'falló'); if (btn) btn.disabled = false; renderReparto(); }
 }
-async function repartoComprar() {
+// Paso 1: marcar las tildadas como ELEGIDAS (todavía no compradas). No arma texto
+// para VW ni cuenta como compra: pasan a la sección "Elegidas · por comprar".
+async function repartoElegir() {
   const vins = Object.keys(repartoSel); if (!vins.length) return;
-  const sel = repartoData.items.filter(i => repartoSel[i.vin]);
-  repartoCopia = ['Modelo\tChasis (VIN)\tColor'].concat(sel.map(i => i.descripcion + '\t' + i.vin + '\t' + i.color_nombre)).join('\n');
   repartoSel = {};
+  await _repartoPost({ accion: 'elegirreparto', vins: vins });
+  await loadReparto(true);
+}
+// Paso 2: marcar elegidas como COMPRADAS. Acá sí se arma el texto para mandar a VW
+// y pasan a "Comprado · a conciliar". Sirve para una sola (botón por fila) o todas.
+async function repartoComprarElegidas(vins) {
+  if (!vins || !vins.length) return;
+  const sel = repartoData.items.filter(i => vins.indexOf(i.vin) >= 0);
+  repartoCopia = ['Modelo\tChasis (VIN)\tColor'].concat(sel.map(i => i.descripcion + '\t' + i.vin + '\t' + i.color_nombre)).join('\n');
   await _repartoPost({ accion: 'comprarreparto', vins: vins });
   await loadReparto(true);
 }
@@ -4305,6 +4430,7 @@ function renderReparto() {
 
   // ---- Panel operativo ----
   const pend = items.filter(i => i.estado_compra === 'pendiente').length;
+  const elegidas = items.filter(i => i.estado_compra === 'elegida').length;
   const comprados = items.filter(i => i.estado_compra === 'comprado').length;
   const confirmados = items.filter(i => i.estado_compra === 'ok').length;
   const alertas = items.filter(i => i.alerta).length;
@@ -4314,7 +4440,7 @@ function renderReparto() {
   const conocidos = codigos.filter(c => colores[c]).sort();
 
   html += '<div class="reparto-sep"></div>';
-  html += '<div class="reparto-head"><h3>Reparto de VW · ' + _mesLabel(repartoData.periodo || mesHoy) + '</h3><span class="reparto-sub">' + pend + ' pendientes · ' + comprados + ' comprados · ' + confirmados + ' confirmados</span></div>';
+  html += '<div class="reparto-head"><h3>Reparto de VW · ' + _mesLabel(repartoData.periodo || mesHoy) + '</h3><span class="reparto-sub">' + pend + ' pendientes · ' + elegidas + ' elegidas · ' + comprados + ' comprados · ' + confirmados + ' confirmados</span></div>';
   if (alertas > 0) html += '<div class="reparto-alerta">⚠ ' + alertas + ' unidad' + (alertas !== 1 ? 'es' : '') + ' comprada' + (alertas !== 1 ? 's' : '') + ' hace 2 días o más sin aparecer en Oversoft. Revisá con Valeria.</div>';
 
   // Rotación por modelo y color (dato clave para decidir qué comprar)
@@ -4351,11 +4477,13 @@ function renderReparto() {
     + '<option value="3"' + (repartoMeses === 3 ? ' selected' : '') + '>últ. 3 meses</option>'
     + '<option value="2"' + (repartoMeses === 2 ? ' selected' : '') + '>últ. 2 meses</option>'
     + '<option value="1"' + (repartoMeses === 1 ? ' selected' : '') + '>mes actual</option></select></label>'
-    + '<button id="repartoBtnComprar" class="refresh reparto-comprar" disabled onclick="repartoComprar()">Comprar seleccionadas (' + Object.keys(repartoSel).length + ')</button>'
+    + '<button id="repartoBtnComprar" class="refresh reparto-comprar" disabled onclick="repartoElegir()">Marcar elegidas (' + Object.keys(repartoSel).length + ')</button>'
     + '<button id="repartoBtnLimpiar" class="reparto-link" style="display:none" onclick="repartoSel={};renderReparto()">Limpiar selección</button></div>';
   html += '<div id="repartoTablaWrap"></div>';
-  html += '<p class="reparto-foot">Tildá las unidades a comprar y dale "Comprar seleccionadas" (arriba): te arma el texto para VW y pasan a la sección "Comprado · a conciliar" de abajo.</p>';
+  html += '<p class="reparto-foot">Tildá las unidades que querés comprar y dale "Marcar elegidas" (arriba): pasan a la sección "Elegidas · por comprar". Cuando se las comprás a VW, ahí las marcás como compradas y se arma el texto para mandarles.</p>';
 
+  // Sección "Elegidas · por comprar": elegí comprarlas, todavía sin confirmar a VW.
+  html += repartoElegidasSec(items);
   // Sección "Comprado · a conciliar": lo marcado comprado, todavía sin confirmar.
   html += repartoCompradoSec(items);
   // Sección "Confirmados": lo que ya conciliaste con Oversoft (OK). Sigue contando.
@@ -4365,6 +4493,37 @@ function renderReparto() {
   repartoFiltrar();
   repartoRotFiltrar();
   repartoUpdBtn();
+}
+
+// Sección con las unidades ELEGIDAS (las quiero comprar, todavía sin confirmar a
+// VW). Desde acá se pasan a "comprado" (una o todas) y recién ahí se arma el
+// texto para VW. "Volver a pendiente" las devuelve a la tabla de arriba.
+function repartoElegidasSec(items) {
+  const eleg = (items || []).filter(i => i.estado_compra === 'elegida');
+  let h = '<div class="reparto-sep"></div>';
+  h += '<div class="reparto-head"><h3>📝 Elegidas · por comprar</h3><span class="reparto-sub">' + eleg.length + ' unidad' + (eleg.length !== 1 ? 'es' : '') + '</span></div>';
+  if (!eleg.length) {
+    h += '<div class="empty">No tenés unidades elegidas. Tildá las que querés comprar en la tabla de arriba y dale "Marcar elegidas".</div>';
+    return h;
+  }
+  h += '<p class="reparto-hint">Unidades que elegiste comprar, todavía sin confirmarle a VW. Cuando se las comprás, tocá <strong>Comprada</strong> (o "Marcar todas compradas"): ahí se arma el texto para mandarles y pasan a "Comprado · a conciliar".</p>';
+  const vinsJson = JSON.stringify(eleg.map(i => i.vin));
+  h += '<div class="reparto-row" style="margin-bottom:8px"><button class="refresh reparto-comprar" onclick=\'repartoComprarElegidas(' + vinsJson + ')\'>Marcar todas compradas (' + eleg.length + ')</button></div>';
+  h += '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
+    + '<th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num">Acción</th></tr></thead><tbody>';
+  eleg.forEach(it => {
+    h += '<tr>';
+    h += '<td><div class="reparto-modelo">' + escapeHtml((it.descripcion || '').replace(/^VW /, '')) + '</div><div class="reparto-fam">' + escapeHtml(it.familia || '') + '</div></td>';
+    h += '<td>' + escapeHtml(it.color_nombre || '') + '</td>';
+    h += '<td class="reparto-vin">' + escapeHtml(it.vin) + '</td>';
+    const stk = (it.stockActual == null) ? '<span class="reparto-fam">s/d</span>'
+      : it.stockActual + (it.tieneAntiguedad ? ' <span class="reparto-antig-flag" title="Tenés unidad(es) con +90 días en stock">⏳</span>' : '');
+    h += '<td class="num">' + stk + '</td>';
+    h += '<td class="num"><div class="reparto-acc"><button class="refresh reparto-ok" onclick="repartoComprarElegidas([\'' + it.vin + '\'])" title="Marcar comprada: arma el texto para VW y pasa a conciliar">Comprada</button>';
+    h += '<button class="reparto-link" onclick="repartoDeshacer(\'' + it.vin + '\')">Volver a pendiente</button></div></td></tr>';
+  });
+  h += '</tbody></table></div></div>';
+  return h;
 }
 
 // Sección con las unidades marcadas "comprado" (a conciliar contra Oversoft).
@@ -4454,7 +4613,7 @@ function repartoFiltrar() {
     h += '<td class="reparto-vin">' + escapeHtml(it.vin) + '</td>';
     const stockCell = (it.stockActual == null)
       ? '<span class="reparto-fam">s/d</span>'
-      : '<button class="reparto-stock-btn" onclick="repartoToggleDetalle(\'' + it.vin + '\')" title="Ver stock por color">' + it.stockActual + ' <span class="reparto-chev">▾</span></button>';
+      : '<button class="reparto-stock-btn" onclick="repartoToggleDetalle(\'' + it.vin + '\')" title="Ver stock por color y antigüedad por chasis">' + it.stockActual + (it.tieneAntiguedad ? ' <span class="reparto-antig-flag" title="Tenés unidad(es) con +90 días en stock">⏳</span>' : '') + ' <span class="reparto-chev">▾</span></button>';
     h += '<td class="num">' + stockCell + '</td>';
     h += '<td class="num">' + (vend == null ? '<span class="reparto-fam">s/d</span>' : vend) + '</td>';
     let estado;
@@ -4497,6 +4656,20 @@ function repartoFiltrar() {
       det += tiene
         ? '<div class="reparto-det-ok">Ya tenés stock del color ofrecido (' + escapeHtml(it.color_nombre) + ').</div>'
         : '<div class="reparto-det-buy">⚠ No tenés <strong>' + escapeHtml(it.color_nombre) + '</strong> en stock → conviene comprar.</div>';
+    }
+    // Detalle por chasis con antigüedad (días en stock desde la recepción).
+    const chs = it.chasisStock || [];
+    if (chs.length) {
+      const viejas = chs.filter(c => c.viejo).length;
+      det += '<div class="reparto-det-ttl" style="margin-top:10px">Chasis en stock (' + chs.length + '):</div>';
+      det += '<div class="reparto-chasis-list">';
+      chs.forEach(c => {
+        const ant = (c.dias == null) ? '<span class="reparto-fam">a recibir</span>'
+          : (c.viejo ? '<span class="reparto-antig-bad">⏳ ' + c.dias + ' días</span>' : '<span class="reparto-antig-ok">' + c.dias + ' días</span>');
+        det += '<div class="reparto-chasis-row"><span class="reparto-vin">' + escapeHtml(c.serie || '—') + '</span><span class="reparto-chasis-col">' + escapeHtml(c.color || '') + '</span>' + ant + '</div>';
+      });
+      det += '</div>';
+      if (viejas) det += '<div class="reparto-det-buy">⏳ Tenés <strong>' + viejas + '</strong> unidad' + (viejas !== 1 ? 'es' : '') + ' con más de 90 días en stock → priorizá su venta.</div>';
     }
     h += '<tr id="repdet-' + it.vin + '" class="reparto-detalle hidden"><td colspan="8">' + det + '</td></tr>';
   });
