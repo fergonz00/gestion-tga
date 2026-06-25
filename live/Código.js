@@ -720,7 +720,7 @@ function getAdmVentas() {
 //  · el quebranto del plan VWFS (portal_campanas) sobre el monto financiado real
 //    (detcash, renglón FIN*),
 //  · gastos faltantes (informe inhibido $65.000 cuando financian — solo PVs nuevas).
-// Solo sucursal 1 (VW). Control vigente desde GASTOS_DESDE.
+// TODAS las preventas (cualquier sucursal/tipo, antes solo /1). Control vigente desde GASTOS_DESDE.
 const GASTOS_DESDE     = '2026-06-01';
 const INHIBIDO_DESDE   = '2026-06-19';  // el informe inhibido se exige en PVs nuevas (>= esta fecha)
 const INFORME_INHIBIDO = 65000;
@@ -746,13 +746,14 @@ function getConciliacionGastos(params) {
     const res = UrlFetchApp.fetch(OVERSOFT_URL + path, { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true });
     return res.getResponseCode() < 300 ? JSON.parse(res.getContentText()) : [];
   };
-  const esSuc1 = (ref) => ref.indexOf('PV ') === 0 && /\/1$/.test(ref);
+  // Cualquier PV ('PV NNNNN/N'), todas las sucursales/tipos (antes solo /1).
+  const esPv = (ref) => ref.indexOf('PV ') === 0 && /\/\d+$/.test(ref);
 
-  // 1) comprobante de la venta (auto) -> provincia + fecha por PV (sucursal 1)
+  // 1) comprobante de la venta (auto) -> provincia + fecha por PV
   const autos = ovs('/comprobantes?tipo=ilike.Automoviles*&fecha=gte.' + desde + '&fecha=lt.' + nm + '&select=referencia,provincia,fecha,preciolistaneto&limit=3000');
   const meta = {};
   autos.forEach((r) => {
-    const ref = String(r.referencia || ''); if (!esSuc1(ref)) return;
+    const ref = String(r.referencia || ''); if (!esPv(ref)) return;
     const pv = ref.replace('PV ', '');
     if (!meta[pv]) meta[pv] = { prov: String(r.provincia || ''), fecha: String(r.fecha || '').slice(0, 10), lista: Number(r.preciolistaneto) || 0 };
   });
@@ -760,7 +761,7 @@ function getConciliacionGastos(params) {
   const serv = ovs('/comprobantes?tipo=ilike.Servicios*&fecha=gte.' + desde + '&fecha=lt.' + nm + '&anulada=eq.false&select=comprobanteid,referencia,total&limit=4000');
   const gComp = {};
   serv.forEach((r) => {
-    const ref = String(r.referencia || ''); if (!esSuc1(ref)) return;
+    const ref = String(r.referencia || ''); if (!esPv(ref)) return;
     const pv = ref.replace('PV ', ''), t = Number(r.total) || 0;
     if (!gComp[pv] || t > gComp[pv].total) gComp[pv] = { id: r.comprobanteid, total: t };
   });

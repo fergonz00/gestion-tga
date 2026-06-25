@@ -1872,7 +1872,7 @@ function _admFinRow(key, v, fs) {
   const abierto = admVentasFinAbiertos.has(key);
   const up = v.usadoParte;
   let t = '<tr id="admfin_' + key + '"' + (abierto ? '' : ' style="display:none"') + '>'
-    + '<td colspan="19" style="background:#f0f6ff;border-left:3px solid #001e50;padding:10px 14px;text-align:left">'
+    + '<td colspan="20" style="background:#f0f6ff;border-left:3px solid #001e50;padding:10px 14px;text-align:left">'
     + '<div style="font-weight:700;font-size:12px;margin-bottom:6px">💵 Cuadro financiero · PV ' + escapeHtml(v.preventa)
     + (up ? ' · <span style="color:#7a5b00">usado en parte de pago (' + fmtPesosCompact(up.toma) + ')</span>' : '')
     + (v.creditoCobrado ? ' · <span style="color:' + (v.creditoCobrado.ok ? '#0a7a30' : '#cc6600') + '">' + (v.creditoCobrado.ok ? 'Crédito cobrado ' + _fechaDMA(v.creditoCobrado.fecha) : 'Crédito pendiente') + '</span>' : '')
@@ -2031,6 +2031,7 @@ function renderAdmVentas() {
   h += '<div class="table-wrap"><div class="admv-topbar"><div class="admv-topbar-inner"></div></div><div class="table-scroll admv-scroll"><table class="admv responsive-cards" style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:1100px">';
   h += '<thead style="white-space:nowrap"><tr>'
      + '<th style="text-align:left">PV</th><th style="text-align:left">Fecha</th><th style="text-align:left">Modelo</th>'
+     + '<th style="text-align:right" title="Factura (precio de venta al cliente) arriba; gasto total cobrado abajo — tocá Gastos para el desglose">Factura / Gastos</th>'
      + '<th style="text-align:left">Cliente</th><th style="text-align:left">Vendedor</th><th style="text-align:left">Serie</th>'
      + '<th title="Pago de la unidad a VW (de Compras y Saldos, por serie): fecha o impaga">Pago VW</th>'
      + '<th style="text-align:left">Dominio</th><th style="text-align:left">F. patent.</th>'
@@ -2081,10 +2082,13 @@ function renderAdmVentas() {
     h += '<tr id="admrow_' + key + '">'
        + '<td data-label="PV"><b>' + escapeHtml(v.preventa) + '</b>' + btnCom + (extra.length ? '<br><small style="color:var(--vw-grey-3)">' + extra.join(' · ') + '</small>' : '') + '</td>'
        + '<td data-label="Fecha">' + _fechaDMA(v.fechaPv) + '</td>'
-       + '<td data-label="Modelo">' + escapeHtml(v.modelo)
-         + (v.montoFc > 0 ? '<br><small style="color:#555">Factura <b>' + fmtPesos(v.montoFc) + '</b></small>' : '')
-         + (gasto ? '<br><small><button onclick="toggleAdmGasto(\'' + key + '\')" title="Ver desglose de gastos por concepto" style="border:0;background:none;cursor:pointer;color:#0a66c2;font-weight:600;font-size:11px;padding:0">Gastos $' + _gMoney(gasto.total) + ' ▸</button></small>' : '')
-         + '</td>'
+       + '<td data-label="Modelo">' + escapeHtml(v.modelo) + '</td>'
+       + '<td data-label="Factura / Gastos" style="text-align:right;white-space:nowrap">'
+         + (v.montoFc > 0 ? '<div title="Factura (precio de venta al cliente)"><b>' + fmtPesos(v.montoFc) + '</b></div>' : '<div style="color:var(--vw-grey-3)">s/factura</div>')
+         + (gasto
+             ? '<div><button onclick="toggleAdmGasto(\'' + key + '\')" title="Ver desglose de gastos por concepto" style="border:0;background:none;cursor:pointer;color:#0a66c2;font-weight:600;font-size:11px;padding:0">Gastos $' + _gMoney(gasto.total) + ' ▸</button></div>'
+             : '<div style="color:var(--vw-grey-3);font-size:11px">s/gastos</div>')
+       + '</td>'
        + '<td data-label="Cliente" title="' + escapeHtml(String(v.cliente) + (v.localidad ? ' — ' + v.localidad : '')) + '">' + escapeHtml(String(v.cliente).slice(0, 17)) + (v.localidad ? '<br><small style="color:var(--vw-grey-3)">' + escapeHtml(String(v.localidad).slice(0, 17)) + '</small>' : '') + '</td>'
        + '<td data-label="Vendedor">' + escapeHtml(v.vendedor) + '</td>'
        + '<td data-label="Serie" title="' + escapeHtml(v.chasis) + '">' + escapeHtml(v.serie) + '</td>'
@@ -2130,17 +2134,17 @@ function renderAdmVentas() {
     if (v.cuadro && v.cuadro.length) h += _admFinRow(key, v, fs);
     if (v.comentario) {
       h += '<tr id="admcom_' + key + '"' + (admVentasComAbiertos.has(key) ? '' : ' style="display:none"') + '>'
-         + '<td colspan="19" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">'
+         + '<td colspan="20" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">'
          + '💬 <b>Comentario de la PV ' + escapeHtml(v.preventa) + ':</b> ' + escapeHtml(v.comentario) + '</td></tr>';
     }
     if (gasto) {
       h += '<tr id="admgasto_' + key + '"' + (admGastoAbiertos.has(key) ? '' : ' style="display:none"') + '>'
-         + '<td colspan="19" style="background:#fafbfc;border-left:3px solid #0a66c2;padding:8px 14px 12px 30px;text-align:left">'
+         + '<td colspan="20" style="background:#fafbfc;border-left:3px solid #0a66c2;padding:8px 14px 12px 30px;text-align:left">'
          + '<div style="font-weight:700;font-size:12px;margin-bottom:4px">Gastos cobrados al cliente · PV ' + escapeHtml(v.preventa) + ' · total $' + _gMoney(gasto.total) + '</div>'
          + _gastoDetalleHtml(gasto) + '</td></tr>';
     }
   }
-  if (!rows.length) h += '<tr><td colspan="19" class="empty">Sin carpetas para ese filtro.</td></tr>';
+  if (!rows.length) h += '<tr><td colspan="20" class="empty">Sin carpetas para ese filtro.</td></tr>';
   h += '</tbody></table></div></div>';
   h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio, fecha de patentamiento, la <b>entrega programada</b> (fecha y hora) y el <b>retiró ✓</b> salen de Oversoft en vivo (no se editan acá: la fecha/hora la programa la administrativa en Oversoft y el ✓ se prende cuando la unidad figura como entregada). El resto se completa acá y <b>se guarda solo al cambiar cada campo</b> (el ✓ de la fila se pone verde cuando guardó bien; si algo falla, avisa y podés reintentar con el ✓). El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes. El mes de cada carpeta (selector de arriba, mismo criterio que Patentamientos) = fecha real de Oversoft o, si aún no está patentada, el "Mes pat. ✔adm" — las ventas nuevas sin ninguno de los dos entran al mes en curso (cambiale el "Mes pat." si va para otro mes).</div>';
   // El re-render recrea el <input> de búsqueda y le saca el foco (antes había
