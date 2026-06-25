@@ -2431,11 +2431,12 @@ function renderVentasOv() {
     const gColor = g ? (v.gciaVtaPesos >= 0 ? '#0a7a30' : '#cc3300') : 'var(--vw-grey-3)';
     const gasto = _gastoDe(v.preventaNum);
     const puedeDet = !!(gasto || v.breakdown);
-    const gastoCell = gasto
-      ? '<button onclick="toggleVentasOvDet(\'' + key + '\')" title="Ver desglose de gastos, incentivos y costos" style="border:0;background:none;cursor:pointer;color:#0a66c2;font-weight:600;font-size:12px;padding:0">$' + _gMoney(gasto.total) + ' ▸</button>'
-      : (v.breakdown
-          ? '<button onclick="toggleVentasOvDet(\'' + key + '\')" title="Ver desglose de incentivos y costos" style="border:0;background:none;cursor:pointer;color:#888;font-size:12px;padding:0">ver ▸</button>'
-          : '<span style="color:#ccc">—</span>');
+    // Total de gastos cobrados si existe (cualquier sucursal). Si la PV todavía no
+    // tiene comprobante de gastos cargado en Oversoft → "—" (igual clickeable para
+    // ver el desglose de incentivos/costos). Antes decía "ver", que confundía.
+    const gastoCell = puedeDet
+      ? '<button onclick="toggleVentasOvDet(\'' + key + '\')" title="' + (gasto ? 'Ver desglose de gastos, incentivos y costos' : 'Sin gastos cargados aún — ver incentivos y costos') + '" style="border:0;background:none;cursor:pointer;color:' + (gasto ? '#0a66c2' : 'var(--vw-grey-3)') + ';font-weight:' + (gasto ? '600' : '400') + ';font-size:12px;padding:0">' + (gasto ? '$' + _gMoney(gasto.total) : '—') + ' ▸</button>'
+      : '<span style="color:#ccc">—</span>';
     h += '<tr' + (v.mencionaAcc ? ' style="background:#fff8e1"' : '') + '>'
       + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + accFlag + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + '</td>'
       + '<td>' + _fechaDMA(v.fechaPvIso) + '</td>'
