@@ -347,9 +347,9 @@ function _oversoftMotorData(catByNorm) {
     const resC = UrlFetchApp.fetch(OVERSOFT_URL + '/colores?select=colorid,descripcion&limit=2000', h);
     if (resC.getResponseCode() < 300) for (const c of JSON.parse(resC.getContentText())) colorDe[String(c.colorid)] = String(c.descripcion || '').trim();
   } catch (e) {}
-  const res2 = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo,color&entregada=eq.false&asignada=eq.false&preventa=eq.&limit=3000', h);
+  const res2 = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo,color,serie,fechaderecepcion&entregada=eq.false&asignada=eq.false&preventa=eq.&limit=3000', h);
   const us = (res2.getResponseCode() < 300) ? JSON.parse(res2.getContentText()) : [];
-  const stockPorTrim = {}; const stockColorPorTrim = {}; let stockTotal = 0;
+  const stockPorTrim = {}; const stockColorPorTrim = {}; const chasisPorTrim = {}; let stockTotal = 0;
   for (const u of us) {
     stockTotal++;
     const nc = ncDe(u.modelo);
@@ -358,6 +358,10 @@ function _oversoftMotorData(catByNorm) {
     const col = colorDe[String(u.color)] || ('color ' + u.color);
     if (!stockColorPorTrim[nc]) stockColorPorTrim[nc] = {};
     stockColorPorTrim[nc][col] = (stockColorPorTrim[nc][col] || 0) + 1;
+    // Detalle por chasis (para mostrar antiguedad en el Reparto): serie + color +
+    // fecha de recepcion (cuando entro al stock fisico; null = todavia a recibir).
+    if (!chasisPorTrim[nc]) chasisPorTrim[nc] = [];
+    chasisPorTrim[nc].push({ serie: String(u.serie || '').trim(), color: col, fechaRecepcion: u.fechaderecepcion ? String(u.fechaderecepcion).slice(0, 10) : null });
   }
 
   // 3) VENTAS (preventas no anuladas, 0km, por fecha) — últimos ~6 meses
@@ -406,6 +410,7 @@ function _oversoftMotorData(catByNorm) {
     }
   }
   return { stockPorTrim: stockPorTrim, stockColorPorTrim: stockColorPorTrim, stockTotal: stockTotal,
+           chasisPorTrim: chasisPorTrim,
            ventasPorTrim: ventasPorTrim, ventasDet: ventasDet, ventasColorPorTrim: ventasColorPorTrim,
            sinCatalogo: Object.values(sinCat) };
 }
@@ -1971,11 +1976,12 @@ function getBaratitoMotor() {
     if (c.nombre_bt)    catByNorm[_ntrim(c.nombre_bt)]    = c.nombre_corto;
   }
   // Stock Y ventas, ambos genuinos desde Oversoft (por trim exacto).
-  let stockPorTrim = {}, stockColorPorTrim = {}, stockTotalOversoft = 0, ventasNc = {}, ventasDet = {}, ventasColorPorTrim = {}, sinCatalogo = [];
+  let stockPorTrim = {}, stockColorPorTrim = {}, chasisPorTrim = {}, stockTotalOversoft = 0, ventasNc = {}, ventasDet = {}, ventasColorPorTrim = {}, sinCatalogo = [];
   try {
     const od = _oversoftMotorData(catByNorm);
     stockPorTrim = od.stockPorTrim;
     stockColorPorTrim = od.stockColorPorTrim || {};
+    chasisPorTrim = od.chasisPorTrim || {};
     stockTotalOversoft = od.stockTotal;
     ventasNc = od.ventasPorTrim;
     ventasDet = od.ventasDet || {};
@@ -2052,6 +2058,7 @@ function getBaratitoMotor() {
       colores:       Object.entries(stockColorPorTrim[c.nombre_corto] || {})
                        .map(([col, n]) => ({ color: col, stock: n }))
                        .sort((a, b) => b.stock - a.stock || a.color.localeCompare(b.color)),
+      chasis:        chasisPorTrim[c.nombre_corto] || [],
       ajustes:       ajustesByNc[c.nombre_corto] || {},
       nombreCorto:   c.nombre_corto,    // clave para guardar ajustes
       competencia:   comp.porModelo[_ntrim(c.nombre_bt || c.nombre_corto)] || comp.porModelo[_ntrim(c.nombre_corto)] || null,
@@ -2126,6 +2133,7 @@ function doPost(e) {
     if (accion === 'setobjetivo')          return jsonResponse(setObjetivoPat(body));
     if (accion === 'setobjetivocompra')    return jsonResponse(setObjetivoCompra(body));
     if (accion === 'cargarreparto')        return jsonResponse(cargarReparto(body));
+    if (accion === 'elegirreparto')        return jsonResponse(marcarElegido(body));
     if (accion === 'comprarreparto')       return jsonResponse(marcarComprado(body));
     if (accion === 'deshacerreparto')      return jsonResponse(desmarcarComprado(body));
     if (accion === 'okreparto')            return jsonResponse(darOkReparto(body));
@@ -3564,6 +3572,18 @@ function cargarReparto(body) {
   return { ok: true, nuevos: nuevos, total: rows.length, periodo: periodo };
 }
 
+// Marca unidades como ELEGIDAS (las quiero comprar, todavia sin confirmarle a VW).
+// Paso intermedio entre pendiente y comprado: no siembra compras_vw ni cuenta
+// como compra del mes; solo separa las que ya decidi en la seccion Elegidas.
+function marcarElegido(body) {
+  var vins = (body && body.vins) || [];
+  if (!vins.length) return { ok: true };
+  var res = UrlFetchApp.fetch(SUPA_URL + '/reparto_vw?vin=in.(' + _repartoInList(vins) + ')', {
+    method: 'patch', headers: Object.assign(_repartoWHeaders(), { Prefer: 'return=minimal' }),
+    payload: JSON.stringify({ estado_compra: 'elegida', comprado_at: null }), muteHttpExceptions: true });
+  return res.getResponseCode() < 300 ? { ok: true } : { ok: false, error: 'supa ' + res.getResponseCode() };
+}
+
 function marcarComprado(body) {
   var vins = (body && body.vins) || [];
   if (!vins.length) return { ok: true };
@@ -3699,7 +3719,7 @@ function getReparto() {
   try {
     motor = _cached('motor', CACHE_TTL_SEC, false, getBaratitoMotor);
     (motor.modelos || []).forEach(function (m) {
-      var v = { ventasPorMes: m.ventasPorMes, stock: m.stock, colores: m.colores || [] };
+      var v = { ventasPorMes: m.ventasPorMes, stock: m.stock, colores: m.colores || [], chasis: m.chasis || [] };
       if (m.modelo) motorByNorm[_repartoNtrim(m.modelo)] = v;
       if (m.nombreCorto) motorByNorm[_repartoNtrim(m.nombreCorto)] = v;
     });
@@ -3747,11 +3767,18 @@ function getReparto() {
     var dias = r.comprado_at ? Math.floor((now - new Date(r.comprado_at).getTime()) / 86400000) : null;
     var mm = motorByNorm[_repartoNtrim(r.descripcion)];
     var colorNom = colores[r.color_codigo] || r.color_codigo;
+    var chRaw = mm ? (mm.chasis || []) : [];
+    var chasisStock = chRaw.map(function (c) {
+      var d = c.fechaRecepcion ? Math.floor((now - new Date(c.fechaRecepcion).getTime()) / 86400000) : null;
+      return { serie: c.serie, color: c.color, fechaRecepcion: c.fechaRecepcion, dias: d, viejo: (d != null && d > 90) };
+    }).sort(function (a, b) { return (b.dias == null ? -1 : b.dias) - (a.dias == null ? -1 : a.dias); });
     return Object.assign({}, r, {
       color_nombre: colorNom,
       ventasPorMes: mm ? mm.ventasPorMes : null,
       stockActual: mm ? mm.stock : null,
       coloresStock: mm ? (mm.colores || []) : null,
+      chasisStock: chasisStock,
+      tieneAntiguedad: chasisStock.some(function (c) { return c.viejo; }),
       enOversoft: !!ov, oversoft: ov, diasComprado: dias,
       modeloMatch: ov ? (_repartoNtrim(ov.modelo) === _repartoNtrim(r.descripcion) || incl(ov.modelo, r.descripcion)) : null,
       colorMatch: ov ? incl(ov.color, colorNom) : null,
