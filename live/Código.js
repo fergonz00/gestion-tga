@@ -440,6 +440,16 @@ function _gciaVentaPct(monto, iva, lista, costoRep, ccIva, otros) {
 // =======================================================================
 const ADM_VENTAS_DESDE = '2026-01-01';
 
+// PVs ESPECIALES (excepciones manuales). Una "PV abierta/especial" que por error
+// quedó con sufijo /8 (o cualquier caso puntual) pero que NO es Autoahorro. Para
+// estas: (1) NO se le toman incentivos en Ventas (el precio está inflado y los
+// incentivos lo inflan más), (2) en Adm. ventas tiene categoría propia "ESPECIAL"
+// y (3) su mes de patentamiento queda "sin definir" (no entra a ningún mes hasta
+// que se defina). Key = PV normalizada (_normPv, ej. "5738/8"). Agregar acá las
+// que correspondan (excepción manual, NO regla automática por /8).
+const PV_ESPECIALES = { '5738/8': true };
+function _esEspecial(numero) { return !!PV_ESPECIALES[_normPv(numero)]; }
+
 // 'PV 08032/1' (Oversoft) → '8032/1' (como la hoja). Misma normalización que
 // usa el front de ventas para matchear contra la hoja PVs.
 function _normPv(s) {
@@ -654,6 +664,7 @@ function getAdmVentas() {
     const m = man[key] || {};
     const fin = _cuadroDePv(dcByPv[p.numero] || []);
     const esAA = (String(p.numero).split('/')[1] === '8') || fin.hasVTPDA;
+    const especial = _esEspecial(p.numero);   // excepción manual: PV abierta/especial
     const us = (usByPv[p.numero] || [])[0];
     const sld = saldoBySerie[String(u.serie || '').trim()];
     return {
@@ -677,7 +688,8 @@ function getAdmVentas() {
       montoFinanciado: Number(p.financiacion_importe) || 0,
       patentaCliente: !!p.patentacliente,
       // --- cuadro financiero (detcash) ---
-      tipo: esAA ? 'AA' : fin.tipo,           // AA | CONTADO | FINANCIA_VW | FINANCIA_TG | FINANCIA_OTROS
+      tipo: especial ? 'ESPECIAL' : (esAA ? 'AA' : fin.tipo),  // ESPECIAL | AA | CONTADO | FINANCIA_VW | FINANCIA_TG | FINANCIA_OTROS
+      especial: especial,                     // PV abierta/especial (excepción): categoría propia + mes sin definir
       financia: fin.financia,                  // nombre del financiador (si aplica)
       cuadro: fin.cuadro,                      // líneas: concepto/plan/cobrado/saldo/vto/fechaCobro/recibos
       totalPlan: fin.totalPlan,
@@ -981,18 +993,22 @@ function getVentasV2(targetMes) {
     const esAA = !!vtpdaSet[p.numero]
       || (String(p.numero || '').split('/').pop().trim() === '8'
         && (/\bG\s*-?\s*O\b/i.test(_comAA) || /grupo\s*y\s*orden/i.test(_comAA)));
+    // PV especial/abierta (excepción manual): NO es AA, pero tampoco cobra
+    // incentivos (precio inflado). Ver PV_ESPECIALES.
+    const especial = _esEspecial(p.numero);
+    const noInc = esAA || especial;   // no tomar incentivos
 
     let gciaPct = null, gciaPesos = null, listaM = 0, breakdown = null;
     if (btMes && monto > 0) {
       listaM = Number(btMes.precio_lista) || 0;
       const costoC = Number(btMes.costo_concesionario) || 0;
       const im = (incPorMes[mesKey] || {})[nc.nombre_corto] || {};
-      const ccM = esAA ? 0 : (Number(im.performance) || 0);
-      const tacM = esAA ? 0 : (Number(im.tactico) || 0);
-      const whoM = esAA ? 0 : (Number(im.whosale) || 0);
-      const a1M  = esAA ? 0 : (Number(im.adicional1) || 0);
-      const a2M  = esAA ? 0 : (Number(im.adicional2) || 0);
-      const cupM = esAA ? 0 : (Number(im.cupo) || 0);
+      const ccM = noInc ? 0 : (Number(im.performance) || 0);
+      const tacM = noInc ? 0 : (Number(im.tactico) || 0);
+      const whoM = noInc ? 0 : (Number(im.whosale) || 0);
+      const a1M  = noInc ? 0 : (Number(im.adicional1) || 0);
+      const a2M  = noInc ? 0 : (Number(im.adicional2) || 0);
+      const cupM = noInc ? 0 : (Number(im.cupo) || 0);
       const otrosM = tacM + whoM + a1M + a2M + cupM;
       // mismos costos que usa _gciaVentaPct (comisión 1,5% y IIBB max(1,4% vta neta, 10% margen neto))
       const dtoFrac = listaM > 0 ? (1 - monto / listaM) : 0;
@@ -1000,6 +1016,7 @@ function getVentasV2(targetMes) {
       const iibbV = Math.max(0.014 * monto * (1 - ivaFrac), 0.1 * (monto - costoC) * (1 - ivaFrac));
       breakdown = {
         esAA: esAA,
+        especial: especial,
         costos: { comision: Math.round(comV), iibb: Math.round(iibbV), costoRep: Math.round(costoC) },
         incentivos: { cc: Math.round(ccM), tactico: Math.round(tacM), whosale: Math.round(whoM), adic1: Math.round(a1M), adic2: Math.round(a2M), cupo: Math.round(cupM), total: Math.round(ccM + otrosM) },
       };
@@ -1040,6 +1057,7 @@ function getVentasV2(targetMes) {
       comentario: comentario,
       mencionaAcc: mencionaAcc,
       esAA: esAA,
+      especial: especial,
       breakdown: breakdown,
       sinBt: !btMes,
       _dbg: btMes ? { nc: nc.nombre_corto, lista: Number(btMes.precio_lista)||0, costo: Number(btMes.costo_concesionario)||0,
@@ -2602,7 +2620,12 @@ function getPatentamientos() {
     const m = v.manual || {};
 
     let mesKey, mesKeyOrigen;
-    if (v.fechaPatentamiento) {
+    if (v.especial) {
+      // PV especial/abierta (excepción): NO cuenta en ningún mes (ni siquiera si
+      // tiene un mes manual guardado) hasta que se la deje de tratar como especial.
+      mesKey = null;
+      mesKeyOrigen = 'especial';
+    } else if (v.fechaPatentamiento) {
       mesKey = String(v.fechaPatentamiento).slice(0, 7);
       mesKeyOrigen = 'oversoft';
     } else if (m.mes_patentamiento) {

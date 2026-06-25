@@ -1861,6 +1861,7 @@ function _admFinEstado(v) {
   return { alerta, lineas };
 }
 const TIPO_CHIP = {
+  'ESPECIAL':       { txt: 'Especial',   bg: '#6a1b9a' },
   'AA':             { txt: 'AA',         bg: '#7C3AED' },
   'CONTADO':        { txt: 'Contado',    bg: '#64748b' },
   'FINANCIA_VW':    { txt: 'Fin. VW',    bg: '#001e50' },
@@ -1937,6 +1938,7 @@ function _admFinRow(key, v, fs) {
 // sin ninguno de los dos, el MES EN CURSO (la venta nueva aparece ya como
 // pendiente del mes corriente y Moni la corrige si va a otro mes).
 function _admMesDe(v) {
+  if (v.especial) return '__sin__';   // PV especial/abierta: mes de patentamiento sin definir
   if (v.fechaPatentamiento) return String(v.fechaPatentamiento).slice(0, 7);
   const m = (v.manual && v.manual.mes_patentamiento) || '';
   return m ? String(m).slice(0, 7) : _mesActualReal();
@@ -2003,8 +2005,13 @@ function renderAdmVentas() {
   h += '<label for="mesSelAdm">Mes:</label>';
   h += '<select id="mesSelAdm" onchange="admVentasMes=this.value;renderAdmVentas()">';
   for (const mk of mesesAdm) {
-    const obj = objetivosPat[mk] || 0;
-    const lbl = _mesLabelLargo(mk) + ' ' + mk.slice(0, 4) + ' · ' + cuentaMes[mk] + ' carpetas' + (obj > 0 ? ' · obj ' + obj : '');
+    let lbl;
+    if (mk === '__sin__') {
+      lbl = 'Sin definir (PV abierta) · ' + cuentaMes[mk] + ' carpetas';
+    } else {
+      const obj = objetivosPat[mk] || 0;
+      lbl = _mesLabelLargo(mk) + ' ' + mk.slice(0, 4) + ' · ' + cuentaMes[mk] + ' carpetas' + (obj > 0 ? ' · obj ' + obj : '');
+    }
     h += '<option value="' + mk + '"' + (admVentasMes === mk ? ' selected' : '') + '>' + lbl + '</option>';
   }
   h += '<option value="__todos__"' + (admVentasMes === '__todos__' ? ' selected' : '') + '>Todos los meses · ' + admVentasData.ventas.length + '</option>';
@@ -2430,7 +2437,7 @@ function renderVentasOv() {
           ? '<button onclick="toggleVentasOvDet(\'' + key + '\')" title="Ver desglose de incentivos y costos" style="border:0;background:none;cursor:pointer;color:#888;font-size:12px;padding:0">ver ▸</button>'
           : '<span style="color:#ccc">—</span>');
     h += '<tr' + (v.mencionaAcc ? ' style="background:#fff8e1"' : '') + '>'
-      + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + accFlag + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + '</td>'
+      + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + accFlag + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + '</td>'
       + '<td>' + _fechaDMA(v.fechaPvIso) + '</td>'
       + '<td>' + escapeHtml(v.modelo) + '</td>'
       + '<td>' + escapeHtml(v.vendedor || '') + '</td>'
@@ -3812,6 +3819,7 @@ function _ventaDetHtml(v, gasto) {
   h += '<div style="font-weight:700;font-size:12px;margin-bottom:4px">Incentivos tomados</div>';
   if (!b) h += '<div style="color:#888;font-size:12px">Mes sin BT — sin datos.</div>';
   else if (b.esAA) h += '<div style="color:#7a5b00;font-size:12px;max-width:230px">Autoahorro (G-O): no cobra condiciones comerciales → <b>$0</b>.</div>';
+  else if (b.especial) h += '<div style="color:#6a1b9a;font-size:12px;max-width:230px">PV especial/abierta (excepción manual): no toma incentivos (precio inflado) → <b>$0</b>.</div>';
   else {
     const i = b.incentivos;
     h += '<table style="font-size:12px;border-collapse:collapse">'
