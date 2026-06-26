@@ -1899,6 +1899,23 @@ function getAnalisisStock() {
   const N = refMeses.length;   // 6
   const sumMes = (vpm) => { let s = 0; for (const m of refMeses) s += Number((vpm || {})[m]) || 0; return s; };
 
+  // STOCK VIRTUAL: las compradas a VW que todavia NO estan en Oversoft cuentan
+  // como stock para este analisis (para la rotacion y los meses de stock). No
+  // afecta a vendedores ni a Stock/Stock. Ver _stockVirtualCompras().
+  try {
+    const virt = _stockVirtualCompras();
+    Object.keys(virt.byNc).forEach((nc) => {
+      stockNc[nc] = (stockNc[nc] || 0) + virt.byNc[nc];
+      stockTotal += virt.byNc[nc];
+      if (!stockColorNc[nc]) stockColorNc[nc] = {};
+      const cmap = virt.colorByNc[nc] || {};
+      Object.keys(cmap).forEach((cn) => {
+        const key = _stockColKey(stockColorNc[nc], cn) || cn;
+        stockColorNc[nc][key] = (stockColorNc[nc][key] || 0) + cmap[cn];
+      });
+    });
+  } catch (e) {}
+
   // armar salida: todos los modelos con stock o ventas en la ventana
   const ncs = {};
   Object.keys(stockNc).forEach((k) => ncs[k] = 1);
@@ -3501,6 +3518,80 @@ function _repartoNtrim(s) {
   return s.replace(/[^a-z0-9]/g, '');
 }
 
+// =======================================================================
+// STOCK VIRTUAL — unidades que YA pedimos comprar a VW (reparto en estado
+// comprado u ok) pero que TODAVIA no figuran en Oversoft. Se cuentan como
+// stock SOLO para los analisis internos: "Analisis de stock", la rotacion del
+// Reparto y el stock por color del Reparto. NUNCA para la vista de vendedores
+// (precios) ni para la solapa Stock/Stock. En cuanto el VIN aparece en
+// Oversoft deja de contar como virtual (lo toma el stock fisico real).
+// Devuelve todo indexado por nombre_corto del catalogo:
+//   byNc      : { nc -> cantidad }
+//   colorByNc : { nc -> { nombreColor -> cantidad } }
+//   chasisByNc: { nc -> [ {serie, color, dias, viejo, virtual:true} ] }
+// =======================================================================
+function _stockVirtualCompras() {
+  var vacio = { byNc: {}, colorByNc: {}, chasisByNc: {} };
+  var rows = [];
+  try { rows = _repartoRead('/reparto_vw?select=vin,descripcion,color_codigo,comprado_at,estado_compra&estado_compra=in.(comprado,ok)') || []; } catch (e) { return vacio; }
+  if (!rows.length) return vacio;
+
+  // Excluir las que YA estan en Oversoft (por VIN): esas ya las cuenta el stock real.
+  var enOv = {};
+  var h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
+  var vins = rows.map(function (r) { return String(r.vin || '').toUpperCase(); }).filter(Boolean);
+  for (var i = 0; i < vins.length; i += 60) {
+    var lote = vins.slice(i, i + 60).map(function (s) { return '"' + s + '"'; }).join(',');
+    try {
+      var res = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=vin&vin=in.(' + encodeURIComponent(lote) + ')', h);
+      if (res.getResponseCode() < 300) JSON.parse(res.getContentText()).forEach(function (u) { enOv[String(u.vin || '').toUpperCase()] = true; });
+    } catch (e) {}
+  }
+
+  // catalogo: norm(corto|bt) -> nombre_corto (para cruzar la descripcion del reparto)
+  var catByNorm = {};
+  try {
+    _supaGet('/catalogo_modelos?select=nombre_corto,nombre_bt&activo=eq.true').forEach(function (c) {
+      if (c.nombre_corto) catByNorm[_ntrim(c.nombre_corto)] = c.nombre_corto;
+      if (c.nombre_bt) catByNorm[_ntrim(c.nombre_bt)] = c.nombre_corto;
+    });
+  } catch (e) {}
+
+  // nombres de color (codigo VW -> nombre)
+  var coloresDb = {};
+  try { (_repartoRead('/reparto_colores?select=codigo,nombre') || []).forEach(function (c) { coloresDb[c.codigo] = c.nombre; }); } catch (e) {}
+  var colores = Object.assign({}, REPARTO_COLORES_BASE, coloresDb);
+
+  var out = { byNc: {}, colorByNc: {}, chasisByNc: {} };
+  var now = Date.now();
+  rows.forEach(function (r) {
+    var vin = String(r.vin || '').toUpperCase();
+    if (!vin || enOv[vin]) return;                          // ya esta en Oversoft -> no es virtual
+    var nc = catByNorm[_ntrim(r.descripcion)];
+    if (!nc) return;                                        // no matchea catalogo -> lo salteamos
+    var colNom = colores[r.color_codigo] || r.color_codigo || '(sin color)';
+    var dias = r.comprado_at ? Math.floor((now - new Date(r.comprado_at).getTime()) / 86400000) : null;
+    out.byNc[nc] = (out.byNc[nc] || 0) + 1;
+    if (!out.colorByNc[nc]) out.colorByNc[nc] = {};
+    out.colorByNc[nc][colNom] = (out.colorByNc[nc][colNom] || 0) + 1;
+    if (!out.chasisByNc[nc]) out.chasisByNc[nc] = [];
+    out.chasisByNc[nc].push({ serie: vin.slice(-8), color: colNom, fechaRecepcion: null, dias: dias, viejo: (dias != null && dias > 90), virtual: true });
+  });
+  return out;
+}
+
+// Normaliza un nombre de color para cruzar dos sistemas de naming (Oversoft vs
+// reparto): minusculas, sin acentos, solo alfanumerico.
+function _stockColNorm(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+}
+// Busca en un objeto {nombreColor: ...} la clave que normalice igual a `name`.
+function _stockColKey(obj, name) {
+  var n = _stockColNorm(name), keys = Object.keys(obj);
+  for (var i = 0; i < keys.length; i++) if (_stockColNorm(keys[i]) === n) return keys[i];
+  return null;
+}
+
 // Soporta DOS layouts del mail de VW:
 //  - VIEJO (posicional): Canal | Zona | CE | CodModelo | MY | Familia | Descripcion | CodColor | Chasis | Comision | Status
 //  - NUEVO (con header):  Origen | Numero de comision | AÑO | Chasis | Descripcion | Color exterior | MY | Zona | CE | Status
@@ -3742,11 +3833,16 @@ function getReparto() {
   try {
     motor = _cached('motor', CACHE_TTL_SEC, false, getBaratitoMotor);
     (motor.modelos || []).forEach(function (m) {
-      var v = { ventasPorMes: m.ventasPorMes, stock: m.stock, colores: m.colores || [], chasis: m.chasis || [] };
+      var v = { ventasPorMes: m.ventasPorMes, stock: m.stock, colores: m.colores || [], chasis: m.chasis || [], nombreCorto: m.nombreCorto };
       if (m.modelo) motorByNorm[_repartoNtrim(m.modelo)] = v;
       if (m.nombreCorto) motorByNorm[_repartoNtrim(m.nombreCorto)] = v;
     });
   } catch (e) {}
+
+  // Stock VIRTUAL (compradas a VW aun no en Oversoft) para sumar al stock por
+  // modelo/color y a la rotacion del Reparto. NO va a vendedores ni a Stock/Stock.
+  var virt = { byNc: {}, colorByNc: {}, chasisByNc: {} };
+  try { virt = _stockVirtualCompras(); } catch (e) {}
 
   // Cruce Oversoft (por VIN) para las compradas: presencia + modelo + color
   // (para que Fer chequee que coincida lo que cargó el sistema antes del OK).
@@ -3789,17 +3885,33 @@ function getReparto() {
     var ov = cruce[String(r.vin).toUpperCase()] || null;
     var dias = r.comprado_at ? Math.floor((now - new Date(r.comprado_at).getTime()) / 86400000) : null;
     var mm = motorByNorm[_repartoNtrim(r.descripcion)];
+    var nc = mm ? mm.nombreCorto : null;
     var colorNom = colores[r.color_codigo] || r.color_codigo;
     var chRaw = mm ? (mm.chasis || []) : [];
     var chasisStock = chRaw.map(function (c) {
       var d = c.fechaRecepcion ? Math.floor((now - new Date(c.fechaRecepcion).getTime()) / 86400000) : null;
-      return { serie: c.serie, color: c.color, fechaRecepcion: c.fechaRecepcion, dias: d, viejo: (d != null && d > 90) };
-    }).sort(function (a, b) { return (b.dias == null ? -1 : b.dias) - (a.dias == null ? -1 : a.dias); });
+      return { serie: c.serie, color: c.color, fechaRecepcion: c.fechaRecepcion, dias: d, viejo: (d != null && d > 90), virtual: false };
+    });
+    // Sumar las compradas-aun-no-en-Oversoft (stock virtual) de este modelo.
+    var vAdd = (nc && virt.byNc[nc]) || 0;
+    ((nc && virt.chasisByNc[nc]) || []).forEach(function (c) {
+      chasisStock.push({ serie: c.serie, color: c.color, fechaRecepcion: null, dias: c.dias, viejo: c.viejo, virtual: true });
+    });
+    chasisStock.sort(function (a, b) { return (b.dias == null ? -1 : b.dias) - (a.dias == null ? -1 : a.dias); });
+    var coloresStock = mm ? (mm.colores || []).map(function (c) { return { color: c.color, stock: c.stock }; }) : [];
+    var vcmap = (nc && virt.colorByNc[nc]) || {};
+    Object.keys(vcmap).forEach(function (cn) {
+      var found = null;
+      for (var ci = 0; ci < coloresStock.length; ci++) if (_stockColNorm(coloresStock[ci].color) === _stockColNorm(cn)) { found = coloresStock[ci]; break; }
+      if (found) found.stock += vcmap[cn]; else coloresStock.push({ color: cn, stock: vcmap[cn] });
+    });
+    coloresStock.sort(function (a, b) { return b.stock - a.stock || String(a.color).localeCompare(String(b.color)); });
+    var hayStock = !!mm || vAdd > 0 || coloresStock.length > 0;
     return Object.assign({}, r, {
       color_nombre: colorNom,
       ventasPorMes: mm ? mm.ventasPorMes : null,
-      stockActual: mm ? mm.stock : null,
-      coloresStock: mm ? (mm.colores || []) : null,
+      stockActual: hayStock ? ((mm ? (Number(mm.stock) || 0) : 0) + vAdd) : null,
+      coloresStock: hayStock ? coloresStock : null,
       chasisStock: chasisStock,
       tieneAntiguedad: chasisStock.some(function (c) { return c.viejo; }),
       enOversoft: !!ov, oversoft: ov, diasComprado: dias,
@@ -3808,7 +3920,7 @@ function getReparto() {
       alerta: r.estado_compra === 'comprado' && !ov && dias !== null && dias >= 2
     });
   });
-  return { periodo: periodo, items: items, colores: colores, rotacion: _repartoRotacion(motor) };
+  return { periodo: periodo, items: items, colores: colores, rotacion: _repartoRotacion(motor, virt) };
 }
 
 // =======================================================================
@@ -3827,7 +3939,8 @@ function _rotMesesRef() {
   }
   return out;   // p.ej. ['2026-05','2026-04','2026-03']
 }
-function _repartoRotacion(motor) {
+function _repartoRotacion(motor, virt) {
+  virt = virt || { byNc: {}, colorByNc: {} };
   var refMeses = _rotMesesRef();
   var nMes = refMeses.length;
   var sum = function (vpm) { var s = 0; for (var i = 0; i < refMeses.length; i++) s += Number((vpm || {})[refMeses[i]]) || 0; return s; };
@@ -3839,6 +3952,13 @@ function _repartoRotacion(motor) {
     // los del armado de precios (baratito) aunque esten en cero, en orden de catalogo.
     var stkCol = {};
     (m.colores || []).forEach(function (c) { stkCol[c.color] = Number(c.stock) || 0; });
+    // Sumar el stock VIRTUAL (compradas a VW aun no en Oversoft) del modelo.
+    stock += (virt.byNc[m.nombreCorto] || 0);
+    var vcmap = virt.colorByNc[m.nombreCorto] || {};
+    Object.keys(vcmap).forEach(function (cn) {
+      var key = _stockColKey(stkCol, cn) || cn;
+      stkCol[key] = (stkCol[key] || 0) + vcmap[cn];
+    });
     var vtaCol = m.ventasColorPorMes || {};
     var nombres = {};
     Object.keys(stkCol).forEach(function (k) { nombres[k] = 1; });
