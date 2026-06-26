@@ -754,14 +754,21 @@ function _gIva(l)  { return (Number(l.montogravado) || 0) * 1.21 + (Number(l.mon
 function _gNeto(l) { return (Number(l.montogravado) || 0) + (Number(l.montoexento) || 0); }
 function _gCod(c)  { const m = String(c || '').match(/^(\d{2})/); return m ? Number(m[1]) : 0; }
 function _gRate(c) { const m = String(c || '').match(/([0-9][0-9.,]*)\s*%/); return m ? Number(m[1].replace(',', '.')) / 100 : null; }
-// GastoID (gastoxprevta) -> nombre del concepto. Confirmados por importe contra
-// el lado emitido (comprobantesdetallesgastos). Los que falten muestran "Gasto #id"
-// hasta tener el catalogo oficial de Oversoft.
+// GastoID (gastoxprevta) -> nombre del concepto. Derivado cruzando, en las PVs
+// ya facturadas, el importe de gastoxprevta contra el concepto del lado emitido
+// (comprobantesdetallesgastos). Los que falten muestran "Gasto #id".
 const GASTO_NOMBRES = {
-  491: '01- Flete y Logistica', 208: '02- Seguro de Transporte',
-  450: '03- Gestion Adm. por Logistica y Flete', 390: '04- Gtos de Preparacion y Entrega',
-  224: '05- Formularios 01-12', 472: '07- Honorarios verificacion 0 km',
-  475: '08- Certificacion de firmas', 569: '33- TAG TelePASE', 492: '09- Patentamiento',
+  491: '01- Flete y Logística', 208: '02- Seguro de Transporte',
+  450: '03- Gestión Adm. por Logística y Flete', 390: '04- Gtos de Preparación y Entrega',
+  224: '05- Formularios 01-12', 452: '06- Gastos financieros',
+  472: '07- Honorarios verificación 0 km', 475: '08- Certificación de firmas',
+  492: '09- Patentamiento', 206: '10- Arancel AFIP Personas Físicas',
+  433: '10- Arancel AFIP Personas Físicas', 425: '12- Arancel 1%',
+  441: '14- Sellado de Factura CABA 3%', 442: '15- Sellado de Factura Pcia Bs As 3%',
+  416: '16- Sellado de Fac otras jurisdicciones', 37: '18- Inscripción de prenda',
+  212: '20- Sellado de Prenda', 210: '21- Gastos de Financiación',
+  156: '23- Gastos de Unidad Usada', 546: '32- Garantía Extendida',
+  569: '33- TAG TelePASE',
 };
 
 function getConciliacionGastos(params) {
@@ -920,32 +927,37 @@ function getGastosMap() {
     };
     const pvs = ovs('/preventas?select=prevtaid&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + GASTOS_DESDE + '&limit=3000');
     const ids = pvs.map((p) => p.prevtaid).filter((x) => x || x === 0);
-    const af = {};   // normPv -> { total, lineas:[{gastoid, concepto, importe}], _seen }
+    const raw = {};  // normPv -> [{gxid, gastoid, importe}] (crudas, a facturar)
     // Lotes chicos (25 PVs): la réplica capea ~1000 filas/respuesta. Filtro por
     // prevtaid solo (sin %20/* ni eq.vacio en la URL, que Apps Script encodea raro)
     // y descarto en JS lo ya facturado y lo que no sea la PV (ej. remitos GR).
     for (let i = 0; i < ids.length; i += 25) {
-      const rows = ovs('/gastoxprevta?prevtaid=in.(' + ids.slice(i, i + 25).join(',') + ')&select=prevtanro,gastoid,importe,factura&limit=3000');
+      const rows = ovs('/gastoxprevta?prevtaid=in.(' + ids.slice(i, i + 25).join(',') + ')&select=prevtanro,gastoid,importe,factura,gastosxprevtaid&limit=3000');
       rows.forEach((r) => {
         if (String(r.factura || '') !== '') return;            // solo lo que esta a facturar
         if (!/^PV\s/i.test(String(r.prevtanro || ''))) return; // solo la PV (no GR/otros)
         const pv = _normPv(r.prevtanro); if (!pv) return;
-        const imp = Math.round(Number(r.importe) || 0);
-        if (!af[pv]) af[pv] = { total: 0, lineas: [], _seen: {} };
-        // Dedup de filas IDENTICAS (mismo concepto e importe): algunas preventas
-        // tienen el paquete de gastos cargado dos veces en Oversoft (ej. 8720/3).
-        const dk = r.gastoid + '|' + imp;
-        if (af[pv]._seen[dk]) return;
-        af[pv]._seen[dk] = true;
-        af[pv].total += imp;
-        af[pv].lineas.push({ gastoid: r.gastoid, concepto: GASTO_NOMBRES[r.gastoid] || ('Gasto #' + r.gastoid), importe: imp });
+        if (!raw[pv]) raw[pv] = [];
+        raw[pv].push({ gxid: Number(r.gastosxprevtaid) || 0, gastoid: r.gastoid, importe: Math.round(Number(r.importe) || 0) });
       });
     }
+    // Dedup "última carga": si se editó/recargó el paquete de gastos, Oversoft borra
+    // las filas viejas pero la réplica las conserva unos días (filas duplicadas, ej.
+    // 8720/3). Cada carga es una corrida de gastosxprevtaid consecutivos; me quedo
+    // con la última corrida (la actual) cortando en el último salto grande de id.
+    const af = {};
+    Object.keys(raw).forEach((pv) => {
+      const rows = raw[pv].sort((a, b) => a.gxid - b.gxid);
+      let cut = 0;
+      for (let i = 1; i < rows.length; i++) if (rows[i].gxid - rows[i - 1].gxid > 10) cut = i;
+      const cur = rows.slice(cut);
+      const lineas = cur.map((r) => ({ gastoid: r.gastoid, concepto: GASTO_NOMBRES[r.gastoid] || ('Gasto #' + r.gastoid), importe: r.importe }));
+      lineas.sort((x, y) => String(x.concepto).localeCompare(String(y.concepto)));
+      af[pv] = { total: cur.reduce((s, r) => s + r.importe, 0), lineas: lineas };
+    });
     Object.keys(af).forEach((pv) => {
       if (map[pv]) return;   // ya tiene gasto emitido/conciliado: ese manda
-      const a = af[pv];
-      a.lineas.sort((x, y) => String(x.concepto).localeCompare(String(y.concepto)));
-      map[pv] = { total: a.total, sinEmitir: true, lineas: a.lineas, estado: 'afacturar' };
+      map[pv] = { total: af[pv].total, sinEmitir: true, lineas: af[pv].lineas, estado: 'afacturar' };
     });
   } catch (e) {}
 
