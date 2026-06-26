@@ -422,11 +422,12 @@ function _oversoftMotorData(catByNorm) {
 // venta vs costo neta). Diferencias documentadas vs la hoja: costo histórico ≈
 // costo rep del mes (Oversoft tiene costounidad=0) — solo pesa cuando se vende
 // arriba del costo (4/201 casos); accesorios y "ahorro compra" no disponibles.
-function _gciaVentaPct(monto, iva, lista, costoRep, ccIva, otros) {
+function _gciaVentaPct(monto, iva, lista, costoRep, ccIva, otros, sinComision) {
   if (!(lista > 0) || !(monto > 0)) return null;
   const U = costoRep - ccIva - otros;                 // costo rep tomando incentivos
   const dto = 1 - monto / lista;
-  const com = (dto > 0.05) ? (monto / (1 + iva)) * 0.015 : 0.015 * monto;
+  // sinComision: venta TG de gerencia confirmada SIN comisión → no se cuenta como costo.
+  const com = sinComision ? 0 : ((dto > 0.05) ? (monto / (1 + iva)) * 0.015 : 0.015 * monto);
   const iibb = Math.max(0.014 * monto * (1 - iva), 0.1 * (monto - costoRep) * (1 - iva));
   const gcia = monto * (1 - iva) - U * (1 - iva) - com - iibb;
   return gcia / (lista * (1 - iva));
@@ -961,9 +962,16 @@ function getVentasV2(targetMes) {
   }
   const ncDe = (codFull) => { const d = desc[String(codFull || '').trim()]; return d ? (catByNorm[_ntrim(d)] || null) : null; };
 
-  // Accesorios manuales (tabla ventas_manual, key = preventa normalizada).
-  const manV = {};
-  try { for (const m of _supaGet('/ventas_manual?select=preventa,accesorios')) manV[m.preventa] = Number(m.accesorios) || 0; } catch (e) {}
+  // Campos manuales (tabla ventas_manual, key = preventa normalizada): accesorios
+  // y sin_comision (true = venta TG de gerencia confirmada sin comisión; null =
+  // todavía no se respondió la pregunta → se toma comisión como siempre).
+  const manV = {}, manSinCom = {};
+  try {
+    for (const m of _supaGet('/ventas_manual?select=preventa,accesorios,sin_comision')) {
+      manV[m.preventa] = Number(m.accesorios) || 0;
+      if (m.sin_comision === true || m.sin_comision === false) manSinCom[m.preventa] = m.sin_comision;
+    }
+  } catch (e) {}
 
   const cuentaPorMes = {}, acumPorMes = {};
   const filas = [];
@@ -998,6 +1006,15 @@ function getVentasV2(targetMes) {
     const especial = _esEspecial(p.numero);
     const noInc = esAA || especial;   // no tomar incentivos
 
+    // TG = el VENDEDOR es gerencia (TG / Maximiliano / Cata). Muchas de esas son
+    // ventas de gerencia sin comisión. Si Fer confirmó que no lleva comisión
+    // (ventas_manual.sin_comision = true), NO se cuenta la comisión como costo.
+    // comisionResp = ya se respondió la pregunta (true/false).
+    const vendNombre = vend[p.vendedorid] || '';
+    const esTG = _matchVendedor(vendNombre) === 'TG';
+    const comisionResp = manSinCom.hasOwnProperty(_normPv(p.numero));
+    const sinComision = esTG && manSinCom[_normPv(p.numero)] === true;
+
     let gciaPct = null, gciaPesos = null, listaM = 0, breakdown = null;
     if (btMes && monto > 0) {
       listaM = Number(btMes.precio_lista) || 0;
@@ -1012,15 +1029,16 @@ function getVentasV2(targetMes) {
       const otrosM = tacM + whoM + a1M + a2M + cupM;
       // mismos costos que usa _gciaVentaPct (comisión 1,5% y IIBB max(1,4% vta neta, 10% margen neto))
       const dtoFrac = listaM > 0 ? (1 - monto / listaM) : 0;
-      const comV  = (dtoFrac > 0.05) ? (monto / (1 + ivaFrac)) * 0.015 : 0.015 * monto;
+      const comV  = sinComision ? 0 : ((dtoFrac > 0.05) ? (monto / (1 + ivaFrac)) * 0.015 : 0.015 * monto);
       const iibbV = Math.max(0.014 * monto * (1 - ivaFrac), 0.1 * (monto - costoC) * (1 - ivaFrac));
       breakdown = {
         esAA: esAA,
         especial: especial,
+        sinComision: sinComision,
         costos: { comision: Math.round(comV), iibb: Math.round(iibbV), costoRep: Math.round(costoC) },
         incentivos: { cc: Math.round(ccM), tactico: Math.round(tacM), whosale: Math.round(whoM), adic1: Math.round(a1M), adic2: Math.round(a2M), cupo: Math.round(cupM), total: Math.round(ccM + otrosM) },
       };
-      gciaPct = _gciaVentaPct(monto, ivaFrac, listaM, costoC, ccM, otrosM);
+      gciaPct = _gciaVentaPct(monto, ivaFrac, listaM, costoC, ccM, otrosM, sinComision);
       // _gciaVentaPct devuelve gcia/(lista·(1−IVA)). La GANANCIA en $ (= col X de
       // la hoja) es gcia = pct · lista · (1−IVA). (Antes faltaba el (1−IVA) → las
       // pérdidas/ganancias salían infladas ~27%.)
@@ -1036,7 +1054,6 @@ function getVentasV2(targetMes) {
     const comentario = [String(p.comentario || '').trim(), String(p.comentarioaux || '').trim()].filter(Boolean).join('\n');
     const mencionaAcc = /\bacc/i.test(comentario);
 
-    const vendNombre = vend[p.vendedorid] || '';
     filas.push({
       ventaNum: Number(p.prevtaid) || 0,
       fechaPvIso: String(p.fecha).slice(0, 10),
@@ -1058,6 +1075,9 @@ function getVentasV2(targetMes) {
       mencionaAcc: mencionaAcc,
       esAA: esAA,
       especial: especial,
+      esTG: esTG,                 // financiada por TG propio → habilita la pregunta de comisión
+      sinComision: sinComision,   // confirmada venta gerencia sin comisión (no se cuenta)
+      comisionResp: comisionResp, // ya se respondió la pregunta (sí/no) — si no, se muestra el prompt
       breakdown: breakdown,
       sinBt: !btMes,
       _dbg: btMes ? { nc: nc.nombre_corto, lista: Number(btMes.precio_lista)||0, costo: Number(btMes.costo_concesionario)||0,
@@ -1322,12 +1342,19 @@ function migrarAdmVentasDesdeHoja() {
 function saveVentaManual(body) {
   const pv = _normPv(body.preventa || '');
   if (!pv) return { error: 'falta preventa' };
-  const acc = (body.accesorios === '' || body.accesorios == null) ? 0 : Math.round(Number(body.accesorios) || 0);
-  const row = { preventa: pv, accesorios: acc, updated_at: new Date().toISOString(), updated_by: String(body.usuario || '') };
+  // Upsert PARCIAL (merge-duplicates): solo se mandan los campos presentes en el
+  // body, así setear sin_comision no pisa los accesorios cargados y viceversa.
+  const row = { preventa: pv, updated_at: new Date().toISOString(), updated_by: String(body.usuario || '') };
+  if (body.hasOwnProperty('accesorios')) row.accesorios = (body.accesorios === '' || body.accesorios == null) ? 0 : Math.round(Number(body.accesorios) || 0);
+  if (body.hasOwnProperty('sin_comision')) {
+    // '', null o 'pregunta' → vuelve a "sin responder" (null); true/false explícito.
+    const sc = body.sin_comision;
+    row.sin_comision = (sc === '' || sc == null || sc === 'pregunta') ? null : (sc === true || sc === 'true' || sc === 'no');
+  }
   const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
   const res = UrlFetchApp.fetch(SUPA_URL + '/ventas_manual?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(row), muteHttpExceptions: true });
   if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200) };
-  return { ok: true, preventa: pv, accesorios: acc };
+  return { ok: true, preventa: pv };
 }
 
 function saveAdmVenta(body) {

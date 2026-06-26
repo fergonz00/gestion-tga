@@ -2403,6 +2403,36 @@ async function guardarAccesorios(preventa, valor) {
     await loadVentasOv(true);   // re-suma la ganancia con el accesorio
   } catch (e) { alert('No se pudo guardar accesorios de ' + preventa + ': ' + e.message); }
 }
+// Control de comisión para ventas TG (financiadas por TG propio). Muchas son
+// "venta gerencia" → no llevan comisión y NO debe contarse como costo. Solo se
+// muestra en ventas TG. Estados: sin responder (pregunta) / con comisión / sin.
+function _comisionTGControl(v) {
+  if (!v.esTG) return '';
+  const pv = String(v.preventaNum || '').replace(/'/g, '');
+  const base = 'display:inline-block;border-radius:8px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:4px';
+  if (!v.comisionResp) {
+    return '<span style="' + base + ';background:#fff3cd;color:#7a5b00;border:1px solid #e0c060" title="Vendedor TG (gerencia). ¿Lleva comisión? Si es venta de gerencia marcá No y la comisión no se cuenta como costo.">TG ¿comisión? '
+      + '<a onclick="guardarComision(\'' + pv + '\',\'si\')" style="cursor:pointer;text-decoration:underline;margin:0 2px">Sí</a>'
+      + '<a onclick="guardarComision(\'' + pv + '\',\'no\')" style="cursor:pointer;text-decoration:underline;margin:0 2px">No</a></span>';
+  }
+  if (v.sinComision) {
+    return '<span onclick="guardarComision(\'' + pv + '\',\'pregunta\')" style="' + base + ';background:#d4edda;color:#1b5e20;cursor:pointer" title="Venta de gerencia (TG): SIN comisión, no se cuenta como costo. Tocá para volver a preguntar.">TG · s/comisión ✎</span>';
+  }
+  return '<span onclick="guardarComision(\'' + pv + '\',\'pregunta\')" style="' + base + ';background:#eceff1;color:#455a64;cursor:pointer" title="Venta TG CON comisión (se cuenta como costo). Tocá para cambiar.">TG · c/comisión ✎</span>';
+}
+async function guardarComision(preventa, valor) {
+  // valor: 'si' (lleva comisión → false), 'no' (no lleva → true), 'pregunta' (reset → null)
+  try {
+    const sin = valor === 'no' ? true : (valor === 'si' ? false : 'pregunta');
+    const body = new URLSearchParams();
+    body.set('payload', JSON.stringify({ token: APPS_SCRIPT_TOKEN, accion: 'setventamanual',
+      preventa: preventa, sin_comision: sin, usuario: window._tgaUser || '' }));
+    const res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    await loadVentasOv(true);   // recalcula la ganancia sin/con comisión
+  } catch (e) { alert('No se pudo guardar la comisión de ' + preventa + ': ' + e.message); }
+}
 function renderVentasOv() {
   const cont = document.getElementById('ventasOvContent');
   if (!cont || !ventasOvData) return;
@@ -2438,7 +2468,7 @@ function renderVentasOv() {
       ? '<button onclick="toggleVentasOvDet(\'' + key + '\')" title="' + (gasto ? 'Ver desglose de gastos, incentivos y costos' : 'Sin gastos cargados aún — ver incentivos y costos') + '" style="border:0;background:none;cursor:pointer;color:' + (gasto ? '#0a66c2' : 'var(--vw-grey-3)') + ';font-weight:' + (gasto ? '600' : '400') + ';font-size:12px;padding:0">' + (gasto ? '$' + _gMoney(gasto.total) : '—') + ' ▸</button>'
       : '<span style="color:#ccc">—</span>';
     h += '<tr' + (v.mencionaAcc ? ' style="background:#fff8e1"' : '') + '>'
-      + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + accFlag + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + '</td>'
+      + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + accFlag + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + _comisionTGControl(v) + '</td>'
       + '<td>' + _fechaDMA(v.fechaPvIso) + '</td>'
       + '<td>' + escapeHtml(v.modelo) + '</td>'
       + '<td>' + escapeHtml(v.vendedor || '') + '</td>'
@@ -3850,6 +3880,7 @@ function _ventaDetHtml(v, gasto) {
     const c = b.costos;
     h += '<table style="font-size:12px;border-collapse:collapse">'
       + _gKv('Comisión vendedor', c.comision) + _gKv('IIBB', c.iibb) + '</table>'
+      + (b.sinComision ? '<div style="color:#1b5e20;font-size:11px;margin-top:3px">Venta gerencia (TG): comisión NO computada.</div>' : '')
       + '<div style="color:#888;font-size:11px;margin-top:3px">Costo de reposición: $' + _gMoney(c.costoRep) + '</div>';
   }
   h += '</div>';
