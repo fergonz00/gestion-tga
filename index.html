@@ -3781,7 +3781,10 @@ function _gastoDetalleHtml(f) {
     h += '<div style="margin-top:6px;text-align:right;font-weight:600;color:' + (f.difFavor > 0 ? '#c0392b' : '#b9770e') + '">' +
       (f.difFavor > 0 ? 'Cobró de más: $' + _gMoney(f.difFavor) : 'Falta cobrar: $' + _gMoney(-f.difFavor)) + '</div>';
   }
-  return h;
+  // Lo envuelvo en un ancho acotado para que el desglose quede compacto y a la
+  // izquierda (sin estirarse por toda la grilla de Adm. ventas ni obligar a
+  // desplazarse en horizontal para ver la columna Estado).
+  return '<div style="max-width:680px">' + h + '</div>';
 }
 
 // ===== MAPA DE GASTOS por PV (compartido por Ventas y Adm. ventas) =====
@@ -4688,7 +4691,8 @@ function repartoFiltrar() {
       chs.forEach(c => {
         const ant = (c.dias == null) ? '<span class="reparto-fam">a recibir</span>'
           : (c.viejo ? '<span class="reparto-antig-bad">⏳ ' + c.dias + ' días</span>' : '<span class="reparto-antig-ok">' + c.dias + ' días</span>');
-        det += '<div class="reparto-chasis-row"><span class="reparto-vin">' + escapeHtml(c.serie || '—') + '</span><span class="reparto-chasis-col">' + escapeHtml(c.color || '') + '</span>' + ant + '</div>';
+        const marca = c.virtual ? ' <span class="reparto-fam" title="Comprada a VW, todavía no figura en Oversoft">· comprada</span>' : '';
+        det += '<div class="reparto-chasis-row"><span class="reparto-vin">' + escapeHtml(c.serie || '—') + '</span><span class="reparto-chasis-col">' + escapeHtml(c.color || '') + marca + '</span>' + ant + '</div>';
       });
       det += '</div>';
       if (viejas) det += '<div class="reparto-det-buy">⏳ Tenés <strong>' + viejas + '</strong> unidad' + (viejas !== 1 ? 'es' : '') + ' con más de 90 días en stock → priorizá su venta.</div>';
