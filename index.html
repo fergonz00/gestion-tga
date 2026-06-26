@@ -2093,7 +2093,7 @@ function renderAdmVentas() {
        + '<td data-label="Factura / Gastos" style="text-align:right;white-space:nowrap">'
          + (v.montoFc > 0 ? '<div title="Factura (precio de venta al cliente)"><b>' + fmtPesos(v.montoFc) + '</b></div>' : '<div style="color:var(--vw-grey-3)">s/factura</div>')
          + (gasto
-             ? '<div><button onclick="toggleAdmGasto(\'' + key + '\')" title="Ver desglose de gastos por concepto" style="border:0;background:none;cursor:pointer;color:#0a66c2;font-weight:600;font-size:11px;padding:0">Gastos $' + _gMoney(gasto.total) + ' ▸</button></div>'
+             ? '<div><button onclick="toggleAdmGasto(\'' + key + '\')" title="' + (gasto.sinEmitir ? 'Gastos cargados en la preventa — a facturar (sin emitir todavía)' : 'Ver desglose de gastos por concepto') + '" style="border:0;background:none;cursor:pointer;color:' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';font-weight:600;font-size:11px;padding:0">Gastos $' + _gMoney(gasto.total) + (gasto.sinEmitir ? ' · a facturar' : '') + ' ▸</button></div>'
              : '<div style="color:var(--vw-grey-3);font-size:11px">s/gastos</div>')
        + '</td>'
        + '<td data-label="Cliente" title="' + escapeHtml(String(v.cliente) + (v.localidad ? ' — ' + v.localidad : '')) + '">' + escapeHtml(String(v.cliente).slice(0, 17)) + (v.localidad ? '<br><small style="color:var(--vw-grey-3)">' + escapeHtml(String(v.localidad).slice(0, 17)) + '</small>' : '') + '</td>'
@@ -2146,9 +2146,9 @@ function renderAdmVentas() {
     }
     if (gasto) {
       h += '<tr id="admgasto_' + key + '"' + (admGastoAbiertos.has(key) ? '' : ' style="display:none"') + '>'
-         + '<td colspan="20" style="background:#fafbfc;border-left:3px solid #0a66c2;padding:8px 14px 12px 30px;text-align:left">'
-         + '<div style="font-weight:700;font-size:12px;margin-bottom:4px">Gastos cobrados al cliente · PV ' + escapeHtml(v.preventa) + ' · total $' + _gMoney(gasto.total) + '</div>'
-         + _gastoDetalleHtml(gasto) + '</td></tr>';
+         + '<td colspan="20" style="background:#fafbfc;border-left:3px solid ' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';padding:8px 14px 12px 30px;text-align:left">'
+         + '<div style="font-weight:700;font-size:12px;margin-bottom:4px">Gastos ' + (gasto.sinEmitir ? 'cargados en la preventa' : 'cobrados al cliente') + ' · PV ' + escapeHtml(v.preventa) + ' · total $' + _gMoney(gasto.total) + '</div>'
+         + (gasto.sinEmitir ? _gastoAFacturarHtml(gasto) : _gastoDetalleHtml(gasto)) + '</td></tr>';
     }
   }
   if (!rows.length) h += '<tr><td colspan="20" class="empty">Sin carpetas para ese filtro.</td></tr>';
@@ -2378,7 +2378,6 @@ async function loadVentasOv(forzar) {
     ventasOvData = await res.json();
     setOvsSync(ventasOvData.syncOversoft);   // aprovecha el sello que ya trae ventasv2
     if (!ventasOvMes && ventasOvData.mesActual) ventasOvMes = ventasOvData.mesActual;
-    await loadGastosMap(forzar);             // gasto real por PV (desglose clickeable)
     renderVentasOv();
   } catch (e) {
     if (cont) cont.innerHTML = '<div class="empty">Error: ' + escapeHtml(e.message) + '</div>';
@@ -2451,7 +2450,7 @@ function renderVentasOv() {
     + '<span style="font-size:13px;color:var(--vw-grey-3)">' + rows.length + ' ventas · ganancia total <b style="color:#0a7a30">' + fmtPesos(totG) + '</b></span></div>';
   h += '<div style="overflow-x:auto"><table class="ventas-tbl"><thead><tr style="text-align:left">'
     + '<th>PV</th><th>Fecha</th><th>Modelo</th><th>Vend.</th><th style="text-align:right">Monto</th>'
-    + '<th style="text-align:right">Gastos</th><th style="text-align:right">Ganancia</th><th style="text-align:right">%</th><th style="text-align:right">Accesorios</th></tr></thead><tbody>';
+    + '<th style="text-align:right">Ganancia</th><th style="text-align:right">%</th><th style="text-align:right">Accesorios</th></tr></thead><tbody>';
   for (const v of rows) {
     const key = String(v.preventaNum || '').replace(/[^0-9]/g, '');
     const pvArg = String(v.preventaNum || '').replace(/'/g, '');
@@ -2459,35 +2458,32 @@ function renderVentasOv() {
     const accFlag = v.mencionaAcc ? ' <span title="El comentario menciona accesorios — cargá el monto" style="background:#cc6600;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">acc</span>' : '';
     const g = (typeof v.gciaVtaPesos === 'number');
     const gColor = g ? (v.gciaVtaPesos >= 0 ? '#0a7a30' : '#cc3300') : 'var(--vw-grey-3)';
-    const gasto = _gastoDe(v.preventaNum);
-    const puedeDet = !!(gasto || v.breakdown);
-    // Total de gastos cobrados si existe (cualquier sucursal). Si la PV todavía no
-    // tiene comprobante de gastos cargado en Oversoft → "—" (igual clickeable para
-    // ver el desglose de incentivos/costos). Antes decía "ver", que confundía.
-    const gastoCell = puedeDet
-      ? '<button onclick="toggleVentasOvDet(\'' + key + '\')" title="' + (gasto ? 'Ver desglose de gastos, incentivos y costos' : 'Sin gastos cargados aún — ver incentivos y costos') + '" style="border:0;background:none;cursor:pointer;color:' + (gasto ? '#0a66c2' : 'var(--vw-grey-3)') + ';font-weight:' + (gasto ? '600' : '400') + ';font-size:12px;padding:0">' + (gasto ? '$' + _gMoney(gasto.total) : '—') + ' ▸</button>'
-      : '<span style="color:#ccc">—</span>';
+    const puedeDet = !!v.breakdown;
+    // La Ganancia es clickeable: abre el desglose de incentivos y otros costos.
+    const gciaTxt = g ? fmtPesos(v.gciaVtaPesos) : 's/BT';
+    const gciaCell = puedeDet
+      ? '<button onclick="toggleVentasOvDet(\'' + key + '\')" title="Ver desglose de incentivos y costos" style="border:0;background:none;cursor:pointer;color:' + gColor + ';font-weight:600;font-size:12px;padding:0">' + gciaTxt + ' ▸</button>'
+      : '<span style="color:' + gColor + ';font-weight:600">' + gciaTxt + '</span>';
     h += '<tr' + (v.mencionaAcc ? ' style="background:#fff8e1"' : '') + '>'
       + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + accFlag + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + _comisionTGControl(v) + '</td>'
       + '<td>' + _fechaDMA(v.fechaPvIso) + '</td>'
       + '<td>' + escapeHtml(v.modelo) + '</td>'
       + '<td>' + escapeHtml(v.vendedor || '') + '</td>'
       + '<td style="text-align:right">' + fmtPesos(v.montoFc) + '</td>'
-      + '<td style="text-align:right">' + gastoCell + '</td>'
-      + '<td style="text-align:right;color:' + gColor + ';font-weight:600">' + (g ? fmtPesos(v.gciaVtaPesos) : 's/BT') + '</td>'
+      + '<td style="text-align:right">' + gciaCell + '</td>'
       + '<td style="text-align:right;color:' + gColor + '">' + (v.gciaVtaPct != null ? (v.gciaVtaPct * 100).toFixed(1) + '%' : '—') + '</td>'
       + '<td style="text-align:right"><input type="number" value="' + (v.accesorios || 0) + '" onchange="guardarAccesorios(\'' + pvArg + '\', this.value)" style="width:108px;text-align:right;padding:3px 5px;border:1px solid ' + (v.accesorios ? '#0a66c2' : 'var(--vw-grey-2)') + ';border-radius:5px;font-size:12px"></td>'
       + '</tr>';
     if (v.comentario) {
       h += '<tr id="vovcom_' + key + '"' + (ventasOvComAbiertos.has(key) ? '' : ' style="display:none"') + '>'
-        + '<td colspan="9" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">💬 ' + escapeHtml(v.comentario) + '</td></tr>';
+        + '<td colspan="8" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">💬 ' + escapeHtml(v.comentario) + '</td></tr>';
     }
     if (puedeDet) {
       h += '<tr id="vovdet_' + key + '"' + (ventasOvDetAbiertos.has(key) ? '' : ' style="display:none"') + '>'
-        + '<td colspan="9" style="background:#f7f9fc;border-left:3px solid #0a66c2;padding:10px 14px;text-align:left">' + _ventaDetHtml(v, gasto) + '</td></tr>';
+        + '<td colspan="8" style="background:#f7f9fc;border-left:3px solid #0a66c2;padding:10px 14px;text-align:left">' + _ventaDetHtml(v) + '</td></tr>';
     }
   }
-  if (!rows.length) h += '<tr><td colspan="9" class="empty">Sin ventas.</td></tr>';
+  if (!rows.length) h += '<tr><td colspan="8" class="empty">Sin ventas.</td></tr>';
   h += '</tbody></table></div>';
   h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Ganancia = venta − costo de reposición (con incentivos) − comisión − IIBB + accesorios. Las marcadas <span style="background:#cc6600;color:#fff;border-radius:8px;padding:0 5px">acc</span> mencionan accesorios en el comentario (💬) — cargá el monto y se suma. "s/BT" = mes sin BT cargada. (Versión nueva: sale de Oversoft, sin Sheet.)</div>';
   cont.innerHTML = h;
@@ -3817,6 +3813,27 @@ function _gastoDetalleHtml(f) {
   return '<div style="max-width:680px">' + h + '</div>';
 }
 
+// Desglose de gastos "A FACTURAR": los que el vendedor cargó en la preventa pero
+// todavía no se emitieron como comprobante (vienen de gastoxprevta, factura vacía).
+// Se muestran apenas se cargan, igual que el precio. Sin conciliación todavía
+// (sellado/quebranto se chequean recién cuando se factura).
+function _gastoAFacturarHtml(g) {
+  let h = '<div style="margin:6px 0;padding:8px 10px;background:#fff8ec;border-radius:6px;color:#8a6100;font-size:12px">'
+    + '⏳ Gastos <b>cargados en la preventa</b> por el vendedor, <b>a facturar</b> (sin emitir todavía). '
+    + 'La conciliación (sellado, quebranto) se hace cuando se emite el comprobante.</div>';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:6px">';
+  h += '<thead><tr style="text-align:left;color:#888;border-bottom:1px solid #ddd"><th style="padding:3px 6px">Concepto</th><th style="padding:3px 6px;text-align:right">Importe</th></tr></thead><tbody>';
+  (g.lineas || []).forEach(l => {
+    h += '<tr style="border-bottom:1px solid #f0f0f0">'
+      + '<td style="padding:3px 6px">' + escapeHtml(l.concepto) + '</td>'
+      + '<td style="padding:3px 6px;text-align:right">$' + _gMoney(l.importe) + '</td></tr>';
+  });
+  h += '<tr style="border-top:1px solid #ccc"><td style="padding:3px 6px;font-weight:700">Total a facturar</td>'
+    + '<td style="padding:3px 6px;text-align:right;font-weight:700">$' + _gMoney(g.total) + '</td></tr>';
+  h += '</tbody></table>';
+  return '<div style="max-width:680px">' + h + '</div>';
+}
+
 // ===== MAPA DE GASTOS por PV (compartido por Ventas y Adm. ventas) =====
 // tipo=gastosmap devuelve { gastos: { "8035/1": {total, desglose, lineas, ...} } }
 // con la PV ya normalizada (sin "PV", sin ceros a la izquierda). Reúsa el detalle
@@ -3845,7 +3862,7 @@ function _gKv(label, val) {
 }
 
 // Detalle desplegable de una venta (solapa Ventas): incentivos tomados + otros
-// costos (los que usa el cálculo de ganancia) + gastos cobrados al cliente.
+// costos (los que usa el cálculo de ganancia).
 let ventasOvDetAbiertos = new Set();
 function toggleVentasOvDet(key) {
   const tr = document.getElementById('vovdet_' + key);
@@ -3854,7 +3871,7 @@ function toggleVentasOvDet(key) {
   tr.style.display = abrir ? '' : 'none';
   if (abrir) ventasOvDetAbiertos.add(key); else ventasOvDetAbiertos.delete(key);
 }
-function _ventaDetHtml(v, gasto) {
+function _ventaDetHtml(v) {
   const b = v.breakdown;
   let h = '<div style="display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start">';
   // Incentivos tomados
@@ -3883,12 +3900,6 @@ function _ventaDetHtml(v, gasto) {
       + (b.sinComision ? '<div style="color:#1b5e20;font-size:11px;margin-top:3px">Venta gerencia (TG): comisión NO computada.</div>' : '')
       + '<div style="color:#888;font-size:11px;margin-top:3px">Costo de reposición: $' + _gMoney(c.costoRep) + '</div>';
   }
-  h += '</div>';
-  // Gastos cobrados al cliente (conciliación)
-  h += '<div style="min-width:320px;flex:1">';
-  h += '<div style="font-weight:700;font-size:12px;margin-bottom:4px">Gastos cobrados al cliente' + (gasto ? ' · total $' + _gMoney(gasto.total) : '') + '</div>';
-  if (gasto) h += _gastoDetalleHtml(gasto);
-  else h += '<div style="color:#888;font-size:12px">Sin gastos cargados (control desde jun-2026, sucursal 1).</div>';
   h += '</div>';
   h += '</div>';
   return h;
