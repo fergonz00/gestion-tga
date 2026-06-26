@@ -3753,19 +3753,28 @@ function _gastoDetalleHtml(f) {
   if (f.fin) {
     h += '<div style="margin:6px 0;color:#555;font-size:12px">Financia: <b>' + escapeHtml(f.fin.financiador || '—') + '</b> · monto $' + _gMoney(f.fin.montoFin) + ' · quebranto ' + f.fin.pct + '% ' + (f.fin.ok ? '<span style="color:#27ae60">✓ plan válido</span>' : '<span style="color:#c0392b">⚠ revisar</span>') + '</div>';
   }
-  // detalle por concepto
+  // detalle por concepto — al lado de cada uno: lo cobrado, lo que corresponde,
+  // la diferencia y un estado claro (✓ ok / ⚠ revisar) para conciliar acá mismo.
   h += '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:6px">';
-  h += '<thead><tr style="text-align:left;color:#888;border-bottom:1px solid #ddd"><th style="padding:3px 6px">Concepto</th><th style="padding:3px 6px;text-align:right">Cobrado</th><th style="padding:3px 6px;text-align:right">Correcto</th><th style="padding:3px 6px;text-align:right">Diferencia</th></tr></thead><tbody>';
+  h += '<thead><tr style="text-align:left;color:#888;border-bottom:1px solid #ddd"><th style="padding:3px 6px">Concepto</th><th style="padding:3px 6px;text-align:right">Cobrado</th><th style="padding:3px 6px;text-align:right">Corresponde</th><th style="padding:3px 6px;text-align:right">Diferencia</th><th style="padding:3px 6px;text-align:center">Estado</th></tr></thead><tbody>';
   f.lineas.forEach(l => {
     const malo = l.estado === 'mal' || l.estado === 'falta';
     const revisar = l.estado === 'revisar';
     const difTxt = l.dif ? (l.dif > 0 ? '+' : '') + _gMoney(l.dif) : '';
     const difColor = l.dif > 0 ? '#c0392b' : (l.dif < 0 ? '#b9770e' : '#999');
+    // Tilde por concepto: verde ✓ si no hay nada que observar; ámbar/rojo ⚠ si
+    // se detectó diferencia (mal/falta) o no se pudo validar (revisar).
+    const estadoCell = malo
+      ? '<span title="Diferencia detectada" style="color:#c0392b;font-weight:700">⚠ ' + (l.estado === 'falta' ? 'falta' : 'revisar') + '</span>'
+      : (revisar
+        ? '<span title="Sin tasa de referencia o plan que no coincide" style="color:#b9770e;font-weight:700">⚠ revisar</span>'
+        : '<span title="Sin observaciones" style="color:#27ae60;font-weight:700">✓</span>');
     h += '<tr style="border-bottom:1px solid #f0f0f0;' + (malo ? 'background:#fdecea' : (revisar ? 'background:#fff8ec' : '')) + '">' +
-      '<td style="padding:3px 6px">' + escapeHtml(l.concepto) + (malo ? ' <b style="color:#c0392b">●</b>' : '') + '</td>' +
+      '<td style="padding:3px 6px">' + escapeHtml(l.concepto) + '</td>' +
       '<td style="padding:3px 6px;text-align:right">$' + _gMoney(l.cobrado) + '</td>' +
-      '<td style="padding:3px 6px;text-align:right;color:#666">' + (l.correcto != null ? '$' + _gMoney(l.correcto) : '') + '</td>' +
-      '<td style="padding:3px 6px;text-align:right;font-weight:600;color:' + difColor + '">' + difTxt + '</td></tr>';
+      '<td style="padding:3px 6px;text-align:right;color:#666">' + (l.correcto != null ? '$' + _gMoney(l.correcto) : '<span style="color:#bbb">—</span>') + '</td>' +
+      '<td style="padding:3px 6px;text-align:right;font-weight:600;color:' + difColor + '">' + difTxt + '</td>' +
+      '<td style="padding:3px 6px;text-align:center">' + estadoCell + '</td></tr>';
   });
   h += '</tbody></table>';
   if (f.difFavor) {
