@@ -4313,6 +4313,17 @@ function _repMesesVentana(n) {
   return out;
 }
 function _repVendido(v, n) { if (!v) return null; return _repMesesVentana(n).reduce((a, mk) => a + (Number(v[mk]) || 0), 0); }
+// Meses de stock (rotación) del modelo de un ítem del reparto: stock actual ÷
+// venta mensual promedio, sobre los MISMOS 3 meses que usa la sección Rotación
+// (repartoData.rotacion.meses). Mismo número que verías en esa tabla para el
+// modelo. null = sin ventas en la ventana (no rota) o sin datos de stock.
+function _repMesesStock(it) {
+  const meses = (repartoData && repartoData.rotacion && repartoData.rotacion.meses) || [];
+  if (it.stockActual == null || !meses.length || !it.ventasPorMes) return null;
+  let v = 0; meses.forEach(m => v += Number(it.ventasPorMes[m]) || 0);
+  const vMes = v / meses.length;
+  return vMes > 0 ? it.stockActual / vMes : null;
+}
 
 async function loadReparto(forzar) {
   if (!comprasVWData || forzar) { try { await loadComprasVW(forzar); } catch (e) {} }
@@ -4535,7 +4546,7 @@ function repartoElegidasSec(items) {
   const vinsJson = JSON.stringify(eleg.map(i => i.vin));
   h += '<div class="reparto-row" style="margin-bottom:8px"><button class="refresh reparto-comprar" onclick=\'repartoComprarElegidas(' + vinsJson + ')\'>Marcar todas compradas (' + eleg.length + ')</button></div>';
   h += '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
-    + '<th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num">Acción</th></tr></thead><tbody>';
+    + '<th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num" title="Meses de stock = stock ÷ venta mensual promedio (mismos 3 meses que la sección Rotación)">Meses stock</th><th class="num">Acción</th></tr></thead><tbody>';
   eleg.forEach(it => {
     h += '<tr>';
     h += '<td><div class="reparto-modelo">' + escapeHtml((it.descripcion || '').replace(/^VW /, '')) + '</div><div class="reparto-fam">' + escapeHtml(it.familia || '') + '</div></td>';
@@ -4544,6 +4555,7 @@ function repartoElegidasSec(items) {
     const stk = (it.stockActual == null) ? '<span class="reparto-fam">s/d</span>'
       : it.stockActual + (it.tieneAntiguedad ? ' <span class="reparto-antig-flag" title="Tenés unidad(es) con +90 días en stock">⏳</span>' : '');
     h += '<td class="num">' + stk + '</td>';
+    h += '<td class="num">' + _rotMesesCell(_repMesesStock(it), it.stockActual) + '</td>';
     h += '<td class="num"><div class="reparto-acc"><button class="refresh reparto-ok" onclick="repartoComprarElegidas([\'' + it.vin + '\'])" title="Marcar comprada: arma el texto para VW y pasa a conciliar">Comprada</button>';
     h += '<button class="reparto-link" onclick="repartoDeshacer(\'' + it.vin + '\')">Volver a pendiente</button></div></td></tr>';
   });
@@ -4627,7 +4639,7 @@ function repartoFiltrar() {
     return;
   }
   let h = '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
-    + '<th></th><th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num">Vendido</th><th>Estado</th><th class="num">Acción</th></tr></thead><tbody>';
+    + '<th></th><th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num">Vendido</th><th class="num" title="Meses de stock = stock ÷ venta mensual promedio (mismos 3 meses que la sección Rotación)">Meses stock</th><th>Estado</th><th class="num">Acción</th></tr></thead><tbody>';
   items.forEach(it => {
     const rowCls = it.alerta ? 'reparto-tr-alerta' : (it.enOversoft ? 'reparto-tr-ovs' : '');
     const vend = _repVendido(it.ventasPorMes, repartoMeses);
@@ -4641,6 +4653,7 @@ function repartoFiltrar() {
       : '<button class="reparto-stock-btn" onclick="repartoToggleDetalle(\'' + it.vin + '\')" title="Ver stock por color y antigüedad por chasis">' + it.stockActual + (it.tieneAntiguedad ? ' <span class="reparto-antig-flag" title="Tenés unidad(es) con +90 días en stock">⏳</span>' : '') + ' <span class="reparto-chev">▾</span></button>';
     h += '<td class="num">' + stockCell + '</td>';
     h += '<td class="num">' + (vend == null ? '<span class="reparto-fam">s/d</span>' : vend) + '</td>';
+    h += '<td class="num">' + _rotMesesCell(_repMesesStock(it), it.stockActual) + '</td>';
     let estado;
     if (it.estado_compra === 'pendiente') estado = '<span class="reparto-fam">' + escapeHtml(it.status || 'pendiente') + '</span>';
     else if (it.alerta) estado = '<span class="reparto-est-alerta">⚠ comprado hace ' + it.diasComprado + 'd · sin Oversoft</span>';
@@ -4697,7 +4710,7 @@ function repartoFiltrar() {
       det += '</div>';
       if (viejas) det += '<div class="reparto-det-buy">⏳ Tenés <strong>' + viejas + '</strong> unidad' + (viejas !== 1 ? 'es' : '') + ' con más de 90 días en stock → priorizá su venta.</div>';
     }
-    h += '<tr id="repdet-' + it.vin + '" class="reparto-detalle hidden"><td colspan="8">' + det + '</td></tr>';
+    h += '<tr id="repdet-' + it.vin + '" class="reparto-detalle hidden"><td colspan="9">' + det + '</td></tr>';
   });
   h += '</tbody></table></div></div>';
   wrap.innerHTML = h;
