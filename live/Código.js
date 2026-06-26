@@ -754,6 +754,15 @@ function _gIva(l)  { return (Number(l.montogravado) || 0) * 1.21 + (Number(l.mon
 function _gNeto(l) { return (Number(l.montogravado) || 0) + (Number(l.montoexento) || 0); }
 function _gCod(c)  { const m = String(c || '').match(/^(\d{2})/); return m ? Number(m[1]) : 0; }
 function _gRate(c) { const m = String(c || '').match(/([0-9][0-9.,]*)\s*%/); return m ? Number(m[1].replace(',', '.')) / 100 : null; }
+// GastoID (gastoxprevta) -> nombre del concepto. Confirmados por importe contra
+// el lado emitido (comprobantesdetallesgastos). Los que falten muestran "Gasto #id"
+// hasta tener el catalogo oficial de Oversoft.
+const GASTO_NOMBRES = {
+  491: '01- Flete y Logistica', 208: '02- Seguro de Transporte',
+  450: '03- Gestion Adm. por Logistica y Flete', 390: '04- Gtos de Preparacion y Entrega',
+  224: '05- Formularios 01-12', 472: '07- Honorarios verificacion 0 km',
+  475: '08- Certificacion de firmas', 569: '33- TAG TelePASE', 492: '09- Patentamiento',
+};
 
 function getConciliacionGastos(params) {
   const mes = String((params && params.mes) || '').match(/^\d{4}-\d{2}$/) ? params.mes : _yyyyMm(new Date());
@@ -898,6 +907,48 @@ function getGastosMap() {
       });
     } catch (e) {}
   });
+
+  // Gastos "A FACTURAR" (cargados en la preventa por el vendedor pero sin emitir
+  // todavia como comprobante de Servicios). Vienen de gastoxprevta (factura vacia).
+  // Para las PVs que aun no tienen gasto emitido, mostramos lo cargado al instante
+  // (igual que el precio de la unidad), marcado como "a facturar". Acotado a las
+  // preventas desde GASTOS_DESDE para no traer las ~42k filas historicas.
+  try {
+    const ovs = (path) => {
+      const res = UrlFetchApp.fetch(OVERSOFT_URL + path, { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true });
+      return res.getResponseCode() < 300 ? JSON.parse(res.getContentText()) : [];
+    };
+    const pvs = ovs('/preventas?select=prevtaid&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + GASTOS_DESDE + '&limit=3000');
+    const ids = pvs.map((p) => p.prevtaid).filter((x) => x || x === 0);
+    const af = {};   // normPv -> { total, lineas:[{gastoid, concepto, importe}], _seen }
+    // Lotes chicos (25 PVs): la réplica capea ~1000 filas/respuesta. Filtro por
+    // prevtaid solo (sin %20/* ni eq.vacio en la URL, que Apps Script encodea raro)
+    // y descarto en JS lo ya facturado y lo que no sea la PV (ej. remitos GR).
+    for (let i = 0; i < ids.length; i += 25) {
+      const rows = ovs('/gastoxprevta?prevtaid=in.(' + ids.slice(i, i + 25).join(',') + ')&select=prevtanro,gastoid,importe,factura&limit=3000');
+      rows.forEach((r) => {
+        if (String(r.factura || '') !== '') return;            // solo lo que esta a facturar
+        if (!/^PV\s/i.test(String(r.prevtanro || ''))) return; // solo la PV (no GR/otros)
+        const pv = _normPv(r.prevtanro); if (!pv) return;
+        const imp = Math.round(Number(r.importe) || 0);
+        if (!af[pv]) af[pv] = { total: 0, lineas: [], _seen: {} };
+        // Dedup de filas IDENTICAS (mismo concepto e importe): algunas preventas
+        // tienen el paquete de gastos cargado dos veces en Oversoft (ej. 8720/3).
+        const dk = r.gastoid + '|' + imp;
+        if (af[pv]._seen[dk]) return;
+        af[pv]._seen[dk] = true;
+        af[pv].total += imp;
+        af[pv].lineas.push({ gastoid: r.gastoid, concepto: GASTO_NOMBRES[r.gastoid] || ('Gasto #' + r.gastoid), importe: imp });
+      });
+    }
+    Object.keys(af).forEach((pv) => {
+      if (map[pv]) return;   // ya tiene gasto emitido/conciliado: ese manda
+      const a = af[pv];
+      a.lineas.sort((x, y) => String(x.concepto).localeCompare(String(y.concepto)));
+      map[pv] = { total: a.total, sinEmitir: true, lineas: a.lineas, estado: 'afacturar' };
+    });
+  } catch (e) {}
+
   return { gastos: map, desde: GASTOS_DESDE, meses: meses, updatedAt: new Date().toISOString() };
 }
 
