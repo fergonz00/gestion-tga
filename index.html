@@ -4506,6 +4506,10 @@ function renderReparto() {
   const stockSeriesMes = new Set();   // series ya facturadas este mes (compras_vw, Supabase)
   if (comprasVWData && Array.isArray(comprasVWData.compras)) {
     comprasVWData.compras.forEach(c => {
+      // Las manuales sin chasis (serie MAN-) son un placeholder: NO son una factura
+      // real de VW todavía. Que las cuente el reparto (repExtra), no "facturadas",
+      // así no se cuentan dos veces. Cuando Valeria carga el chasis dejan de ser MAN-.
+      if (String(c.serie || '').toUpperCase().startsWith('MAN-')) return;
       const mk = _cvwMesToKey(c.mes);   // "junio-26" → "2026-06"
       if (!mk) return;
       porMes[mk] = (porMes[mk] || 0) + 1;
