@@ -4688,7 +4688,7 @@ function repartoCompradoSec(items) {
     h += '<div class="empty">Todavía no marcaste ninguna unidad como comprada. Tildalas arriba y dale "Comprar".</div>';
     return h;
   }
-  h += '<p class="reparto-hint">Lo que le compraste a VW. Cuando la unidad aparece en Oversoft, chequeá que coincidan <strong>modelo, color y chasis</strong> y tocá <strong>OK</strong>: pasa a <strong>Confirmados</strong> y sigue contando como compra del mes. Las <strong>manuales</strong> esperan a que Valeria cargue el chasis en Compras VW; ahí recién cruzan con Oversoft.</p>';
+  h += '<p class="reparto-hint">Lo que le compraste a VW. Cuando la unidad aparece en Oversoft y <strong>coincide todo</strong> (modelo, color y chasis) se confirma <strong>sola</strong> y pasa a <strong>Confirmados</strong>. Si algo <strong>difiere (⚠)</strong>, quedan acá para que lo revises y le des <strong>OK</strong> vos. Las <strong>manuales</strong> esperan a que Valeria cargue el chasis en Compras VW; ahí recién cruzan con Oversoft.</p>';
   h += '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
     + '<th>Modelo</th><th>Color pedido</th><th>Chasis (VIN)</th><th>Conciliación (Oversoft)</th><th class="num">Acción</th></tr></thead><tbody>';
   comp.forEach(it => {
