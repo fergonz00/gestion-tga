@@ -2263,6 +2263,8 @@ function doPost(e) {
     if (accion === 'deshacerreparto')      return jsonResponse(desmarcarComprado(body));
     if (accion === 'okreparto')            return jsonResponse(darOkReparto(body));
     if (accion === 'reabrirreparto')       return jsonResponse(reabrirReparto(body));
+    if (accion === 'agregarmanualreparto') return jsonResponse(agregarUnidadManual(body));
+    if (accion === 'setseriecompra')       return jsonResponse(setSerieCompra(body));
     if (accion === 'guardarcoloresreparto') return jsonResponse(guardarColoresReparto(body));
     if (accion === 'setindustria')         return jsonResponse(setIndustria(body));
     if (accion === 'setbaratitosnapshot')  return jsonResponse(saveBaratitoSnapshots(body.snapshots || []));
@@ -2999,6 +3001,38 @@ function getIncentivos(params) {
     }
   } catch (e) {}
 
+  // ── Táctico Amarok: régimen por fecha de FACTURA de compra (circular 55/26) ──
+  // A partir del 06/05/26 bajó el precio de la Amarok (lista #887). Por eso el
+  // táctico Amarok tiene DOBLE régimen: las unidades facturadas ANTES del 01/05
+  // cobran el táctico de abril (circ 40, vigente hasta 31/05); las facturadas
+  // DESDE el 01/05 cobran el reducido (circ 55). Como la conciliación mira el mes
+  // de PATENTAMIENTO, una Amarok facturada en abril y patentada en mayo mostraba
+  // "diferencia" fantasma (esperaba circ 55 pero VW pagó circ 40, correcto).
+  // Solución: para Amarok, el táctico esperado se elige entre los regímenes
+  // válidos (abril/mayo/junio) — el más cercano a lo pagado si ya cobró, o el del
+  // mes actual si está pendiente. Los regímenes son los únicos valores legítimos,
+  // así que un pago genuinamente mal hecho igual queda como diferencia.
+  const _btMesCache = { [mesKey]: bt };
+  function _btDeMes(m) {
+    if (!_btMesCache[m]) { try { _btMesCache[m] = _btDesdeSupabase(m); } catch (e) { _btMesCache[m] = { porModelo: {} }; } }
+    return _btMesCache[m];
+  }
+  const _mesesTacAmarok = ['2026-04', '2026-05', '2026-06'].filter(m => m >= '2026-04' && m <= mesKey);
+  function _tacticoAmarokEsperado(modelo, tacticoBase, paidTac) {
+    const key = _normModeloKey(modelo);
+    const cands = [];
+    for (const m of _mesesTacAmarok) {
+      const ccm = (_btDeMes(m).porModelo || {})[key];
+      if (ccm && ccm.tactico > 0) cands.push(ccm.tactico);
+    }
+    if (!cands.length) return tacticoBase;
+    if (paidTac > 0) {  // ya cobró → el régimen que matchea lo pagado
+      cands.sort((a, b) => Math.abs(a - paidTac) - Math.abs(b - paidTac));
+      return cands[0];
+    }
+    return tacticoBase;  // pendiente → mes de patentamiento (sin dato de FC todavía)
+  }
+
   const patDelMes = (pat.carpetas || []).filter(c =>
     c.mesKey === mesKey && c.tipoCarpetaCanon !== 'Plan ahorro'
   );
@@ -3007,6 +3041,11 @@ function getIncentivos(params) {
     const modelo = modeloVentas || c.modelo || '';
     const cc = bt.porModelo[_normModeloKey(modelo)] || null;
     const paid = pagosPorSerie[c.serie] || {};
+    // Amarok: el táctico va por régimen de fecha de factura (circ 55), no por el
+    // mes de patentamiento. Resto de modelos: el del mes, como siempre.
+    const tacticoEsp = (cc && /amarok/i.test(modelo))
+      ? _tacticoAmarokEsperado(modelo, cc.tactico, paid.tactico || 0)
+      : (cc ? cc.tactico : 0);
     return {
       num:       c.num,
       pv:        c.pv,
@@ -3026,7 +3065,7 @@ function getIncentivos(params) {
       // CC 100% real de la circular (SIN iva; el front lo lleva a c/IVA con el
       // ratio V/U del modelo). 0 = sin dato → el front estima ÷0,9.
       cc100Base:   cc100PorModelo[_normModeloKey(modelo)] || 0,
-      tactico:     cc ? cc.tactico : 0,
+      tactico:     tacticoEsp,
       adicional1:  cc ? cc.adicional1 : 0,
       adicional2:  cc ? cc.adicional2 : 0,
       sinCC:       !cc,
@@ -3626,15 +3665,18 @@ function _stockVirtualCompras() {
   try { rows = _repartoRead('/reparto_vw?select=vin,descripcion,color_codigo,comprado_at,estado_compra&estado_compra=in.(comprado,ok)') || []; } catch (e) { return vacio; }
   if (!rows.length) return vacio;
 
-  // Excluir las que YA estan en Oversoft (por VIN): esas ya las cuenta el stock real.
+  // Excluir las que YA estan en Oversoft: esas ya las cuenta el stock real. Se
+  // cruza por SERIE (ultimos 8 del VIN) y no por VIN completo, asi tambien
+  // captura las manuales (VIN sintetico "MAN-..." renombrado a la serie real):
+  // para un VIN normal, slice(-8) == la serie de Oversoft.
   var enOv = {};
   var h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
-  var vins = rows.map(function (r) { return String(r.vin || '').toUpperCase(); }).filter(Boolean);
-  for (var i = 0; i < vins.length; i += 60) {
-    var lote = vins.slice(i, i + 60).map(function (s) { return '"' + s + '"'; }).join(',');
+  var series = rows.map(function (r) { return String(r.vin || '').toUpperCase().slice(-8); }).filter(Boolean);
+  for (var i = 0; i < series.length; i += 60) {
+    var lote = series.slice(i, i + 60).map(function (s) { return '"' + s + '"'; }).join(',');
     try {
-      var res = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=vin&vin=in.(' + encodeURIComponent(lote) + ')', h);
-      if (res.getResponseCode() < 300) JSON.parse(res.getContentText()).forEach(function (u) { enOv[String(u.vin || '').toUpperCase()] = true; });
+      var res = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=serie&serie=in.(' + encodeURIComponent(lote) + ')', h);
+      if (res.getResponseCode() < 300) JSON.parse(res.getContentText()).forEach(function (u) { enOv[String(u.serie || '').toUpperCase()] = true; });
     } catch (e) {}
   }
 
@@ -3656,7 +3698,7 @@ function _stockVirtualCompras() {
   var now = Date.now();
   rows.forEach(function (r) {
     var vin = String(r.vin || '').toUpperCase();
-    if (!vin || enOv[vin]) return;                          // ya esta en Oversoft -> no es virtual
+    if (!vin || enOv[vin.slice(-8)]) return;                // ya esta en Oversoft (por serie) -> no es virtual
     var nc = catByNorm[_ntrim(r.descripcion)];
     if (!nc) return;                                        // no matchea catalogo -> lo salteamos
     var colNom = colores[r.color_codigo] || r.color_codigo || '(sin color)';
@@ -3879,6 +3921,79 @@ function reabrirReparto(body) {
     method: 'patch', headers: Object.assign(_repartoWHeaders(), { Prefer: 'return=minimal' }),
     payload: JSON.stringify({ estado_compra: 'comprado' }), muteHttpExceptions: true });
   return res.getResponseCode() < 300 ? { ok: true } : { ok: false, error: 'supa ' + res.getResponseCode() };
+}
+
+// ALTA MANUAL en el reparto: unidades que Fer arregla directo con el zonal (sin
+// esperar el mail de VW y sin chasis todavía). Crea la fila en reparto_vw ya en
+// estado 'comprado' (cuenta como compra del mes) con un VIN sintético "MAN-xxxx",
+// y SIEMBRA compras_vw con esa misma serie para que le aparezca YA a Valeria
+// (🟡 sin Oversoft). Cuando le llega la factura, Valeria carga el chasis real
+// con setSerieCompra (renombra la serie → concilia normal por serie con Oversoft).
+function agregarUnidadManual(body) {
+  var desc = String((body && body.descripcion) || '').trim();
+  var familia = String((body && body.familia) || '').trim();
+  var colorCod = String((body && body.color_codigo) || '').trim();
+  if (!desc) return { ok: false, error: 'Falta el modelo' };
+  if (!colorCod) return { ok: false, error: 'Falta el color' };
+  var periodo = _repartoPeriodo();
+  var id = 'MAN-' + Utilities.getUuid().replace(/-/g, '').slice(0, 8).toUpperCase();
+  var now = new Date().toISOString();
+  // 1) reparto_vw — comprado, manual (VIN sintético)
+  var row = {
+    vin: id, canal: '', zona: '', centrega: '3079',
+    modelo_codigo: '', my: '', familia: familia, descripcion: desc,
+    color_codigo: colorCod, comision: null, status: 'Manual (sin chasis)',
+    periodo: periodo, estado_compra: 'comprado', comprado_at: now, actualizado_at: now
+  };
+  var r1 = UrlFetchApp.fetch(SUPA_URL + '/reparto_vw', {
+    method: 'post', headers: Object.assign(_repartoWHeaders(), { Prefer: 'return=minimal' }),
+    payload: JSON.stringify(row), muteHttpExceptions: true });
+  if (r1.getResponseCode() >= 300) return { ok: false, error: 'reparto ' + r1.getResponseCode() + ': ' + r1.getContentText().slice(0, 150) };
+  // 2) compras_vw — pendiente de chasis (serie = id sintético)
+  var coloresDb = {};
+  try { (_repartoRead('/reparto_colores?select=codigo,nombre') || []).forEach(function (c) { coloresDb[c.codigo] = c.nombre; }); } catch (e) {}
+  var colores = Object.assign({}, REPARTO_COLORES_BASE, coloresDb);
+  var compra = {
+    serie: id, mes: _mesNombrePeriodo(periodo),
+    modelo_valeria: ('VW ' + desc).replace(/\s+/g, ' ').trim(),
+    color: colores[colorCod] || colorCod,
+    conciliado: false, updated_at: now, updated_by: 'reparto-manual'
+  };
+  var hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
+  UrlFetchApp.fetch(SUPA_URL + '/compras_vw', { method: 'post', headers: hh, payload: JSON.stringify(compra), muteHttpExceptions: true });
+  try { _cacheDrop('comprasvw'); } catch (e) {}
+  return { ok: true, id: id };
+}
+
+// Valeria carga el CHASIS de una unidad manual (serie "MAN-xxxx" → chasis real).
+// Acepta el chasis (8) o el VIN completo: la serie de compras_vw se setea a los
+// últimos 8 (matchea Oversoft) y el VIN del reparto a lo tipeado. Renombra la
+// PK serie en compras_vw y el VIN en reparto_vw, así desde ahí concilian solos.
+function setSerieCompra(body) {
+  var oldS = String((body && body.serie) || '').trim().toUpperCase();
+  var raw = String((body && body.chasis) || '').trim().toUpperCase().replace(/\s+/g, '');
+  if (!oldS) return { ok: false, error: 'falta serie origen' };
+  if (!raw) return { ok: false, error: 'falta el chasis' };
+  var serie8 = raw.length >= 8 ? raw.slice(-8) : raw;
+  if (serie8 === oldS) return { ok: true, serie: serie8 };
+  try {
+    var ex = _supaGet('/compras_vw?select=serie&serie=eq.' + encodeURIComponent(serie8)) || [];
+    if (ex.length) return { ok: false, error: 'Ya existe una compra con la serie ' + serie8 };
+  } catch (e) {}
+  var hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
+  var rc = UrlFetchApp.fetch(SUPA_URL + '/compras_vw?serie=eq.' + encodeURIComponent(oldS), {
+    method: 'patch', headers: hh,
+    payload: JSON.stringify({ serie: serie8, updated_at: new Date().toISOString(), updated_by: String((body && body.usuario) || '') }),
+    muteHttpExceptions: true });
+  if (rc.getResponseCode() >= 300) return { ok: false, error: 'compras ' + rc.getResponseCode() + ': ' + rc.getContentText().slice(0, 150) };
+  try {
+    var newVin = raw.length >= 12 ? raw : serie8;
+    UrlFetchApp.fetch(SUPA_URL + '/reparto_vw?vin=eq.' + encodeURIComponent(oldS), {
+      method: 'patch', headers: Object.assign(_repartoWHeaders(), { Prefer: 'return=minimal' }),
+      payload: JSON.stringify({ vin: newVin, status: 'Manual' }), muteHttpExceptions: true });
+  } catch (e) {}
+  try { _cacheDrop('comprasvw'); } catch (e) {}
+  return { ok: true, serie: serie8 };
 }
 
 function guardarColoresReparto(body) {
