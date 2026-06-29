@@ -1401,7 +1401,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
         <button class="subtab active" data-subtab="admventas"      onclick="setAdmSubtab('admventas')">Adm. ventas</button>
         <button class="subtab"        data-subtab="patentamientos" onclick="setAdmSubtab('patentamientos')">Patentamientos</button>
         <button class="subtab"        data-subtab="trimestre"      onclick="setAdmSubtab('trimestre')">Trimestre</button>
-        <button class="subtab"        data-subtab="gastos"         onclick="setAdmSubtab('gastos')">Gastos / Conciliación</button>
+        <button class="subtab"        data-subtab="financiaciones"  onclick="setAdmSubtab('financiaciones')">Financiaciones</button>
       </div>
 
       <div class="subpanel active" id="subpanelAdmVentasMain">
@@ -1434,16 +1434,16 @@ table.patent-tbl.resumida .col-extra { display: none; }
         <div id="trimestreContent"></div>
       </div>
 
-      <div class="subpanel" id="subpanelAdmVentasGastos">
+      <div class="subpanel" id="subpanelAdmVentasFin">
         <div class="toolbar">
-          <div class="updated" id="updatedAtGastos">Gasto real por PV (lo que cargó el sistema) conciliado contra sellados por provincia y quebranto VWFS. Tocá una PV para ver el detalle.</div>
+          <div class="updated" id="updatedAtFin">Cobranza de financiaciones por mes de patentamiento: cuáles ya se cobraron y cuáles faltan, una por una y sumadas. Mismo dato de la grilla de Adm. ventas (Oversoft en vivo).</div>
           <div class="actions">
-            <select id="gastosMes" onchange="loadConciliaGastos(true)" style="padding:6px 8px;border:1px solid var(--border,#ccc);border-radius:6px"></select>
-            <button class="refresh" onclick="loadConciliaGastos(true)">Actualizar</button>
+            <select id="finMes" onchange="finSetMes(this.value)" style="padding:6px 8px;border:1px solid var(--border,#ccc);border-radius:6px"></select>
+            <button class="refresh" onclick="loadAdmFinanciaciones(true)">Actualizar</button>
           </div>
         </div>
-        <div id="gastosResumen" style="margin-bottom:10px"></div>
-        <div id="gastosContent"><div class="empty">Cargando…</div></div>
+        <div id="finResumen" style="margin-bottom:10px"></div>
+        <div id="finContent"><div class="empty">Cargando…</div></div>
       </div>
     </section>
 
@@ -1944,6 +1944,193 @@ function _admMesDe(v) {
   return m ? String(m).slice(0, 7) : _mesActualReal();
 }
 
+// ===================== FINANCIACIONES (cobranza) =====================
+// Reemplaza la vieja solapa "Gastos / Conciliación" (su desglose ya vive inline
+// en la grilla de Adm. ventas). Vista de cobranza para Mónica: por MES DE
+// PATENTAMIENTO (_admMesDe, igual criterio que Patentamientos), TODAS las
+// financiaciones (VW Credit + TG + otros bancos). Marca cobradas vs pendientes,
+// suma una por una lo que falta cobrar y agrupa por financiador. Lee
+// admVentasData (mismo fetch de la grilla) — no vuelve a pegarle a Oversoft.
+let finMesSel = '';
+
+// La(s) línea(s) "Financia …" del cuadro de una PV = el crédito a cobrar.
+function _finLineaDe(v) {
+  const ls = (v.cuadro || []).filter(c => String(c.concepto || '').indexOf('Financia') === 0);
+  if (!ls.length) return null;
+  let plan = 0, cobrado = 0, vto = '', fechaCobro = '', recibos = [];
+  for (const c of ls) {
+    plan += Number(c.plan) || 0; cobrado += Number(c.cobrado) || 0;
+    if (c.vto && (!vto || c.vto < vto)) vto = c.vto;
+    if (c.fechaCobro && c.fechaCobro > fechaCobro) fechaCobro = c.fechaCobro;
+    if (c.recibos) recibos = recibos.concat(c.recibos);
+  }
+  const saldo = Math.round((plan - cobrado) * 100) / 100;
+  return { plan, cobrado, saldo, vto, fechaCobro, recibos, cobrada: saldo <= 1 };
+}
+
+// Financiaciones del mes: pendientes primero (por vto), luego cobradas.
+function _admFinList(mes) {
+  const out = [];
+  for (const v of ((admVentasData && admVentasData.ventas) || [])) {
+    if (!(v.tipo && v.tipo.indexOf('FINANCIA') === 0)) continue;
+    if (_admMesDe(v) !== mes) continue;
+    const fl = _finLineaDe(v);
+    if (!fl) continue;
+    out.push({ v: v, fl: fl });
+  }
+  out.sort((a, b) => {
+    if (a.fl.cobrada !== b.fl.cobrada) return a.fl.cobrada ? 1 : -1;
+    return (a.fl.vto || '9999').localeCompare(b.fl.vto || '9999');
+  });
+  return out;
+}
+
+// Meses con financiaciones (selector), más el mes en curso siempre.
+function _admFinMeses() {
+  const set = {};
+  for (const v of ((admVentasData && admVentasData.ventas) || [])) {
+    if (v.tipo && v.tipo.indexOf('FINANCIA') === 0) { const mk = _admMesDe(v); if (mk !== '__sin__') set[mk] = true; }
+  }
+  set[_mesActualReal()] = true;
+  return Object.keys(set).sort().reverse();
+}
+
+function finSetMes(m) { finMesSel = m; renderAdmFinanciaciones(); }
+
+function loadAdmFinanciaciones(forzar) {
+  // depende de admVentasData: si falta (o se fuerza) lo trae loadAdmVentas y su
+  // hook repinta esta solapa al llegar; si ya está, repinta directo.
+  if (forzar || !admVentasData) { loadAdmVentas(!!forzar); return; }
+  renderAdmFinanciaciones();
+}
+
+function _finKpi(lbl, val, bg, col) {
+  return '<div style="flex:1;min-width:150px;background:' + bg + ';border-radius:8px;padding:10px 12px">'
+    + '<div style="font-size:12px;color:#666">' + lbl + '</div>'
+    + '<div style="font-size:18px;font-weight:700;color:' + col + '">' + val + '</div></div>';
+}
+
+// Tabla detalle. pendiente=true → columna "A cobrar" (saldo) + Vto + fila TOTAL;
+// pendiente=false → "Cobrado" + fecha de cobro + recibo.
+function _finTabla(items, pendiente, total) {
+  let h = '<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:6px">'
+    + '<thead><tr style="color:var(--vw-grey-3)">'
+    + '<th style="text-align:left;padding:4px 8px">PV</th>'
+    + '<th style="text-align:left;padding:4px 8px">Cliente</th>'
+    + '<th style="text-align:left;padding:4px 8px">Modelo</th>'
+    + '<th style="text-align:left;padding:4px 8px">Financiador</th>'
+    + '<th style="text-align:right;padding:4px 8px">' + (pendiente ? 'A cobrar' : 'Cobrado') + '</th>'
+    + '<th style="padding:4px 8px">' + (pendiente ? 'Vto' : 'Cobrado el') + '</th>'
+    + '<th style="text-align:left;padding:4px 8px">' + (pendiente ? 'Estado' : 'Recibo') + '</th>'
+    + '</tr></thead><tbody>';
+  const hoy = new Date().toISOString().slice(0, 10);
+  for (const x of items) {
+    const v = x.v, fl = x.fl;
+    const chip = TIPO_CHIP[v.tipo] || { txt: v.financia, bg: '#64748b' };
+    let estado = '⏳ pendiente', col = '#cc6600';
+    if (pendiente && fl.vto) { const d = _diasEntre(fl.vto, hoy); if (d !== null && d > 2) { estado = '🔴 vencida (' + d + 'd)'; col = '#cc3300'; } }
+    h += '<tr style="border-top:1px solid #eef1f6">'
+      + '<td style="padding:4px 8px;white-space:nowrap"><b>' + escapeHtml(v.preventa) + '</b></td>'
+      + '<td style="padding:4px 8px">' + escapeHtml(v.cliente || '—') + '</td>'
+      + '<td style="padding:4px 8px">' + escapeHtml(v.modelo || '—') + '</td>'
+      + '<td style="padding:4px 8px"><span style="background:' + chip.bg + ';color:#fff;border-radius:8px;padding:1px 7px;font-size:11px;white-space:nowrap">' + escapeHtml(v.financia || chip.txt) + '</span></td>'
+      + '<td style="text-align:right;padding:4px 8px;font-weight:700;color:' + (pendiente ? col : '#0a7a30') + '">' + fmtPesos(pendiente ? fl.saldo : fl.cobrado) + '</td>'
+      + '<td style="text-align:center;padding:4px 8px;white-space:nowrap">' + (pendiente ? (fl.vto ? _fechaDMA(fl.vto) : '—') : (fl.fechaCobro ? _fechaDMA(fl.fechaCobro) : '—')) + '</td>'
+      + '<td style="padding:4px 8px;color:' + (pendiente ? col : 'var(--vw-grey-3)') + '">' + (pendiente ? estado : (fl.recibos && fl.recibos.length ? '#' + fl.recibos.join(' #') : '—')) + '</td>'
+      + '</tr>';
+  }
+  if (pendiente) {
+    h += '<tr style="border-top:2px solid #cc6600;font-weight:700">'
+      + '<td colspan="4" style="padding:5px 8px">TOTAL PENDIENTE DE COBRO</td>'
+      + '<td style="text-align:right;padding:5px 8px;color:#cc6600">' + fmtPesos(total) + '</td>'
+      + '<td colspan="2"></td></tr>';
+  }
+  h += '</tbody></table>';
+  return h;
+}
+
+function renderAdmFinanciaciones() {
+  const cont = document.getElementById('finContent'); if (!cont) return;
+  const resu = document.getElementById('finResumen');
+  if (!admVentasData || !Array.isArray(admVentasData.ventas)) { cont.innerHTML = '<div class="empty">Cargando carpetas (Oversoft)…</div>'; if (resu) resu.innerHTML = ''; return; }
+
+  const meses = _admFinMeses();
+  if (!finMesSel || meses.indexOf(finMesSel) === -1) finMesSel = meses.indexOf(_mesActualReal()) >= 0 ? _mesActualReal() : (meses[0] || _mesActualReal());
+  const sel = document.getElementById('finMes');
+  if (sel) {
+    const fill = meses.join(',');
+    if (sel.dataset.fill !== fill) { sel.innerHTML = meses.map(m => '<option value="' + m + '">' + _mesLabel(m) + '</option>').join(''); sel.dataset.fill = fill; }
+    sel.value = finMesSel;
+  }
+  const mes = finMesSel;
+  const list = _admFinList(mes);
+
+  const up = document.getElementById('updatedAtFin');
+  if (up && admVentasData.updatedAt) up.textContent = 'Cobranza de financiaciones · ' + _mesLabel(mes) + ' · Oversoft en vivo · actualizado ' + new Date(admVentasData.updatedAt).toLocaleString('es-AR');
+
+  if (!list.length) { if (resu) resu.innerHTML = ''; cont.innerHTML = '<div class="empty">Sin financiaciones en ' + _mesLabel(mes) + '.</div>'; return; }
+
+  const pend = list.filter(x => !x.fl.cobrada);
+  const cobr = list.filter(x => x.fl.cobrada);
+  const totPlan = list.reduce((a, x) => a + x.fl.plan, 0);
+  const totCobr = list.reduce((a, x) => a + x.fl.cobrado, 0);
+  const totPend = pend.reduce((a, x) => a + x.fl.saldo, 0);
+
+  if (resu) resu.innerHTML =
+    '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
+    _finKpi('Financiaciones del mes', list.length + ' · ' + fmtPesos(totPlan), '#f5f7fb', '#001e50') +
+    _finKpi('Cobradas', cobr.length + ' · ' + fmtPesos(totCobr), '#eef7f0', '#0a7a30') +
+    _finKpi('Pendientes de cobro', pend.length + ' · ' + fmtPesos(totPend), pend.length ? '#fff3e0' : '#eef7f0', pend.length ? '#cc6600' : '#0a7a30') +
+    '</div>';
+
+  let h = '';
+
+  // === PENDIENTES (una por una + suma) ===
+  h += '<div style="font-weight:700;font-size:14px;color:#cc6600;margin:6px 0 6px">⏳ Pendientes de cobro — ' + pend.length + '</div>';
+  if (!pend.length) h += '<div class="empty" style="margin-bottom:14px">Todo cobrado en ' + _mesLabel(mes) + ' ✓</div>';
+  else h += _finTabla(pend, true, totPend);
+
+  // === POR FINANCIADOR (total y pendiente) ===
+  const porFin = {};
+  for (const x of list) {
+    const k = x.v.financia || x.v.tipo;
+    if (!porFin[k]) porFin[k] = { fin: k, tipo: x.v.tipo, cant: 0, plan: 0, cobrado: 0, pend: 0, pendCant: 0 };
+    const g = porFin[k];
+    g.cant++; g.plan += x.fl.plan; g.cobrado += x.fl.cobrado;
+    if (!x.fl.cobrada) { g.pend += x.fl.saldo; g.pendCant++; }
+  }
+  const grupos = Object.keys(porFin).map(k => porFin[k]).sort((a, b) => b.pend - a.pend || b.plan - a.plan);
+  h += '<div style="font-weight:700;font-size:14px;color:#001e50;margin:16px 0 6px">📊 Por financiador — ' + _mesLabel(mes) + '</div>';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:14px">'
+    + '<thead><tr style="color:var(--vw-grey-3);text-align:right">'
+    + '<th style="text-align:left;padding:4px 8px">Financiador</th><th style="padding:4px 8px">Op.</th>'
+    + '<th style="padding:4px 8px">Total mes</th><th style="padding:4px 8px">Cobrado</th>'
+    + '<th style="padding:4px 8px">Pendiente</th></tr></thead><tbody>';
+  for (const g of grupos) {
+    const chip = TIPO_CHIP[g.tipo] || { txt: g.fin, bg: '#64748b' };
+    h += '<tr style="border-top:1px solid #e6ecf5;text-align:right">'
+      + '<td style="text-align:left;padding:4px 8px"><span style="background:' + chip.bg + ';color:#fff;border-radius:8px;padding:1px 7px;font-size:11px;white-space:nowrap">' + escapeHtml(g.fin) + '</span></td>'
+      + '<td style="padding:4px 8px">' + g.cant + '</td>'
+      + '<td style="padding:4px 8px">' + fmtPesos(g.plan) + '</td>'
+      + '<td style="padding:4px 8px;color:#0a7a30">' + fmtPesos(g.cobrado) + '</td>'
+      + '<td style="padding:4px 8px;font-weight:700;color:' + (g.pend > 1 ? '#cc6600' : '#0a7a30') + '">' + (g.pend > 1 ? fmtPesos(g.pend) + ' <small style="font-weight:400;color:var(--vw-grey-3)">(' + g.pendCant + ')</small>' : '✓') + '</td>'
+      + '</tr>';
+  }
+  h += '<tr style="border-top:2px solid #001e50;font-weight:700;text-align:right">'
+    + '<td style="text-align:left;padding:5px 8px">TOTAL</td><td style="padding:5px 8px">' + list.length + '</td>'
+    + '<td style="padding:5px 8px">' + fmtPesos(totPlan) + '</td>'
+    + '<td style="padding:5px 8px;color:#0a7a30">' + fmtPesos(totCobr) + '</td>'
+    + '<td style="padding:5px 8px;color:' + (totPend > 1 ? '#cc6600' : '#0a7a30') + '">' + (totPend > 1 ? fmtPesos(totPend) : '✓') + '</td></tr>';
+  h += '</tbody></table>';
+
+  // === COBRADAS ===
+  h += '<div style="font-weight:700;font-size:14px;color:#0a7a30;margin:16px 0 6px">✓ Cobradas — ' + cobr.length + '</div>';
+  if (!cobr.length) h += '<div class="empty">Ninguna cobrada todavía.</div>';
+  else h += _finTabla(cobr, false, totCobr);
+
+  cont.innerHTML = h;
+}
+
 async function loadAdmVentas(forzar) {
   if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return;
   const cont = document.getElementById('admVentasContent');
@@ -1959,6 +2146,8 @@ async function loadAdmVentas(forzar) {
     if (up && data.updatedAt) up.textContent = data.total + ' carpetas desde ' + (data.desde || '').slice(0, 7) + ' · Oversoft en vivo · actualizado ' + new Date(data.updatedAt).toLocaleString('es-AR');
     await loadGastosMap(forzar);             // factura + gasto real por PV (desglose clickeable)
     renderAdmVentas();
+    // Si la subtab Financiaciones está abierta, repintarla con la data fresca.
+    if (document.getElementById('subpanelAdmVentasFin') && document.getElementById('subpanelAdmVentasFin').classList.contains('active')) renderAdmFinanciaciones();
   } catch (e) { console.error('loadAdmVentas:', e); }
 }
 
@@ -3714,14 +3903,14 @@ function setAdmSubtab(name) {
   document.getElementById('subpanelAdmVentasMain').classList.toggle('active',      name === 'admventas');
   document.getElementById('subpanelAdmVentasPatent').classList.toggle('active',    name === 'patentamientos');
   document.getElementById('subpanelAdmVentasTrimestre').classList.toggle('active', name === 'trimestre');
-  document.getElementById('subpanelAdmVentasGastos').classList.toggle('active',    name === 'gastos');
+  document.getElementById('subpanelAdmVentasFin').classList.toggle('active',       name === 'financiaciones');
   if (name === 'admventas'      && !admVentasData) loadAdmVentas(false);
   if (name === 'patentamientos' && !patentData)    loadPatentamientos(false);
   if (name === 'trimestre') {
     if (!patentData) loadPatentamientos(false);  // al llegar la data, el hook de
     else             renderTrimestre();          // loadPatentamientos pinta Trimestre.
   }
-  if (name === 'gastos' && !gastosData) loadConciliaGastos(false);
+  if (name === 'financiaciones') loadAdmFinanciaciones(false);
 }
 
 // ===================== GASTOS / CONCILIACIÓN por PV =====================
