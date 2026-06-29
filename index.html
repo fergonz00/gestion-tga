@@ -2004,12 +2004,6 @@ function loadAdmFinanciaciones(forzar) {
   renderAdmFinanciaciones();
 }
 
-function _finKpi(lbl, val, bg, col) {
-  return '<div style="flex:1;min-width:150px;background:' + bg + ';border-radius:8px;padding:10px 12px">'
-    + '<div style="font-size:12px;color:#666">' + lbl + '</div>'
-    + '<div style="font-size:18px;font-weight:700;color:' + col + '">' + val + '</div></div>';
-}
-
 // Tabla detalle. pendiente=true → columna "A cobrar" (saldo) + Vto + fila TOTAL;
 // pendiente=false → "Cobrado" + fecha de cobro + recibo.
 function _finTabla(items, pendiente, total) {
@@ -2077,10 +2071,10 @@ function renderAdmFinanciaciones() {
   const totPend = pend.reduce((a, x) => a + x.fl.saldo, 0);
 
   if (resu) resu.innerHTML =
-    '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
-    _finKpi('Financiaciones del mes', list.length + ' · ' + fmtPesos(totPlan), '#f5f7fb', '#001e50') +
-    _finKpi('Cobradas', cobr.length + ' · ' + fmtPesos(totCobr), '#eef7f0', '#0a7a30') +
-    _finKpi('Pendientes de cobro', pend.length + ' · ' + fmtPesos(totPend), pend.length ? '#fff3e0' : '#eef7f0', pend.length ? '#cc6600' : '#0a7a30') +
+    '<div class="cards">' +
+    kpi('Financiaciones del mes', fmtPesos(totPlan), list.length + (list.length === 1 ? ' operación' : ' operaciones'), '') +
+    kpi('Cobradas', fmtPesos(totCobr), cobr.length + ' de ' + list.length, cobr.length ? 'good' : '') +
+    kpi('Pendientes de cobro', fmtPesos(totPend), pend.length + (pend.length === 1 ? ' pendiente' : ' pendientes'), pend.length ? 'warn' : 'good') +
     '</div>';
 
   let h = '';
