@@ -4672,22 +4672,25 @@ function repartoCompradoSec(items) {
     h += '<div class="empty">Todavía no marcaste ninguna unidad como comprada. Tildalas arriba y dale "Comprar".</div>';
     return h;
   }
-  h += '<p class="reparto-hint">Lo que le compraste a VW. Cuando la unidad aparece en Oversoft, chequeá que coincidan modelo y color y tocá <strong>OK</strong>: pasa a la sección <strong>Confirmados</strong> de abajo y sigue contando como compra del mes.</p>';
+  h += '<p class="reparto-hint">Lo que le compraste a VW. Cuando la unidad aparece en Oversoft, chequeá que coincidan <strong>modelo, color y chasis</strong> y tocá <strong>OK</strong>: pasa a <strong>Confirmados</strong> y sigue contando como compra del mes. Las <strong>manuales</strong> esperan a que Valeria cargue el chasis en Compras VW; ahí recién cruzan con Oversoft.</p>';
   h += '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
     + '<th>Modelo</th><th>Color pedido</th><th>Chasis (VIN)</th><th>Conciliación (Oversoft)</th><th class="num">Acción</th></tr></thead><tbody>';
   comp.forEach(it => {
     const ov = it.oversoft || {};
     const rowCls = it.alerta ? 'reparto-tr-alerta' : (it.enOversoft ? 'reparto-tr-ovs' : '');
     h += '<tr class="' + rowCls + '">';
-    h += '<td><div class="reparto-modelo">' + escapeHtml((it.descripcion || '').replace(/^VW /, '')) + '</div><div class="reparto-fam">' + escapeHtml(it.familia || '') + '</div></td>';
+    const sinChasis = it.manual && String(it.vin || '').startsWith('MAN-');
+    h += '<td><div class="reparto-modelo">' + escapeHtml((it.descripcion || '').replace(/^VW /, '')) + '</div><div class="reparto-fam">' + escapeHtml(it.familia || '') + (it.manual ? ' · <span style="color:#9a7d00">manual</span>' : '') + '</div></td>';
     h += '<td>' + escapeHtml(it.color_nombre || '') + '</td>';
-    h += '<td class="reparto-vin">' + escapeHtml(it.vin) + '</td>';
+    h += '<td class="reparto-vin">' + (sinChasis ? '<span class="reparto-fam">— sin chasis</span>' : escapeHtml(it.vin)) + '</td>';
     let conc;
-    if (it.alerta) conc = '<span class="reparto-est-alerta">⚠ comprado hace ' + it.diasComprado + 'd · sin aparecer en Oversoft</span>';
+    if (sinChasis) conc = '<span class="reparto-est-wait">⏳ falta el chasis · lo carga Valeria en Compras VW</span>';
+    else if (it.alerta) conc = '<span class="reparto-est-alerta">⚠ comprado hace ' + it.diasComprado + 'd · sin aparecer en Oversoft</span>';
     else if (it.enOversoft) {
       conc = '<span class="reparto-est-ok">✓ en Oversoft' + (ov.serie ? ' · serie ' + escapeHtml(ov.serie) : '') + (ov.fechaRecepcion ? ' · ' + ov.fechaRecepcion : '') + '</span>';
       conc += '<div class="reparto-concil">Modelo: ' + escapeHtml(ov.modelo || '?') + ' ' + (it.modeloMatch ? '<span class="ok">✓ coincide</span>' : '<span class="warn">⚠ revisá</span>')
-        + '<br>Color: ' + escapeHtml(ov.color || '?') + ' ' + (it.colorMatch ? '<span class="ok">✓ coincide</span>' : '<span class="warn">⚠ revisá</span>') + '</div>';
+        + '<br>Color: ' + escapeHtml(ov.color || '?') + ' ' + (it.colorMatch ? '<span class="ok">✓ coincide</span>' : '<span class="warn">⚠ revisá</span>')
+        + '<br>Chasis: ' + escapeHtml(ov.serie || '?') + ' ' + (it.chasisMatch ? '<span class="ok">✓ coincide</span>' : '<span class="warn">⚠ revisá</span>') + '</div>';
     } else conc = '<span class="reparto-est-wait">esperando Oversoft' + (it.diasComprado != null ? ' (' + it.diasComprado + 'd)' : '') + '</span>';
     h += '<td>' + conc + '</td>';
     let acc = '<div class="reparto-acc">';
