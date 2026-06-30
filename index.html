@@ -4610,6 +4610,34 @@ async function _repartoPost(obj) {
   return res.json();
 }
 
+// Cambio de estado OPTIMISTA: aplica el cambio en memoria y re-dibuja AL INSTANTE,
+// sin esperar al servidor. El guardado en Supabase va en segundo plano; si falla,
+// revierte y avisa. Antes cada botón hacía `await _repartoPost(); await loadReparto(true)`
+// (recarga completa en frío del panel en vivo, ~30s, sin ningún feedback): la página
+// parecía congelada y el cambio recién aparecía cuando terminaba la recarga.
+async function _repAccionOptim(vins, accion, cambio) {
+  const esLista = Array.isArray(vins);
+  const lista = esLista ? vins : [vins];
+  const items = (repartoData && repartoData.items) || [];
+  const tocados = [];
+  lista.forEach(vin => {
+    const it = items.find(i => i.vin === vin);
+    if (!it) return;
+    const prev = {}; Object.keys(cambio).forEach(k => prev[k] = it[k]);
+    Object.assign(it, cambio);
+    tocados.push({ it, prev });
+  });
+  renderReparto();
+  try {
+    const r = await _repartoPost(Object.assign({ accion: accion }, esLista ? { vins: lista } : { vin: lista[0] }));
+    if (r && r.ok === false) throw new Error(r.error || 'error');
+  } catch (e) {
+    tocados.forEach(t => Object.assign(t.it, t.prev));
+    renderReparto();
+    alert('No se pudo guardar el cambio. Reintentá.\n' + (e && e.message ? e.message : e));
+  }
+}
+
 function repartoToggleSel(vin) { if (repartoSel[vin]) delete repartoSel[vin]; else repartoSel[vin] = true; repartoUpdBtn(); }
 function repartoUpdBtn() {
   const n = Object.keys(repartoSel).length;
@@ -4669,8 +4697,7 @@ async function repartoAgregarManual() {
 async function repartoElegir() {
   const vins = Object.keys(repartoSel); if (!vins.length) return;
   repartoSel = {};
-  await _repartoPost({ accion: 'elegirreparto', vins: vins });
-  await loadReparto(true);
+  await _repAccionOptim(vins, 'elegirreparto', { estado_compra: 'elegida' });
 }
 // Paso 2: marcar elegidas como COMPRADAS. Acá sí se arma el texto para mandar a VW
 // y pasan a "Comprado · a conciliar". Sirve para una sola (botón por fila) o todas.
@@ -4678,12 +4705,11 @@ async function repartoComprarElegidas(vins) {
   if (!vins || !vins.length) return;
   const sel = repartoData.items.filter(i => vins.indexOf(i.vin) >= 0);
   repartoCopia = ['Modelo\tChasis (VIN)\tColor'].concat(sel.map(i => i.descripcion + '\t' + i.vin + '\t' + i.color_nombre)).join('\n');
-  await _repartoPost({ accion: 'comprarreparto', vins: vins });
-  await loadReparto(true);
+  await _repAccionOptim(vins, 'comprarreparto', { estado_compra: 'comprado' });
 }
-async function repartoDeshacer(vin) { await _repartoPost({ accion: 'deshacerreparto', vin: vin }); await loadReparto(true); }
-async function repartoOk(vin) { await _repartoPost({ accion: 'okreparto', vin: vin }); await loadReparto(true); }
-async function repartoReabrir(vin) { await _repartoPost({ accion: 'reabrirreparto', vin: vin }); await loadReparto(true); }
+async function repartoDeshacer(vin) { await _repAccionOptim(vin, 'deshacerreparto', { estado_compra: 'pendiente', comprado_at: null }); }
+async function repartoOk(vin) { await _repAccionOptim(vin, 'okreparto', { estado_compra: 'ok' }); }
+async function repartoReabrir(vin) { await _repAccionOptim(vin, 'reabrirreparto', { estado_compra: 'comprado' }); }
 async function repartoGuardarColores(codigos) {
   const entries = codigos.map(c => ({ codigo: c, nombre: (repartoNombres[c] !== undefined ? repartoNombres[c] : (repartoData.colores[c] || '')) }));
   await _repartoPost({ accion: 'guardarcoloresreparto', entries: entries });
