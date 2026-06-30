@@ -4755,6 +4755,17 @@ function renderReparto() {
   ).length;
   const facturadoActual = porMes[mesHoy] || 0;
   const comprasActual = facturadoActual + repExtra;
+  // Facturadas por Valeria que NO están en el reparto: las cargó directo (compra al
+  // zonal sin pasar por el mail de VW). Ya cuentan en comprasActual (rama facturadas),
+  // pero acá las hacemos visibles para que Fer las vea. Match por serie (8) vs vin del
+  // reparto (cualquier estado): si está en el reparto, no es "fuera del reparto".
+  const repSeriesTodas = new Set(items.map(i => String(i.vin || '').slice(-8).toUpperCase()));
+  const fueraReparto = (comprasVWData && Array.isArray(comprasVWData.compras) ? comprasVWData.compras : []).filter(c => {
+    const s = String(c.serie || '').trim().toUpperCase();
+    if (!s || s.startsWith('MAN-')) return false;
+    if (_cvwMesToKey(c.mes) !== mesHoy) return false;
+    return !repSeriesTodas.has(s);
+  });
   const objActual = objetivos[mesHoy] || 0;
   const pctActual = objActual ? (comprasActual / objActual * 100) : 0;
   const faltanActual = Math.max(0, objActual - comprasActual);
@@ -4775,6 +4786,19 @@ function renderReparto() {
     html += '  <div class="compras-progress-line"><strong>' + comprasActual + '</strong> compras este mes · Cargá el objetivo para ver el avance</div>';
   }
   if (repExtra > 0) html += '  <div class="compras-faltan" style="color:var(--vw-grey-3)">' + facturadoActual + ' facturadas + <strong>' + repExtra + '</strong> marcada' + (repExtra !== 1 ? 's' : '') + ' en el reparto (comprado/confirmado, todavía sin figurar facturada).</div>';
+  if (fueraReparto.length) {
+    const n = fueraReparto.length, plural = n !== 1;
+    html += '  <div style="margin-top:10px;padding:9px 11px;background:#fff8e6;border:1px solid #f0d27a;border-radius:8px">';
+    html += '    <div style="font-size:13px;font-weight:600;color:#8a6d1a;margin-bottom:5px">⚠ ' + n + ' facturada' + (plural ? 's' : '') + ' por Valeria que no ' + (plural ? 'están' : 'está') + ' en el reparto <span style="font-weight:400;color:var(--vw-grey-3)">· ya cuenta' + (plural ? 'n' : '') + ' en la sumatoria de arriba</span></div>';
+    fueraReparto.forEach(c => {
+      const mod = escapeHtml(c.modeloOficial || c.modelo_valeria || '—');
+      const col = c.color ? ' · ' + escapeHtml(c.color) : '';
+      const fc = c.fc_numero ? ' · FC ' + escapeHtml(c.fc_numero) : '';
+      const ov = c.enOversoft ? '' : ' <span style="color:#b06a00">· aún no en Oversoft</span>';
+      html += '    <div style="font-size:12px;color:var(--vw-grey-4);padding:2px 0"><b style="font-family:monospace">' + escapeHtml(c.serie) + '</b> — ' + mod + col + fc + ov + '</div>';
+    });
+    html += '  </div>';
+  }
   html += '</div>';
 
   const MES_INICIO = '2026-03';
