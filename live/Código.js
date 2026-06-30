@@ -770,9 +770,13 @@ const GASTO_NOMBRES = {
   212: '20- Sellado de Prenda', 210: '21- Gastos de Financiación',
   156: '23- Gastos de Unidad Usada', 546: '32- Garantía Extendida',
   569: '33- TAG TelePASE',
-  // Verificado contra el lado emitido (comprobantesdetallesgastos): el importe de
-  // gastoxprevta 468 = "A. Costo Unidad" gravado × 1,21 (ej. PV 06943/3 100090,91×1,21=121110).
-  468: 'A. Costo Unidad',
+  // Verificados cruzando el importe de gastoxprevta contra el concepto del lado
+  // emitido (comprobantesdetallesgastos): importe = gravado × 1,21 + exento.
+  // (ej. 468: PV 06943/3 100090,91×1,21=121110.)
+  468: 'A. Costo Unidad', 209: '13- Arancel 2%', 489: '11- Arancel AFIP Personas Jurídicas',
+  407: '22- Accesorios', 483: '26- Transferencia Usado', 351: '27- Derecho de Adjudicación',
+  376: '28- Gastos Prestación de Serv. Autoahorro', 500: '31- Retención Ganancias',
+  536: 'Gastos Varios',
 };
 
 function getConciliacionGastos(params) {
