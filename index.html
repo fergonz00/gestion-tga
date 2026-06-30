@@ -2585,6 +2585,7 @@ async function loadVentasOv(forzar) {
     ventasOvData = await res.json();
     setOvsSync(ventasOvData.syncOversoft);   // aprovecha el sello que ya trae ventasv2
     if (!ventasOvMes && ventasOvData.mesActual) ventasOvMes = ventasOvData.mesActual;
+    await loadGastosMap(forzar);             // gasto real por PV (desglose clickeable), se refresca con el botón
     renderVentasOv();
   } catch (e) {
     if (cont) cont.innerHTML = '<div class="empty">Error: ' + escapeHtml(e.message) + '</div>';
@@ -2657,6 +2658,7 @@ function renderVentasOv() {
     + '<span style="font-size:13px;color:var(--vw-grey-3)">' + rows.length + ' ventas · ganancia total <b style="color:#0a7a30">' + fmtPesos(totG) + '</b></span></div>';
   h += '<div style="overflow-x:auto"><table class="ventas-tbl"><thead><tr style="text-align:left">'
     + '<th>PV</th><th>Fecha</th><th>Modelo</th><th>Vend.</th><th style="text-align:right">Monto</th>'
+    + '<th style="text-align:right" title="Gasto total cobrado al cliente (o cargado a facturar). Tocá para ver el desglose por concepto.">Gastos</th>'
     + '<th style="text-align:right">Ganancia</th><th style="text-align:right">%</th><th style="text-align:right">Accesorios</th></tr></thead><tbody>';
   for (const v of rows) {
     const key = String(v.preventaNum || '').replace(/[^0-9]/g, '');
@@ -2671,28 +2673,40 @@ function renderVentasOv() {
     const gciaCell = puedeDet
       ? '<button onclick="toggleVentasOvDet(\'' + key + '\')" title="Ver desglose de incentivos y costos" style="border:0;background:none;cursor:pointer;color:' + gColor + ';font-weight:600;font-size:12px;padding:0">' + gciaTxt + ' ▸</button>'
       : '<span style="color:' + gColor + ';font-weight:600">' + gciaTxt + '</span>';
+    // Gasto real por PV (mismo mapa que Adm. ventas). Clickeable → desglose por concepto.
+    const gasto = _gastoDe(v.preventaNum);
+    const gastoCell = gasto
+      ? '<button onclick="toggleVentasOvGasto(\'' + key + '\')" title="' + (gasto.sinEmitir ? 'Gastos cargados en la preventa — a facturar (sin emitir todavía)' : 'Ver desglose de gastos por concepto') + '" style="border:0;background:none;cursor:pointer;color:' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';font-weight:600;font-size:12px;padding:0">$' + _gMoney(gasto.total) + (gasto.sinEmitir ? ' · a fact.' : '') + ' ▸</button>'
+      : '<span style="color:var(--vw-grey-3);font-size:11px">s/gastos</span>';
     h += '<tr' + (v.mencionaAcc ? ' style="background:#fff8e1"' : '') + '>'
       + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + accFlag + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + _comisionTGControl(v) + '</td>'
       + '<td>' + _fechaDMA(v.fechaPvIso) + '</td>'
       + '<td>' + escapeHtml(v.modelo) + '</td>'
       + '<td>' + escapeHtml(v.vendedor || '') + '</td>'
       + '<td style="text-align:right">' + fmtPesos(v.montoFc) + '</td>'
+      + '<td style="text-align:right;white-space:nowrap">' + gastoCell + '</td>'
       + '<td style="text-align:right">' + gciaCell + '</td>'
       + '<td style="text-align:right;color:' + gColor + '">' + (v.gciaVtaPct != null ? (v.gciaVtaPct * 100).toFixed(1) + '%' : '—') + '</td>'
       + '<td style="text-align:right"><input type="number" value="' + (v.accesorios || 0) + '" onchange="guardarAccesorios(\'' + pvArg + '\', this.value)" style="width:108px;text-align:right;padding:3px 5px;border:1px solid ' + (v.accesorios ? '#0a66c2' : 'var(--vw-grey-2)') + ';border-radius:5px;font-size:12px"></td>'
       + '</tr>';
     if (v.comentario) {
       h += '<tr id="vovcom_' + key + '"' + (ventasOvComAbiertos.has(key) ? '' : ' style="display:none"') + '>'
-        + '<td colspan="8" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">💬 ' + escapeHtml(v.comentario) + '</td></tr>';
+        + '<td colspan="9" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">💬 ' + escapeHtml(v.comentario) + '</td></tr>';
     }
     if (puedeDet) {
       h += '<tr id="vovdet_' + key + '"' + (ventasOvDetAbiertos.has(key) ? '' : ' style="display:none"') + '>'
-        + '<td colspan="8" style="background:#f7f9fc;border-left:3px solid #0a66c2;padding:10px 14px;text-align:left">' + _ventaDetHtml(v) + '</td></tr>';
+        + '<td colspan="9" style="background:#f7f9fc;border-left:3px solid #0a66c2;padding:10px 14px;text-align:left">' + _ventaDetHtml(v) + '</td></tr>';
+    }
+    if (gasto) {
+      h += '<tr id="vovgasto_' + key + '"' + (ventasOvGastoAbiertos.has(key) ? '' : ' style="display:none"') + '>'
+        + '<td colspan="9" style="background:#fafbfc;border-left:3px solid ' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';padding:8px 14px 12px 30px;text-align:left">'
+        + '<div style="font-weight:700;font-size:12px;margin-bottom:4px">Gastos ' + (gasto.sinEmitir ? 'cargados en la preventa' : 'cobrados al cliente') + ' · PV ' + escapeHtml(v.preventaNum) + ' · total $' + _gMoney(gasto.total) + '</div>'
+        + (gasto.sinEmitir ? _gastoAFacturarHtml(gasto) : _gastoDetalleHtml(gasto)) + '</td></tr>';
     }
   }
-  if (!rows.length) h += '<tr><td colspan="8" class="empty">Sin ventas.</td></tr>';
+  if (!rows.length) h += '<tr><td colspan="9" class="empty">Sin ventas.</td></tr>';
   h += '</tbody></table></div>';
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Ganancia = venta − costo de reposición (con incentivos) − comisión − IIBB + accesorios. Las marcadas <span style="background:#cc6600;color:#fff;border-radius:8px;padding:0 5px">acc</span> mencionan accesorios en el comentario (💬) — cargá el monto y se suma. "s/BT" = mes sin BT cargada. (Versión nueva: sale de Oversoft, sin Sheet.)</div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Ganancia = venta − costo de reposición (con incentivos) − comisión − IIBB + accesorios. Las marcadas <span style="background:#cc6600;color:#fff;border-radius:8px;padding:0 5px">acc</span> mencionan accesorios en el comentario (💬) — cargá el monto y se suma. "s/BT" = mes sin BT cargada. <b>Gastos</b>: tocá el monto para ver el desglose por concepto (mismo dato que Adm. ventas); en ámbar "a fact." = cargado en la preventa, sin emitir todavía. (Versión nueva: sale de Oversoft, sin Sheet.)</div>';
   cont.innerHTML = h;
   const u = document.getElementById('updatedAtVentasOv');
   if (u && ventasOvData.updatedAt) u.textContent = 'Actualizado: ' + new Date(ventasOvData.updatedAt).toLocaleString('es-AR');
@@ -4196,6 +4210,16 @@ function toggleVentasOvDet(key) {
   const abrir = tr.style.display === 'none';
   tr.style.display = abrir ? '' : 'none';
   if (abrir) ventasOvDetAbiertos.add(key); else ventasOvDetAbiertos.delete(key);
+}
+// Desglose de GASTOS por PV en la solapa Ventas (mismo dato que Adm. ventas:
+// gastosmap → _gastoDetalleHtml / _gastoAFacturarHtml).
+let ventasOvGastoAbiertos = new Set();
+function toggleVentasOvGasto(key) {
+  const tr = document.getElementById('vovgasto_' + key);
+  if (!tr) return;
+  const abrir = tr.style.display === 'none';
+  tr.style.display = abrir ? '' : 'none';
+  if (abrir) ventasOvGastoAbiertos.add(key); else ventasOvGastoAbiertos.delete(key);
 }
 function _ventaDetHtml(v) {
   const b = v.breakdown;
