@@ -2669,7 +2669,12 @@ function renderVentasOv() {
     const key = String(v.preventaNum || '').replace(/[^0-9]/g, '');
     const pvArg = String(v.preventaNum || '').replace(/'/g, '');
     const btnCom = v.comentario ? ' <button onclick="toggleVentasOvCom(\'' + key + '\')" title="Ver comentario de la PV" style="border:0;background:none;cursor:pointer;font-size:13px;padding:0 2px">💬</button>' : '';
-    const accFlag = v.mencionaAcc ? ' <span title="El comentario menciona accesorios — cargá el monto" style="background:#cc6600;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">acc</span>' : '';
+    // Gasto real por PV (mapa compartido con Adm. ventas). Se resuelve acá arriba
+    // porque también alimenta el cartelito "acc": menciona accesorios en el
+    // comentario, o el "Costo Unidad" del gasto difiere del estándar $1.110.000.
+    const gasto = _gastoDe(v.preventaNum);
+    const mencionaAcc = v.mencionaAcc || _gastoMencionaAcc(gasto);
+    const accFlag = mencionaAcc ? ' <span title="Menciona accesorios en el comentario, o el Costo Unidad del gasto difiere de $1.110.000 — cargá el monto" style="background:#cc6600;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">acc</span>' : '';
     const g = (typeof v.gciaVtaPesos === 'number');
     const gColor = g ? (v.gciaVtaPesos >= 0 ? '#0a7a30' : '#cc3300') : 'var(--vw-grey-3)';
     const puedeDet = !!v.breakdown;
@@ -2679,11 +2684,10 @@ function renderVentasOv() {
       ? '<button onclick="toggleVentasOvDet(\'' + key + '\')" title="Ver desglose de incentivos y costos" style="border:0;background:none;cursor:pointer;color:' + gColor + ';font-weight:600;font-size:12px;padding:0">' + gciaTxt + ' ▸</button>'
       : '<span style="color:' + gColor + ';font-weight:600">' + gciaTxt + '</span>';
     // Gasto real por PV (mismo mapa que Adm. ventas). Clickeable → desglose por concepto.
-    const gasto = _gastoDe(v.preventaNum);
     const gastoCell = gasto
       ? '<button onclick="toggleVentasOvGasto(\'' + key + '\')" title="' + (gasto.sinEmitir ? 'Gastos cargados en la preventa — a facturar (sin emitir todavía)' : 'Ver desglose de gastos por concepto') + '" style="border:0;background:none;cursor:pointer;color:' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';font-weight:600;font-size:12px;padding:0">$' + _gMoney(gasto.total) + (gasto.sinEmitir ? ' · a fact.' : '') + ' ▸</button>'
       : '<span style="color:var(--vw-grey-3);font-size:11px">s/gastos</span>';
-    h += '<tr' + (v.mencionaAcc ? ' style="background:#fff8e1"' : '') + '>'
+    h += '<tr' + (mencionaAcc ? ' style="background:#fff8e1"' : '') + '>'
       + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + accFlag + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + _comisionTGControl(v) + '</td>'
       + '<td>' + _fechaDMA(v.fechaPvIso) + '</td>'
       + '<td>' + escapeHtml(v.modelo) + '</td>'
@@ -2711,7 +2715,7 @@ function renderVentasOv() {
   }
   if (!rows.length) h += '<tr><td colspan="9" class="empty">Sin ventas.</td></tr>';
   h += '</tbody></table></div>';
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Ganancia = venta − costo de reposición (con incentivos) − comisión − IIBB + accesorios. Las marcadas <span style="background:#cc6600;color:#fff;border-radius:8px;padding:0 5px">acc</span> mencionan accesorios en el comentario (💬) — cargá el monto y se suma. "s/BT" = mes sin BT cargada. <b>Gastos</b>: tocá el monto para ver el desglose por concepto (mismo dato que Adm. ventas); en ámbar "a fact." = cargado en la preventa, sin emitir todavía. (Versión nueva: sale de Oversoft, sin Sheet.)</div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Ganancia = venta − costo de reposición (con incentivos) − comisión − IIBB + accesorios. Las marcadas <span style="background:#cc6600;color:#fff;border-radius:8px;padding:0 5px">acc</span> mencionan accesorios en el comentario (💬) o tienen el "Costo Unidad" del gasto distinto del estándar $1.110.000 — cargá el monto y se suma. "s/BT" = mes sin BT cargada. <b>Gastos</b>: tocá el monto para ver el desglose por concepto (mismo dato que Adm. ventas); en ámbar "a fact." = cargado en la preventa, sin emitir todavía. (Versión nueva: sale de Oversoft, sin Sheet.)</div>';
   cont.innerHTML = h;
   const u = document.getElementById('updatedAtVentasOv');
   if (u && ventasOvData.updatedAt) u.textContent = 'Actualizado: ' + new Date(ventasOvData.updatedAt).toLocaleString('es-AR');
@@ -4207,6 +4211,20 @@ async function loadGastosMap(forzar) {
 function _gastoDe(pv) {
   const m = (gastosMapData && gastosMapData.gastos) || {};
   return m[_pvKey(pv)] || null;
+}
+// Accesorios "escondidos" en el gasto: el concepto "Costo Unidad" viene con un
+// monto distinto al estándar $1.110.000 (FYF). Esa diferencia suele ser accesorios
+// que el vendedor metió ahí en vez del comentario, así que marca la PV igual que
+// mencionaAcc (cartelito "acc"). Es uno u otro: o lo aclara en el comentario, o
+// lo carga acá; en ambos casos hay que cargar el monto de accesorios.
+const _GASTO_COSTO_UNIDAD_STD = 1110000;
+function _gastoMencionaAcc(g) {
+  if (!g || !g.lineas) return false;
+  return g.lineas.some(l => {
+    if (!/costo\s*unidad/i.test(String(l.concepto || ''))) return false;
+    const monto = Number(l.cobrado != null ? l.cobrado : l.importe) || 0;
+    return monto > 0 && Math.abs(monto - _GASTO_COSTO_UNIDAD_STD) > 1;
+  });
 }
 function _gKv(label, val) {
   return '<tr><td style="padding:2px 14px 2px 0;color:#555">' + label + '</td><td style="text-align:right">$' + _gMoney(val) + '</td></tr>';
