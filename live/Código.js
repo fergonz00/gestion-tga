@@ -1474,6 +1474,19 @@ function getComprasVW() {
     const lote = series.slice(i, i + 60).map(s => '"' + s + '"').join(',');
     for (const u of get('/unidades?select=serie,modelo,color,fechaderecepcion,certificado,preventa&serie=in.(' + encodeURIComponent(lote) + ')')) uni[String(u.serie).trim()] = u;
   }
+  // FC de COMPRA de VW → Tito (cta cte VW en detcash: origen CPOKM, comprobante
+  // FC-...). referencia = serie. Si hay varias FC por serie, gana la de importe
+  // más negativo (la factura principal; las NC quedan afuera por el like FC-).
+  const fcVw = {};
+  for (let i = 0; i < series.length; i += 60) {
+    const lote = series.slice(i, i + 60).map(s => '"' + s + '"').join(',');
+    for (const d of get('/detcash?origen=eq.CPOKM&comprobante=like.FC-*&select=referencia,comprobante,fecha,importe&referencia=in.(' + encodeURIComponent(lote) + ')')) {
+      const s = String(d.referencia || '').trim();
+      if (!s) continue;
+      const imp = Number(d.importe) || 0;
+      if (!fcVw[s] || imp < (fcVw[s].importe || 0)) fcVw[s] = { comprobante: String(d.comprobante || '').trim(), fecha: d.fecha ? String(d.fecha).slice(0, 10) : null, importe: imp };
+    }
+  }
   // mapa de modelo (código → descripción) y color (id → descripción)
   const desc = {}; let off = 0;
   if (series.length) for (let i = 0; i < 12; i++) {
@@ -1510,10 +1523,14 @@ function getComprasVW() {
       falta: av.falta || 0, creditoCobrado: av.creditoCobrado || null,
     } : null;
     const colorOversoft = u ? (col[u.color] || '') : '';
+    const fcOv = fcVw[String(r.serie || '').trim()] || null;
     return Object.assign({}, r, {
       enOversoft: enOversoft,
       modeloOversoft: modeloOversoft,
       colorOversoft: colorOversoft,
+      // N° de factura de compra VW→Tito (de Oversoft, cta cte VW). Solo lectura.
+      fcVw: fcOv ? fcOv.comprobante : '',
+      fcVwFecha: fcOv ? fcOv.fecha : null,
       // color oficial: el de Oversoft cuando está conciliada; si no, el de VW.
       color: (conc && colorOversoft) ? colorOversoft : String(r.color || ''),
       preventaOversoft: pvNum,
@@ -3638,6 +3655,16 @@ function _repartoRead(path) {
 // in.(...) para UrlFetchApp: SIN comillas (UrlFetchApp las rechaza) y encodeado.
 // Los VIN/códigos son alfanuméricos, así que no necesitan comillas en PostgREST.
 function _repartoInList(arr) { return arr.map(function (s) { return encodeURIComponent(String(s).trim()); }).join(','); }
+// Codigo base de Oversoft/VW: el codigodecompra sin el sufijo de modelo-year. El
+// modelo_codigo del reparto VW (ej. "5URTT4") es justamente la base del
+// codigodecompra de Oversoft (ej. "5URTT4 MY27" / "CL24LZ 2026"). Cruzar por base
+// aguanta MY nuevos que todavia no estan catalogados.
+function _baseCod(c) {
+  var s = String(c || '').trim().toUpperCase();
+  s = s.replace(/\s+MY\s*\d{2,4}$/, '').replace(/\s+\d{4}$/, '');
+  return s.trim();
+}
+
 // Réplica del _ntrim del motor (para cruzar por NOMBRE el reparto con ventas/stock).
 function _repartoNtrim(s) {
   s = String(s || '').toLowerCase();
@@ -3930,7 +3957,10 @@ function reabrirReparto(body) {
 // (🟡 sin Oversoft). Cuando le llega la factura, Valeria carga el chasis real
 // con setSerieCompra (renombra la serie → concilia normal por serie con Oversoft).
 function agregarUnidadManual(body) {
-  var desc = String((body && body.descripcion) || '').trim();
+  // el dropdown del front trae el nombre del motor con prefijo "VW " → lo saco para
+  // no duplicarlo (modelo_valeria ya antepone "VW ") y dejar la descripcion como en
+  // el mail de VW ("Tera Trend MSI MT"), que ademas matchea mejor el catalogo.
+  var desc = String((body && body.descripcion) || '').trim().replace(/^VW\s+/i, '');
   var familia = String((body && body.familia) || '').trim();
   var colorCod = String((body && body.color_codigo) || '').trim();
   if (!desc) return { ok: false, error: 'Falta el modelo' };
@@ -4049,33 +4079,49 @@ function getReparto() {
   var virt = { byNc: {}, colorByNc: {}, chasisByNc: {} };
   try { virt = _stockVirtualCompras(); } catch (e) {}
 
-  // Cruce Oversoft (por VIN) para las compradas: presencia + modelo + color
-  // (para que Fer chequee que coincida lo que cargó el sistema antes del OK).
-  var compradoVins = rows.filter(function (r) { return r.estado_compra === 'comprado'; }).map(function (r) { return r.vin; });
+  // Cruce Oversoft para las compradas: presencia + modelo + color + chasis (para
+  // que Fer chequee que coincida lo que cargo el sistema antes del OK). Se cruza
+  // por SERIE (ultimos 8 del VIN) y no por VIN completo: asi tambien entran las
+  // manuales cuyo chasis Valeria cargo como serie corta (8) — para un VIN normal
+  // slice(-8) == la serie de Oversoft, asi que sirve para todas.
+  var cruceSeries = rows.filter(function (r) { return r.estado_compra === 'comprado' || r.estado_compra === 'ok'; })
+    .map(function (r) { return String(r.vin || '').toUpperCase().slice(-8); })
+    .filter(function (s) { return s && s.indexOf('MAN-') < 0; });   // sin chasis aun -> no busca
   var cruce = {};
-  if (compradoVins.length) {
+  if (cruceSeries.length) {
     var h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
     var ovGet = function (path) { var res = UrlFetchApp.fetch(OVERSOFT_URL + path, h); return res.getResponseCode() < 300 ? JSON.parse(res.getContentText()) : []; };
     var rawu = [];
-    for (var i = 0; i < compradoVins.length; i += 60) {
-      var lote = compradoVins.slice(i, i + 60).map(function (s) { return '"' + s + '"'; }).join(',');
-      rawu = rawu.concat(ovGet('/unidades?select=serie,vin,modelo,color,fechaderecepcion,preventa&vin=in.(' + encodeURIComponent(lote) + ')'));
+    for (var i = 0; i < cruceSeries.length; i += 60) {
+      var lote = cruceSeries.slice(i, i + 60).map(function (s) { return '"' + s + '"'; }).join(',');
+      rawu = rawu.concat(ovGet('/unidades?select=serie,vin,modelo,color,fechaderecepcion,preventa&serie=in.(' + encodeURIComponent(lote) + ')'));
     }
-    // mapas modelo (codigodecompra -> descripcion) y color (colorid -> descripcion)
-    var descOvs = {}, off = 0;
+    // mapas modelo (codigodecompra -> descripcion) y color (colorid -> descripcion).
+    // descOvsBase: codigo SIN el sufijo de modelo-year -> descripcion (la ultima =
+    // el MY mas nuevo, por venir ordenado por modeloid). Sirve de fallback cuando la
+    // unidad trae un MY todavia NO catalogado (ej. "5URTT4 MY27") para mostrar igual
+    // el nombre del modelo en vez del codigo pelado.
+    var descOvs = {}, descOvsBase = {}, off = 0;
     for (var k = 0; k < 12; k++) {
       var ch = ovGet('/modelos?select=codigodecompra,descripcionoperativa&order=modeloid&limit=1000&offset=' + off);
-      for (var j = 0; j < ch.length; j++) if (ch[j].codigodecompra) descOvs[String(ch[j].codigodecompra).trim()] = ch[j].descripcionoperativa;
+      for (var j = 0; j < ch.length; j++) if (ch[j].codigodecompra) {
+        var cc = String(ch[j].codigodecompra).trim();
+        descOvs[cc] = ch[j].descripcionoperativa;
+        descOvsBase[_baseCod(cc)] = ch[j].descripcionoperativa;
+      }
       if (ch.length < 1000) break; off += 1000;
     }
     var colOvs = {};
     ovGet('/colores?select=colorid,descripcion&limit=2000').forEach(function (c) { colOvs[c.colorid] = String(c.descripcion || '').trim(); });
     rawu.forEach(function (u) {
-      cruce[String(u.vin || '').toUpperCase()] = {
+      var codU = String(u.modelo || '').trim();
+      cruce[String(u.serie || '').toUpperCase().trim()] = {
         serie: String(u.serie || '').trim(),
+        vin: String(u.vin || '').trim(),
         fechaRecepcion: u.fechaderecepcion ? String(u.fechaderecepcion).slice(0, 10) : null,
         preventa: u.preventa ? String(u.preventa) : null,
-        modelo: descOvs[String(u.modelo || '').trim()] || String(u.modelo || ''),
+        codigo: codU,                                                   // codigo crudo Oversoft (para cruzar por codigo base)
+        modelo: descOvs[codU] || descOvsBase[_baseCod(codU)] || codU,   // nombre; fallback al MY mas nuevo del mismo codigo base
         color: colOvs[u.color] || ''
       };
     });
@@ -4087,7 +4133,8 @@ function getReparto() {
   rows.sort(function (a, b) { return (a.familia || '').localeCompare(b.familia || '') || (a.descripcion || '').localeCompare(b.descripcion || ''); });
   var now = Date.now();
   var items = rows.map(function (r) {
-    var ov = cruce[String(r.vin).toUpperCase()] || null;
+    var esManual = String(r.vin || '').toUpperCase().indexOf('MAN-') === 0;  // alta manual, sin chasis aun
+    var ov = esManual ? null : (cruce[String(r.vin).toUpperCase().slice(-8)] || null);
     var dias = r.comprado_at ? Math.floor((now - new Date(r.comprado_at).getTime()) / 86400000) : null;
     var mm = motorByNorm[_repartoNtrim(r.descripcion)];
     var nc = mm ? mm.nombreCorto : null;
@@ -4119,13 +4166,45 @@ function getReparto() {
       coloresStock: hayStock ? coloresStock : null,
       chasisStock: chasisStock,
       tieneAntiguedad: chasisStock.some(function (c) { return c.viejo; }),
-      enOversoft: !!ov, oversoft: ov, diasComprado: dias,
-      modeloMatch: ov ? (_repartoNtrim(ov.modelo) === _repartoNtrim(r.descripcion) || incl(ov.modelo, r.descripcion)) : null,
+      enOversoft: !!ov, oversoft: ov, diasComprado: dias, manual: esManual,
+      // coincide si el codigo base de Oversoft == el modelo_codigo del reparto (lo
+      // mas confiable, aguanta MY nuevos sin catalogar), o si los nombres matchean.
+      modeloMatch: ov ? (
+        (r.modelo_codigo && ov.codigo && _baseCod(ov.codigo) === _baseCod(r.modelo_codigo))
+        || _repartoNtrim(ov.modelo) === _repartoNtrim(r.descripcion)
+        || incl(ov.modelo, r.descripcion)
+      ) : null,
       colorMatch: ov ? incl(ov.color, colorNom) : null,
-      alerta: r.estado_compra === 'comprado' && !ov && dias !== null && dias >= 2
+      chasisMatch: ov ? (String(ov.serie || '').toUpperCase() === String(r.vin || '').toUpperCase().slice(-8)) : null,
+      // manual sin chasis: ni alerta ni "esperando" — falta que Valeria cargue el chasis
+      alerta: r.estado_compra === 'comprado' && !esManual && !ov && dias !== null && dias >= 2
     });
   });
-  return { periodo: periodo, items: items, colores: colores, rotacion: _repartoRotacion(motor, virt) };
+
+  // AUTO-OK: las compradas que coinciden en TODO con Oversoft (modelo + color +
+  // chasis) se confirman SOLAS — sin que Fer toque OK. Las que tienen alguna
+  // diferencia (⚠) quedan en "Comprado · a conciliar" para revisión manual. Se
+  // corre cada vez que se abre el reparto (idempotente: si ya está ok, no entra).
+  var autoVins = items.filter(function (it) {
+    return it.estado_compra === 'comprado' && it.enOversoft &&
+      it.modeloMatch === true && it.colorMatch === true && it.chasisMatch === true;
+  }).map(function (it) { return it.vin; });
+  if (autoVins.length) {
+    try {
+      UrlFetchApp.fetch(SUPA_URL + '/reparto_vw?vin=in.(' + _repartoInList(autoVins) + ')', {
+        method: 'patch', headers: Object.assign(_repartoWHeaders(), { Prefer: 'return=minimal' }),
+        payload: JSON.stringify({ estado_compra: 'ok' }), muteHttpExceptions: true });
+      var serAuto = autoVins.map(function (v) { return _serieDeVin(v); });
+      var hhA = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
+      UrlFetchApp.fetch(SUPA_URL + '/compras_vw?serie=in.(' + _repartoInList(serAuto) + ')', {
+        method: 'patch', headers: hhA, payload: JSON.stringify({ conciliado: true }), muteHttpExceptions: true });
+      try { _cacheDrop('comprasvw'); } catch (e) {}
+      // reflejar en la respuesta: ya pasan a 'ok' (sección Confirmados)
+      items.forEach(function (it) { if (autoVins.indexOf(it.vin) >= 0) it.estado_compra = 'ok'; });
+    } catch (e) {}
+  }
+
+  return { periodo: periodo, items: items, colores: colores, rotacion: _repartoRotacion(motor, virt), autoConciliadas: autoVins.length };
 }
 
 // =======================================================================
