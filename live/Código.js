@@ -2397,9 +2397,14 @@ function _cachedBig(key, ttlSec, fresh, fn) {
 // Cubre el Resumen completo (stock Oversoft + ventas + patentamientos + compras) +
 // las solapas pesadas. ~30-40s por corrida.
 function precalentarCache() {
-  // Endpoints grandes (>100KB) → cache chunked. admventas ~490KB, comprasvw ~300KB,
-  // ventasv2 ~112KB: con _cached el put fallaba en silencio y NO cacheaban nunca.
-  const big = [['comprasvw', getComprasVW], ['ventasv2', getVentasV2], ['admventas', getAdmVentas]];
+  // Endpoints grandes (>100KB) → cache chunked. comprasvw ~300KB, ventasv2 ~112KB:
+  // con _cached el put fallaba en silencio y NO cacheaban nunca.
+  // admventas (~490KB, ~40 fetches a la réplica, ~45s) se calienta en SU PROPIO
+  // trigger (precalentarAdmVentas): iba ÚLTIMO acá y, sumado a comprasvw+ventasv2,
+  // se pasaba del límite de ~6' del trigger → no llegaba a cachear → el usuario caía
+  // al camino frío de 45s ("Adm. ventas a veces no carga"). Separado, cada trigger
+  // tiene margen de sobra y admventas queda siempre tibio.
+  const big = [['comprasvw', getComprasVW], ['ventasv2', getVentasV2]];
   big.forEach(function (j) {
     try { _cachedBig(j[0], CACHE_TTL_WARM, true, j[1]); }
     catch (e) { Logger.log('precalentar ' + j[0] + ': ' + e); }
@@ -2417,14 +2422,24 @@ function precalentarCache() {
   try { getOversoft({ tabla: 'unidades', qs: OVS_STOCK_QS, fresh: '1' }); }
   catch (e) { Logger.log('precalentar oversoft unidades: ' + e); }
 }
-// Correr UNA vez a mano desde el editor para instalar el trigger de 10 min.
+// admventas es el endpoint más pesado (~490KB, ~45s): trigger propio de 10' para que
+// no compita por el límite de ejecución con comprasvw/ventasv2 y quede siempre tibio.
+function precalentarAdmVentas() {
+  try { _cachedBig('admventas', CACHE_TTL_WARM, true, getAdmVentas); }
+  catch (e) { Logger.log('precalentar admventas: ' + e); }
+}
+// Correr UNA vez a mano desde el editor (o ?tipo=instalarprecalentado) para instalar
+// los triggers de 10 min: uno general (stock/ventas/compras/patent) y otro para adm.
 function instalarPrecalentado() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
-    if (t.getHandlerFunction() === 'precalentarCache') ScriptApp.deleteTrigger(t);
+    var fn = t.getHandlerFunction();
+    if (fn === 'precalentarCache' || fn === 'precalentarAdmVentas') ScriptApp.deleteTrigger(t);
   });
   ScriptApp.newTrigger('precalentarCache').timeBased().everyMinutes(10).create();
-  precalentarCache();  // calentar ya mismo
-  return 'Trigger de 10 min instalado + cache precalentado (stock+ventas+patent+compras+adm).';
+  ScriptApp.newTrigger('precalentarAdmVentas').timeBased().everyMinutes(10).create();
+  precalentarCache();        // calentar ya mismo
+  precalentarAdmVentas();    // admventas en su propio paso
+  return 'Triggers de 10 min instalados (cache general + admventas aparte) + cache precalentado.';
 }
 
 // Devuelve TODAS las filas de la hoja ventas sin filtrar (excepto vacías
