@@ -770,6 +770,9 @@ const GASTO_NOMBRES = {
   212: '20- Sellado de Prenda', 210: '21- Gastos de Financiación',
   156: '23- Gastos de Unidad Usada', 546: '32- Garantía Extendida',
   569: '33- TAG TelePASE',
+  // Verificado contra el lado emitido (comprobantesdetallesgastos): el importe de
+  // gastoxprevta 468 = "A. Costo Unidad" gravado × 1,21 (ej. PV 06943/3 100090,91×1,21=121110).
+  468: 'A. Costo Unidad',
 };
 
 function getConciliacionGastos(params) {
