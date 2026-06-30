@@ -2585,7 +2585,12 @@ async function loadVentasOv(forzar) {
     ventasOvData = await res.json();
     setOvsSync(ventasOvData.syncOversoft);   // aprovecha el sello que ya trae ventasv2
     if (!ventasOvMes && ventasOvData.mesActual) ventasOvMes = ventasOvData.mesActual;
-    await loadGastosMap(forzar);             // gasto real por PV (desglose clickeable), se refresca con el botón
+    // Gasto real por PV (desglose clickeable). OJO: gastosmap es pesado y se
+    // rate-limitea con fresh=1; el auto-refresh del Resumen llama loadVentasOv(true)
+    // en loop, así que solo forzamos gastos en el refresh MANUAL estando en Ventas.
+    // Si no, usamos la cache del server (TTL) — nada de spamear fresh=1.
+    const _ventasActiva = document.querySelector('.tab.active')?.dataset.tab === 'ventasov';
+    await loadGastosMap(forzar && _ventasActiva);
     renderVentasOv();
   } catch (e) {
     if (cont) cont.innerHTML = '<div class="empty">Error: ' + escapeHtml(e.message) + '</div>';
@@ -4185,13 +4190,19 @@ function _pvKey(pv) {
   return (p[0].replace(/^0+/, '') || '0') + (p[1] ? '/' + p[1] : '');
 }
 async function loadGastosMap(forzar) {
-  if (gastosMapData && !forzar) return gastosMapData;
+  // Solo damos por buena (y cacheamos) una respuesta CON gastos. Un mapa vacío
+  // (rate-limit / Oversoft resincronizando / error) NO se cachea: así la próxima
+  // carga reintenta en vez de quedar "sin gastos" pegado toda la sesión.
+  const tieneDatos = gastosMapData && gastosMapData.gastos && Object.keys(gastosMapData.gastos).length > 0;
+  if (tieneDatos && !forzar) return gastosMapData;
   try {
     const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=gastosmap' + (forzar ? '&fresh=1' : '');
     const res = await fetch(url);
-    gastosMapData = await res.json();
-  } catch (e) { gastosMapData = { gastos: {} }; }
-  return gastosMapData;
+    const data = await res.json();
+    if (data && data.gastos && Object.keys(data.gastos).length > 0) gastosMapData = data;   // bueno → cachea
+    else if (!tieneDatos) gastosMapData = data || { gastos: {} };                            // vacío y no tenía nada → muestra vacío pero sin pisar uno bueno
+  } catch (e) { if (!tieneDatos) gastosMapData = gastosMapData || { gastos: {} }; }
+  return gastosMapData || { gastos: {} };
 }
 function _gastoDe(pv) {
   const m = (gastosMapData && gastosMapData.gastos) || {};
