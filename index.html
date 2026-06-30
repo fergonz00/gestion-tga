@@ -1204,6 +1204,12 @@ table.patent-tbl.resumida .col-extra { display: none; }
 .reparto-concil { font-size: 11px; color: var(--vw-grey-4); margin-top: 4px; line-height: 1.5; }
 .reparto-concil .ok { color: #1a7f37; font-weight: 600; }
 .reparto-concil .warn { color: #b00020; font-weight: 600; }
+.reparto-cc-row { display: grid; grid-template-columns: 52px 1fr; gap: 2px 6px; margin-top: 3px; }
+.reparto-cc-lbl { font-weight: 600; color: var(--vw-grey-5); align-self: start; }
+.reparto-cc-vals { display: flex; flex-direction: column; gap: 1px; }
+.reparto-cc-ped { color: var(--vw-grey-4); }
+.reparto-cc-ped b, .reparto-cc-ov b { font-weight: 600; color: var(--vw-grey-5); }
+.reparto-cc-ov { color: var(--vw-grey-5); }
 .reparto-barra-inner span { flex: 1; font-size: 14px; }
 .reparto-comprar { background: var(--vw-blue) !important; color: #fff !important; white-space: nowrap; font-weight: 600; }
 .reparto-comprar:disabled { opacity: .4; cursor: not-allowed; }
@@ -4862,6 +4868,22 @@ function repartoElegidasSec(items) {
   return h;
 }
 
+// Fila de conciliación: muestra lado a lado lo PEDIDO (lo que figura en el reparto
+// de VW) y lo que cargó OVERSOFT, para poder leer a ojo si coincide — sin depender
+// solo del ✓/⚠ (que es match difuso). Si Oversoft no devuelve nombre, igual se ve
+// el del pedido.
+function _repConcilFila(label, pedido, oversoft, match) {
+  const ped = String(pedido || '').trim();
+  const ovs = String(oversoft || '').trim();
+  const flag = match ? '<span class="ok">✓ coincide</span>' : '<span class="warn">⚠ revisá</span>';
+  return '<div class="reparto-cc-row">'
+    + '<span class="reparto-cc-lbl">' + escapeHtml(label) + '</span>'
+    + '<span class="reparto-cc-vals">'
+    +   '<span class="reparto-cc-ped"><b>Pedido:</b> ' + escapeHtml(ped || '?') + '</span>'
+    +   '<span class="reparto-cc-ov"><b>Oversoft:</b> ' + escapeHtml(ovs || '?') + ' ' + flag + '</span>'
+    + '</span></div>';
+}
+
 // Sección con las unidades marcadas "comprado" (a conciliar contra Oversoft).
 function repartoCompradoSec(items) {
   const comp = (items || []).filter(i => i.estado_compra === 'comprado');
@@ -4887,9 +4909,11 @@ function repartoCompradoSec(items) {
     else if (it.alerta) conc = '<span class="reparto-est-alerta">⚠ comprado hace ' + it.diasComprado + 'd · sin aparecer en Oversoft</span>';
     else if (it.enOversoft) {
       conc = '<span class="reparto-est-ok">✓ en Oversoft' + (ov.serie ? ' · serie ' + escapeHtml(ov.serie) : '') + (ov.fechaRecepcion ? ' · ' + ov.fechaRecepcion : '') + '</span>';
-      conc += '<div class="reparto-concil">Modelo: ' + escapeHtml(ov.modelo || '?') + ' ' + (it.modeloMatch ? '<span class="ok">✓ coincide</span>' : '<span class="warn">⚠ revisá</span>')
-        + '<br>Color: ' + escapeHtml(ov.color || '?') + ' ' + (it.colorMatch ? '<span class="ok">✓ coincide</span>' : '<span class="warn">⚠ revisá</span>')
-        + '<br>Chasis: ' + escapeHtml(ov.serie || '?') + ' ' + (it.chasisMatch ? '<span class="ok">✓ coincide</span>' : '<span class="warn">⚠ revisá</span>') + '</div>';
+      conc += '<div class="reparto-concil">'
+        + _repConcilFila('Modelo', (it.descripcion || '').replace(/^VW /, ''), ov.modelo, it.modeloMatch)
+        + _repConcilFila('Color', it.color_nombre, ov.color, it.colorMatch)
+        + _repConcilFila('Chasis', String(it.vin || '').toUpperCase().slice(-8), ov.serie, it.chasisMatch)
+        + '</div>';
     } else conc = '<span class="reparto-est-wait">esperando Oversoft' + (it.diasComprado != null ? ' (' + it.diasComprado + 'd)' : '') + '</span>';
     h += '<td>' + conc + '</td>';
     let acc = '<div class="reparto-acc">';
@@ -4963,8 +4987,8 @@ function repartoFiltrar() {
       const ov = it.oversoft || {};
       estado = '<span class="reparto-est-ok">✓ en Oversoft' + (ov.serie ? ' · serie ' + escapeHtml(ov.serie) : '') + (ov.fechaRecepcion ? ' · ' + ov.fechaRecepcion : '') + '</span>';
       estado += '<div class="reparto-concil">';
-      estado += 'Modelo: ' + escapeHtml(ov.modelo || '?') + ' ' + (it.modeloMatch ? '<span class="ok">✓ coincide</span>' : '<span class="warn">⚠ revisá</span>');
-      estado += '<br>Color: ' + escapeHtml(ov.color || '?') + ' ' + (it.colorMatch ? '<span class="ok">✓ coincide</span>' : '<span class="warn">⚠ revisá</span>');
+      estado += _repConcilFila('Modelo', (it.descripcion || '').replace(/^VW /, ''), ov.modelo, it.modeloMatch);
+      estado += _repConcilFila('Color', it.color_nombre, ov.color, it.colorMatch);
       estado += '</div>';
     }
     else estado = '<span class="reparto-est-wait">comprado · esperando Oversoft' + (it.diasComprado != null ? ' (' + it.diasComprado + 'd)' : '') + '</span>';
