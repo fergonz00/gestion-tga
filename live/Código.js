@@ -4134,13 +4134,15 @@ function getReparto() {
     ovGet('/colores?select=colorid,descripcion&limit=2000').forEach(function (c) { colOvs[c.colorid] = String(c.descripcion || '').trim(); });
     rawu.forEach(function (u) {
       var codU = String(u.modelo || '').trim();
+      var nombreOv = descOvs[codU] || descOvsBase[_baseCod(codU)] || '';  // '' = el codigo NO esta en el catalogo
       cruce[String(u.serie || '').toUpperCase().trim()] = {
         serie: String(u.serie || '').trim(),
         vin: String(u.vin || '').trim(),
         fechaRecepcion: u.fechaderecepcion ? String(u.fechaderecepcion).slice(0, 10) : null,
         preventa: u.preventa ? String(u.preventa) : null,
-        codigo: codU,                                                   // codigo crudo Oversoft (para cruzar por codigo base)
-        modelo: descOvs[codU] || descOvsBase[_baseCod(codU)] || codU,   // nombre; fallback al MY mas nuevo del mismo codigo base
+        codigo: codU,                          // codigo crudo Oversoft (para cruzar por codigo base)
+        modelo: nombreOv || codU,              // nombre; si no resuelve queda el codigo (se reemplaza luego por el Pedido)
+        modeloResuelto: !!nombreOv,            // false = trim/MY nuevo sin catalogar
         color: colOvs[u.color] || ''
       };
     });
@@ -4178,6 +4180,14 @@ function getReparto() {
     });
     coloresStock.sort(function (a, b) { return b.stock - a.stock || String(a.color).localeCompare(String(b.color)); });
     var hayStock = !!mm || vAdd > 0 || coloresStock.length > 0;
+    // Nombre de Oversoft para mostrar/conciliar: si el codigo NO esta catalogado
+    // (trim/MY nuevo, ej "CH21R4 MY27"), NUNCA mostramos el codigo pelado. El chasis
+    // ya identifica la MISMA unidad fisica → el modelo es el del Pedido (mail de VW).
+    var chasisMatch = ov ? (String(ov.serie || '').toUpperCase() === String(r.vin || '').toUpperCase().slice(-8)) : null;
+    if (ov && ov.modeloResuelto === false) {
+      if (chasisMatch && r.descripcion) ov.modelo = String(r.descripcion).trim();
+      else if (r.familia) ov.modelo = String(r.familia).trim();
+    }
     return Object.assign({}, r, {
       color_nombre: colorNom,
       ventasPorMes: mm ? mm.ventasPorMes : null,
@@ -4194,7 +4204,7 @@ function getReparto() {
         || incl(ov.modelo, r.descripcion)
       ) : null,
       colorMatch: ov ? incl(ov.color, colorNom) : null,
-      chasisMatch: ov ? (String(ov.serie || '').toUpperCase() === String(r.vin || '').toUpperCase().slice(-8)) : null,
+      chasisMatch: chasisMatch,
       // manual sin chasis: ni alerta ni "esperando" — falta que Valeria cargue el chasis
       alerta: r.estado_compra === 'comprado' && !esManual && !ov && dias !== null && dias >= 2
     });
