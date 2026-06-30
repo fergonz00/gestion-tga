@@ -1505,9 +1505,13 @@ function getComprasVW() {
   const out = rows.map(r => {
     const u = uni[String(r.serie || '').trim()];
     const enOversoft = !!u;
-    const modeloOversoft = u ? (desc[String(u.modelo || '').trim()] || String(u.modelo || '')) : '';
+    const ovDesc = u ? (desc[String(u.modelo || '').trim()] || '') : '';   // nombre del catalogo; '' si el codigo de modelo no esta catalogado (ej MY nuevo)
+    const modeloOversoft = u ? (ovDesc || String(u.modelo || '')) : '';
     const conc = (r.conciliado === true);
-    const modeloOficial = (conc && modeloOversoft) ? modeloOversoft : String(r.modelo_valeria || '');
+    // Oficial: si esta conciliada Y Oversoft resolvio el codigo a nombre real, ese; si el codigo
+    // no esta en el catalogo (ej BZ4ET4/5URTT4 de MY nuevos), cae al nombre que cargo Valeria
+    // en vez de mostrar el codigo crudo.
+    const modeloOficial = (conc && ovDesc) ? ovDesc : (String(r.modelo_valeria || '') || modeloOversoft);
     const imp = _impuestosCompra(r.neto, modeloOficial, r);
     let estado = 'cargada';
     if (enOversoft && conc) estado = 'conciliada';
