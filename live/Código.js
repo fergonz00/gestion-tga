@@ -83,6 +83,7 @@ function doGet(e) {
     if (tipo === 'snapshotbt')      return jsonResponse(snapshotBTMensual(String(params.mes || '') || null, String(params.hoja || '') || null, String(params.dry || '') === '1', true)); // sync MANUAL de la BT a Supabase (force=true; el automático está apagado)
     if (tipo === 'admventas')       return jsonResponse(_cachedBig('admventas', CACHE_TTL_WARM, fresh, getAdmVentas)); // adm de ventas (~490KB): cache chunked + precalentado. Oversoft + campos manuales
     if (tipo === 'conciliagastos')  return jsonResponse(_cached('conciliagastos_' + (params.mes || ''), CACHE_TTL_SEC, fresh, () => getConciliacionGastos(params))); // gastos reales por PV + conciliación (sellado/quebranto/faltantes)
+    if (tipo === 'facturacion')     return jsonResponse(_cached('facturacion_' + (params.mes || ''), CACHE_TTL_SEC, fresh, () => getFacturas(params))); // triángulo factura VW (facturas_vw) vs Oversoft vs compras_vw vs reparto
     if (tipo === 'gastosmap')       return jsonResponse(_cached('gastosmap', CACHE_TTL_SEC, fresh, getGastosMap)); // mapa pv→gasto (total+desglose+líneas) de TODOS los meses con control; lo consumen Ventas y Adm.ventas
     if (tipo === 'migraradmventas') return jsonResponse(migrarAdmVentasDesdeHoja()); // una-vez: vuelca lo ya cargado en la hoja a adm_ventas
     if (tipo === 'comprasvw')       return jsonResponse(_cachedBig('comprasvw', CACHE_TTL_WARM, fresh, getComprasVW)); // compras a VW (>100KB) → cache chunked + precalentado
@@ -4234,6 +4235,105 @@ function getReparto() {
   }
 
   return { periodo: periodo, items: items, colores: colores, rotacion: _repartoRotacion(motor, virt), autoConciliadas: autoVins.length };
+}
+
+// =======================================================================
+// FACTURACIÓN — triángulo Reparto(pedido) ↔ Factura VW(facturado) ↔ Oversoft(cargado)
+// Lee facturas_vw (PDF de unidades de VW parseados, los sube el script de la PC del
+// sync: C:\proyectos\facturas-vw\cargar_facturas.py) y por cada factura del mes cruza
+// con Oversoft (lo cargado), compras_vw (lo que cargó Valeria) y reparto_vw (lo
+// pedido). Marca: SIN CARGAR (facturada, no en Oversoft), ERROR (descuadre de modelo/
+// color o falta en Compras), u OK (en Oversoft + coincide + en Compras + en reparto).
+// =======================================================================
+function getFacturas(params) {
+  var mes = String((params && params.mes) || '').trim();
+  if (!/^[a-zñ]+-\d{2}$/.test(mes)) mes = _mesNombrePeriodo(_yyyyMm(new Date()));
+  // facturas_vw tiene RLS → leer con service key (_repartoRead), no anon (_supaGet)
+  var fact = _repartoRead('/facturas_vw?select=*&mes=eq.' + encodeURIComponent(mes) + '&order=fecha.desc') || [];
+  var mesesSet = {};
+  (_repartoRead('/facturas_vw?select=mes') || []).forEach(function (r) { if (r.mes) mesesSet[r.mes] = true; });
+
+  var series = fact.map(function (f) { return String(f.serie || '').trim(); }).filter(Boolean);
+  var h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
+  var ovGet = function (path) { var r = UrlFetchApp.fetch(OVERSOFT_URL + path, h); return r.getResponseCode() < 300 ? JSON.parse(r.getContentText()) : []; };
+
+  var uni = {};
+  for (var i = 0; i < series.length; i += 60) {
+    var lote = series.slice(i, i + 60).map(function (s) { return '"' + s + '"'; }).join(',');
+    ovGet('/unidades?select=serie,modelo,color,fechaderecepcion,preventa&serie=in.(' + encodeURIComponent(lote) + ')').forEach(function (u) { uni[String(u.serie).trim()] = u; });
+  }
+  var descOvs = {}, descOvsBase = {}, off = 0;
+  if (series.length) for (var k = 0; k < 12; k++) {
+    var ch = ovGet('/modelos?select=codigodecompra,descripcionoperativa&order=modeloid&limit=1000&offset=' + off);
+    for (var j = 0; j < ch.length; j++) if (ch[j].codigodecompra) {
+      var cc = String(ch[j].codigodecompra).trim();
+      descOvs[cc] = ch[j].descripcionoperativa; descOvsBase[_baseCod(cc)] = ch[j].descripcionoperativa;
+    }
+    if (ch.length < 1000) break; off += 1000;
+  }
+  var colOvs = {};
+  if (series.length) ovGet('/colores?select=colorid,descripcion&limit=2000').forEach(function (c) { colOvs[c.colorid] = String(c.descripcion || '').trim(); });
+
+  var compById = {};
+  (_supaGet('/compras_vw?select=serie,modelo_valeria,color,conciliado') || []).forEach(function (c) { compById[String(c.serie || '').trim().toUpperCase()] = c; });
+  var repById = {};
+  (_repartoRead('/reparto_vw?select=vin,descripcion,modelo_codigo,color_codigo,estado_compra') || []).forEach(function (r) { repById[String(r.vin || '').toUpperCase().slice(-8)] = r; });
+
+  var colNorm = function (s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, ''); };
+  // Igualdad de código tolerante: Oversoft a veces agrega una variante (" B") al
+  // código base que la factura no trae (ej factura "AGDD8A" vs Oversoft "AGDD8A B").
+  // Como además el chasis YA identifica la misma unidad, basta que el más corto sea
+  // prefijo del más largo (mín 4 chars) para considerarlo el mismo modelo.
+  var _codEq = function (a, b) {
+    a = String(a || '').replace(/\s+/g, ''); b = String(b || '').replace(/\s+/g, '');
+    if (!a || !b) return false;
+    if (a === b) return true;
+    var sh = a.length <= b.length ? a : b, lo = a.length <= b.length ? b : a;
+    return sh.length >= 4 && lo.indexOf(sh) === 0;
+  };
+  var nErr = 0, nSinCargar = 0, nOk = 0;
+
+  var filas = fact.map(function (f) {
+    var s = String(f.serie || '').trim().toUpperCase();
+    var u = uni[s] || null;
+    var enOversoft = !!u;
+    var fBase = _baseCod(f.codigo_vw);
+    var ovBase = u ? _baseCod(u.modelo) : '';
+    var ovColor = u ? (colOvs[u.color] || '') : '';
+    var c = compById[s] || null, r = repById[s] || null;
+    // nombre del modelo (NUNCA el código): catálogo por código/base, si no compra/reparto
+    var nombre = descOvs[String(f.codigo_vw || '').trim()] || descOvsBase[fBase] || '';
+    if (!nombre) nombre = (c && c.modelo_valeria) || (r && r.descripcion ? 'VW ' + r.descripcion : '') || f.descripcion || f.codigo_vw || '';
+
+    var modeloMatch = enOversoft ? _codEq(fBase, ovBase) : null;
+    var fw = colNorm(String(f.color || '').split(' ')[0]);
+    var colorMatch = enOversoft ? (colNorm(f.color) === colNorm(ovColor) || (!!fw && colNorm(ovColor).indexOf(fw) >= 0) || (!!colNorm(f.color) && colNorm(ovColor).indexOf(colNorm(f.color)) >= 0)) : null;
+
+    var problemas = [];
+    if (enOversoft && modeloMatch === false) problemas.push('Modelo: factura ' + (f.codigo_vw || '?') + ' vs Oversoft ' + (u.modelo || '?'));
+    if (enOversoft && colorMatch === false) problemas.push('Color: factura "' + (f.color || '?') + '" vs Oversoft "' + ovColor + '"');
+    if (enOversoft && !c) problemas.push('No esta en Compras VW (Valeria no la cargo)');
+
+    var estado;
+    if (!enOversoft) { estado = 'sin_cargar'; nSinCargar++; }
+    else if (problemas.length) { estado = 'error'; nErr++; }
+    else { estado = 'ok'; nOk++; }
+
+    return {
+      serie: s, fc: f.fc_numero, fecha: f.fecha, codigoVW: f.codigo_vw, my: f.my,
+      modelo: nombre, colorFactura: f.color,
+      enOversoft: enOversoft, modeloOversoft: u ? u.modelo : '', colorOversoft: ovColor,
+      modeloMatch: modeloMatch, colorMatch: colorMatch,
+      enCompra: !!c, compraConciliada: !!(c && c.conciliado),
+      enReparto: !!r, estadoReparto: r ? r.estado_compra : '', sinReparto: !r,
+      problemas: problemas, estado: estado,
+    };
+  });
+
+  return {
+    mes: mes, meses: Object.keys(mesesSet).sort(), filas: filas, total: filas.length,
+    errores: nErr, sinCargar: nSinCargar, ok: nOk, updatedAt: new Date().toISOString(),
+  };
 }
 
 // =======================================================================

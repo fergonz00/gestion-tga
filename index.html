@@ -1455,13 +1455,31 @@ table.patent-tbl.resumida .col-extra { display: none; }
 
     <!-- =================== REPARTO (objetivo de compra vs comprado por mes) =================== -->
     <section class="panel" id="panelReparto">
-      <div class="toolbar">
-        <div class="updated" id="updatedAtReparto">Objetivo de compra a VW por mes vs lo comprado. Comprado = facturado por VW + lo marcado en el reparto de precios que todavía no entró a Oversoft (cuando entra, ya lo cuenta la factura).</div>
-        <div class="actions">
-          <button class="refresh" onclick="loadReparto(true)">Actualizar</button>
-        </div>
+      <div class="subtabs">
+        <button class="subtab active" data-rsub="reparto"     onclick="setRepartoSub('reparto')">Reparto</button>
+        <button class="subtab"        data-rsub="facturacion" onclick="setRepartoSub('facturacion')">Facturación<span id="facturacionBadge"></span></button>
       </div>
-      <div id="repartoContent"><div class="empty">Cargando…</div></div>
+
+      <div class="subpanel active" id="subpanelReparto">
+        <div class="toolbar">
+          <div class="updated" id="updatedAtReparto">Objetivo de compra a VW por mes vs lo comprado. Comprado = facturado por VW + lo marcado en el reparto de precios que todavía no entró a Oversoft (cuando entra, ya lo cuenta la factura).</div>
+          <div class="actions">
+            <button class="refresh" onclick="loadReparto(true)">Actualizar</button>
+          </div>
+        </div>
+        <div id="repartoContent"><div class="empty">Cargando…</div></div>
+      </div>
+
+      <div class="subpanel" id="subpanelFacturacion">
+        <div class="toolbar">
+          <div class="updated" id="updatedAtFacturacion">Control de facturas de VW (lo facturado) cruzado con Oversoft (lo cargado), Compras VW (Valeria) y el reparto (lo pedido). Detecta facturas sin cargar, descuadres de modelo/color y unidades que Valeria no cargó.</div>
+          <div class="actions">
+            <select id="facturacionMes" onchange="loadFacturacion(true)" style="padding:6px 10px;border:1px solid var(--vw-grey-2);border-radius:8px;font-size:13px"></select>
+            <button class="refresh" onclick="loadFacturacion(true)">Actualizar</button>
+          </div>
+        </div>
+        <div id="facturacionContent"><div class="empty">Cargando…</div></div>
+      </div>
     </section>
 
     <!-- Compras VW y Flujo financiero se sacaron de Gestión: ahora viven en la
@@ -3888,7 +3906,7 @@ function setTab(tab) {
   if (tab === 'precioslista'   && !preciosListaData) loadPreciosLista(false);
   if (tab === 'incentivos'     && !incentivosData) loadIncentivos(false);
   if (tab === 'admventas'      && !admVentasData)  loadAdmVentas(false);
-  if (tab === 'reparto')                           loadReparto(false);
+  if (tab === 'reparto')                         { loadReparto(false); if (!facturacionData) loadFacturacion(false); }
   if (tab === 'industria') {
     // Industria depende de patentData para contar TGA patentadas
     if (!patentData) loadPatentamientos(false);
@@ -3911,6 +3929,91 @@ function setAdmSubtab(name) {
     else             renderTrimestre();          // loadPatentamientos pinta Trimestre.
   }
   if (name === 'financiaciones') loadAdmFinanciaciones(false);
+}
+
+// ===================== FACTURACIÓN (sub-tab de Reparto) =====================
+// Triángulo: Factura VW (facturas_vw) ↔ Oversoft (cargado) ↔ Compras VW (Valeria) ↔
+// reparto (pedido). Backend tipo=facturacion. Avisa facturas sin cargar, descuadres
+// de modelo/color y unidades que Valeria no cargó.
+let facturacionData = null, facturacionMesSel = '', facturacionFiltro = 'todas';
+function setRepartoSub(name) {
+  document.querySelectorAll('#panelReparto .subtab').forEach(b => b.classList.toggle('active', b.dataset.rsub === name));
+  document.getElementById('subpanelReparto').classList.toggle('active', name === 'reparto');
+  document.getElementById('subpanelFacturacion').classList.toggle('active', name === 'facturacion');
+  if (name === 'facturacion' && !facturacionData) loadFacturacion(false);
+}
+async function loadFacturacion(forzar) {
+  const cont = document.getElementById('facturacionContent');
+  if (cont && !facturacionData) cont.innerHTML = '<div class="empty">Cargando facturas (Oversoft)…</div>';
+  const sel = document.getElementById('facturacionMes');
+  const mes = (sel && sel.value) || facturacionMesSel || '';
+  try {
+    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=facturacion' + (mes ? '&mes=' + encodeURIComponent(mes) : '') + (forzar ? '&fresh=1' : '');
+    const res = await fetch(url);
+    const d = await res.json();
+    if (d && !d.error) { facturacionData = d; facturacionMesSel = d.mes; }
+  } catch (e) { console.error('loadFacturacion:', e); }
+  renderFacturacion();
+}
+function _facMesLabel(m) {
+  const p = String(m || '').split('-'); if (p.length < 2) return m;
+  return p[0].charAt(0).toUpperCase() + p[0].slice(1) + ' 20' + p[1];
+}
+function _facBadge() {
+  const b = document.getElementById('facturacionBadge'); if (!b) return;
+  const n = facturacionData ? (facturacionData.errores || 0) + (facturacionData.sinCargar || 0) : 0;
+  b.innerHTML = n ? ' <span style="background:#c0392b;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700">' + n + '</span>' : '';
+}
+function renderFacturacion() {
+  const cont = document.getElementById('facturacionContent'); if (!cont) return;
+  const d = facturacionData;
+  if (!d || !Array.isArray(d.filas)) { cont.innerHTML = '<div class="empty">Sin datos.</div>'; return; }
+  const sel = document.getElementById('facturacionMes');
+  if (sel && d.meses) sel.innerHTML = d.meses.slice().reverse().map(m => '<option value="' + m + '"' + (m === d.mes ? ' selected' : '') + '>' + _facMesLabel(m) + '</option>').join('');
+  _facBadge();
+  const up = document.getElementById('updatedAtFacturacion');
+  if (up && d.updatedAt) up.textContent = 'Facturas de VW · ' + _facMesLabel(d.mes) + ' · ' + d.total + ' facturas · actualizado ' + new Date(d.updatedAt).toLocaleString('es-AR');
+  const card = (lbl, val, col) => '<div style="flex:1;min-width:115px;background:#fff;border:1px solid var(--vw-grey-2);border-radius:10px;padding:10px 14px"><div style="font-size:24px;font-weight:800;color:' + col + '">' + val + '</div><div style="font-size:12px;color:var(--vw-grey-3)">' + lbl + '</div></div>';
+  let html = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
+    + card('Facturas', d.total, 'var(--vw-grey-5)')
+    + card('✓ OK', d.ok, '#0a7a30')
+    + card('⚠ A revisar', d.errores, d.errores ? '#c0392b' : 'var(--vw-grey-4)')
+    + card('🟡 Sin cargar en Oversoft', d.sinCargar, d.sinCargar ? '#9a7d00' : 'var(--vw-grey-4)')
+    + '</div>';
+  const chip = (val, lbl) => '<button onclick="facturacionFiltro=\'' + val + '\';renderFacturacion()" style="padding:6px 12px;border:1px solid var(--vw-grey-2);border-radius:16px;cursor:pointer;font-size:13px;margin-right:6px;' + (facturacionFiltro === val ? 'background:var(--vw-blue);color:#fff;border-color:var(--vw-blue);font-weight:700' : 'background:#fff;color:var(--vw-grey-3)') + '">' + lbl + '</button>';
+  html += '<div style="margin-bottom:10px">' + chip('todas', 'Todas') + chip('error', '⚠ A revisar') + chip('sincargar', '🟡 Sin cargar') + chip('ok', '✓ OK') + '</div>';
+  let rows = d.filas.slice();
+  if (facturacionFiltro === 'error') rows = rows.filter(f => f.estado === 'error');
+  else if (facturacionFiltro === 'sincargar') rows = rows.filter(f => f.estado === 'sin_cargar');
+  else if (facturacionFiltro === 'ok') rows = rows.filter(f => f.estado === 'ok');
+  const ord = { error: 0, sin_cargar: 1, ok: 2 };
+  rows.sort((a, b) => (ord[a.estado] - ord[b.estado]) || String(a.serie).localeCompare(String(b.serie)));
+  html += '<div style="overflow-x:auto"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:13px">';
+  html += '<thead><tr style="text-align:left;border-bottom:2px solid var(--vw-grey-2)"><th style="padding:6px">Estado</th><th>Serie</th><th>FC</th><th>Modelo</th><th>Color</th><th>Oversoft</th><th>Valeria</th><th>Reparto</th><th>Detalle</th></tr></thead><tbody>';
+  if (!rows.length) html += '<tr><td colspan="9" class="empty">Sin facturas para ese filtro.</td></tr>';
+  for (const f of rows) {
+    const est = f.estado === 'error' ? '<span style="color:#c0392b;font-weight:700">⚠ revisar</span>'
+      : f.estado === 'sin_cargar' ? '<span style="color:#9a7d00;font-weight:700">🟡 sin cargar</span>'
+      : '<span style="color:#0a7a30;font-weight:700">✓ ok</span>';
+    const ov = f.enOversoft ? '✓' : '<span style="color:#9a7d00">—</span>';
+    const val = f.enCompra ? (f.compraConciliada ? '✓ conc.' : '✓') : '<span style="color:#c0392b;font-weight:700">✗</span>';
+    const rep = f.enReparto ? escapeHtml(f.estadoReparto || '✓') : '<span style="color:var(--vw-grey-3)">— directo</span>';
+    const det = (f.problemas && f.problemas.length) ? f.problemas.map(p => escapeHtml(p)).join('<br>') : '';
+    const bg = f.estado === 'error' ? 'background:#fdecea' : (f.estado === 'sin_cargar' ? 'background:#fff8e6' : '');
+    html += '<tr style="border-bottom:1px solid #eee;' + bg + '">'
+      + '<td data-label="Estado" style="padding:6px">' + est + '</td>'
+      + '<td data-label="Serie" style="font-family:monospace"><b>' + escapeHtml(f.serie) + '</b></td>'
+      + '<td data-label="FC">' + escapeHtml(f.fc || '') + '</td>'
+      + '<td data-label="Modelo">' + escapeHtml(f.modelo || '') + '</td>'
+      + '<td data-label="Color">' + escapeHtml(f.colorFactura || '') + '</td>'
+      + '<td data-label="Oversoft" style="text-align:center">' + ov + '</td>'
+      + '<td data-label="Valeria" style="text-align:center">' + val + '</td>'
+      + '<td data-label="Reparto">' + rep + '</td>'
+      + '<td data-label="Detalle" style="color:#c0392b;font-size:12px">' + det + '</td>'
+      + '</tr>';
+  }
+  html += '</tbody></table></div>';
+  cont.innerHTML = html;
 }
 
 // ===================== GASTOS / CONCILIACIÓN por PV =====================
