@@ -2701,7 +2701,15 @@ function renderVentasOv() {
     const _rv = reventasMap[_normPvKey(v.preventaNum)];
     let revBadge = '';
     if (_rv) {
-      const _rb = (label, est) => { const ok = est === 'confirmado'; return ' <span title="' + (ok ? 'Valeria confirmó cobrado — mover en Oversoft y anotar en comentario' : 'Pendiente de que Valeria confirme cobrado') + '" style="background:' + (ok ? '#0a7a30' : '#b9770e') + ';color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">' + label + (ok ? ' OK' : '') + '</span>'; };
+      // 3 estados: rojo=pendiente de cobro · ámbar=OK de Valeria (falta mover) · verde=completo (fuera de gastos + en comentarios)
+      const _rb = (label, est) => {
+        const c = est === 'cerrado' ? '#0a7a30' : (est === 'confirmado' ? '#d99200' : '#cc3300');
+        const t = est === 'cerrado' ? 'Completo: Valeria confirmó, salió de gastos y quedó anotado en comentarios'
+                : est === 'confirmado' ? 'Valeria confirmó cobrado — falta que lo muevas en Oversoft y lo anotes en el comentario'
+                : 'Pendiente de cobro: falta que Valeria confirme';
+        const suf = est === 'cerrado' ? ' ✓' : (est === 'confirmado' ? ' OK' : '');
+        return ' <span title="' + t + '" style="background:' + c + ';color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">' + label + suf + '</span>';
+      };
       if (_rv.fyf) revBadge += _rb('FyF', _rv.fyf);
       if (_rv.costoUnidad) revBadge += _rb('acc$', _rv.costoUnidad);
     }
