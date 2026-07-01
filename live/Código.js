@@ -581,7 +581,7 @@ function getAdmVentas() {
   const uids = Object.keys(uidSet);
   const unis = {};
   for (let i = 0; i < uids.length; i += 100) {
-    for (const u of get('/unidades?select=unidadid,serie,vin,patente,fechapatentamiento,fechaderecepcion,fechaprogramada,horaprogramada,entregada&unidadid=in.(' + uids.slice(i, i + 100).join(',') + ')')) unis[u.unidadid] = u;
+    for (const u of get('/unidades?select=unidadid,serie,vin,motor,certificado,patente,fechapatentamiento,fechaderecepcion,fechaprogramada,horaprogramada,entregada&unidadid=in.(' + uids.slice(i, i + 100).join(',') + ')')) unis[u.unidadid] = u;
   }
 
   // 3) vendedores y clientes (nombre + localidad, por CUIT)
@@ -680,6 +680,8 @@ function getAdmVentas() {
       vendedor: vend[p.vendedorid] || '',
       serie: String(u.serie || '').trim(),
       chasis: String(u.vin || '').trim(),
+      motor: String(u.motor || '').trim(),
+      certificado: String(u.certificado || '').trim(),
       dominio: String(u.patente || '').trim(),
       fechaPatentamiento: u.fechapatentamiento ? String(u.fechapatentamiento).slice(0, 10) : '',
       // Entrega programada y si ya retiró → directo de Oversoft (unidades), no se carga a mano.

@@ -2316,7 +2316,9 @@ function renderAdmVentas() {
        + '</td>'
        + '<td data-label="Cliente" title="' + escapeHtml(String(v.cliente) + (v.localidad ? ' — ' + v.localidad : '')) + '">' + escapeHtml(String(v.cliente).slice(0, 17)) + (v.localidad ? '<br><small style="color:var(--vw-grey-3)">' + escapeHtml(String(v.localidad).slice(0, 17)) + '</small>' : '') + '</td>'
        + '<td data-label="Vendedor">' + escapeHtml(v.vendedor) + '</td>'
-       + '<td data-label="Serie" title="' + escapeHtml(v.chasis) + '">' + escapeHtml(v.serie) + '</td>'
+       + '<td data-label="Serie">' + (v.serie
+             ? '<button onclick="toggleAdmSerie(\'' + key + '\')" title="Ver chasis completo, motor y certificado" style="border:0;background:none;cursor:pointer;color:#0a66c2;font-weight:600;font-size:12px;padding:0">' + escapeHtml(v.serie) + ' ▸</button>'
+             : '<span style="color:var(--vw-grey-3)">—</span>') + '</td>'
        + '<td data-label="Pago VW">'
          + (v.pagoVW
              ? (v.pagoVW.impaga
@@ -2368,6 +2370,11 @@ function renderAdmVentas() {
          + '<div style="font-weight:700;font-size:12px;margin-bottom:4px">Gastos ' + (gasto.sinEmitir ? 'cargados en la preventa' : 'cobrados al cliente') + ' · PV ' + escapeHtml(v.preventa) + ' · total $' + _gMoney(gasto.total) + '</div>'
          + (gasto.sinEmitir ? _gastoAFacturarHtml(gasto) : _gastoDetalleHtml(gasto)) + '</td></tr>';
     }
+    // Detalle de la unidad (se despliega al tocar la serie): chasis completo,
+    // motor y certificado. El certificado suele faltar hasta que VW lo emite.
+    h += '<tr id="admserie_' + key + '"' + (admSerieAbiertos.has(key) ? '' : ' style="display:none"') + '>'
+       + '<td colspan="20" style="background:#f5f8fc;border-left:3px solid #0a66c2;padding:8px 14px 12px 30px;text-align:left">'
+       + _admSerieDetalleHtml(v) + '</td></tr>';
   }
   if (!rows.length) h += '<tr><td colspan="20" class="empty">Sin carpetas para ese filtro.</td></tr>';
   h += '</tbody></table></div></div>';
@@ -4362,6 +4369,28 @@ function toggleAdmGasto(key) {
   const abrir = tr.style.display === 'none';
   tr.style.display = abrir ? '' : 'none';
   if (abrir) admGastoAbiertos.add(key); else admGastoAbiertos.delete(key);
+}
+
+// Detalle de la unidad desplegable en Adm. ventas (al tocar la serie): chasis
+// completo, número de motor y número de certificado. Si el certificado todavía
+// no está cargado en Oversoft, se dice explícitamente "todavía no está".
+let admSerieAbiertos = new Set();
+function toggleAdmSerie(key) {
+  const tr = document.getElementById('admserie_' + key);
+  if (!tr) return;
+  const abrir = tr.style.display === 'none';
+  tr.style.display = abrir ? '' : 'none';
+  if (abrir) admSerieAbiertos.add(key); else admSerieAbiertos.delete(key);
+}
+function _admSerieDetalleHtml(v) {
+  const falta = '<span style="color:#cc6600">todavía no está</span>';
+  const dato = (x) => (x && String(x).trim()) ? '<b>' + escapeHtml(String(x).trim()) + '</b>' : falta;
+  return '<div style="font-size:12px;line-height:1.9">'
+    + '<div style="font-weight:700;margin-bottom:2px">Unidad · serie ' + escapeHtml(v.serie) + '</div>'
+    + '<div>N° de chasis: ' + dato(v.chasis) + '</div>'
+    + '<div>N° de motor: ' + dato(v.motor) + '</div>'
+    + '<div>N° de certificado: ' + dato(v.certificado) + '</div>'
+    + '</div>';
 }
 
 // =======================================================================
