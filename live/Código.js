@@ -722,7 +722,8 @@ function getAdmVentas() {
         patenta:            m.patenta || '',
         admin:              m.admin || '',
         tipo_carpeta:       m.tipo_carpeta || '',
-        credito_liquidado:  m.credito_liquidado || '',   // SI/NO que pone la adm (fecha sale del recibo)
+        credito_liquidado:  m.credito_liquidado || '',   // SI/NO que pone la adm (cobrado aunque falte el recibo)
+        credito_liquidado_ts: m.credito_liquidado_ts || '', // cuándo marcó SI (para la alerta de +72h sin recibo)
         fecha_liquidacion:  m.fecha_liquidacion || '',
         reventa_particular: m.reventa_particular || '',
         fecha_pago_vw:      m.fecha_pago_vw || '',
@@ -1520,7 +1521,7 @@ function saveVentaManual(body) {
 function saveAdmVenta(body) {
   const pv = String(body.preventa || '').trim();
   if (!pv) return { error: 'falta preventa' };
-  const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'credito_liquidado', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'notas'];
+  const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'credito_liquidado', 'credito_liquidado_ts', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'notas'];
   const row = { preventa: pv, updated_at: new Date().toISOString(), updated_by: String(body.usuario || '') };
   const campos = body.campos || {};
   for (const k of permitidos) if (campos[k] !== undefined) row[k] = (campos[k] === '' ? null : campos[k]);

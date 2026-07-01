@@ -2003,6 +2003,23 @@ function _finLineaDe(v) {
   return { plan, cobrado, saldo, vto, fechaCobro, recibos, cobrada: saldo <= 1 };
 }
 
+// Estado de "crédito liquidado" que marca Mónica (SI = cobrado aunque el recibo
+// de Oversoft todavía no esté). Si pasaron +72h de la marca sin que aparezca el
+// recibo → alerta (hay que chequear que el recibo se haya hecho).
+function _finLiqEstado(v, fl) {
+  const liq = ((v.manual && v.manual.credito_liquidado) || '') === 'SI';
+  const conRecibo = !!fl.cobrada;                  // recibo real en Oversoft
+  const ts = (v.manual && v.manual.credito_liquidado_ts) || '';
+  let horas = null;
+  if (ts) { const t = new Date(ts).getTime(); if (!isNaN(t)) horas = (Date.now() - t) / 3600000; }
+  // alerta: marcado SI, sin recibo todavía, y pasaron +72h desde la marca
+  const alerta = liq && !conRecibo && horas !== null && horas > 72;
+  return { liq, conRecibo, ts, horas, alerta, cobradaEfectiva: conRecibo || liq };
+}
+// Monto a contar como cobrado: con recibo real, lo cobrado; si Moni marcó SI sin
+// recibo aún, se toma el plan (lo da por cobrado). Si no, lo cobrado (0 o parcial).
+function _finCobradoEff(x) { return x.liq.conRecibo ? x.fl.cobrado : (x.liq.liq ? x.fl.plan : x.fl.cobrado); }
+
 // Financiaciones del mes: pendientes primero (por vto), luego cobradas.
 function _admFinList(mes) {
   const out = [];
@@ -2011,10 +2028,10 @@ function _admFinList(mes) {
     if (_admMesDe(v) !== mes) continue;
     const fl = _finLineaDe(v);
     if (!fl) continue;
-    out.push({ v: v, fl: fl });
+    out.push({ v: v, fl: fl, liq: _finLiqEstado(v, fl) });
   }
   out.sort((a, b) => {
-    if (a.fl.cobrada !== b.fl.cobrada) return a.fl.cobrada ? 1 : -1;
+    if (a.liq.cobradaEfectiva !== b.liq.cobradaEfectiva) return a.liq.cobradaEfectiva ? 1 : -1;
     return (a.fl.vto || '9999').localeCompare(b.fl.vto || '9999');
   });
   return out;
@@ -2032,6 +2049,33 @@ function _admFinMeses() {
 
 function finSetMes(m) { finMesSel = m; renderAdmFinanciaciones(); }
 
+// Mónica marca "crédito liquidado" SI/NO en una financiación. SI = cobrado aunque
+// el recibo todavía no esté (sale de pendientes y cuenta como cobrado). Al marcar
+// SI se sella la hora (credito_liquidado_ts) para la alerta de +72h sin recibo;
+// al sacar SI se limpia. Guarda en adm_ventas (mismo endpoint que la grilla).
+async function finSetLiquidado(pv, value) {
+  const v = ((admVentasData && admVentasData.ventas) || []).find(x => x.preventa === pv);
+  const campos = { credito_liquidado: value };
+  if (value === 'SI') {
+    const prev = (v && v.manual && v.manual.credito_liquidado_ts) || '';
+    campos.credito_liquidado_ts = prev || new Date().toISOString();   // no reinicia el reloj si ya estaba en SI
+  } else {
+    campos.credito_liquidado_ts = '';
+  }
+  try {
+    const body = new URLSearchParams();
+    body.set('payload', JSON.stringify({ token: APPS_SCRIPT_TOKEN, accion: 'setadmventa', preventa: pv, campos: campos, usuario: window._tgaUser || '' }));
+    const res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    if (v) v.manual = Object.assign({}, v.manual, campos);   // refresca copia local
+    renderAdmFinanciaciones();
+  } catch (e) {
+    alert('No se pudo guardar el crédito liquidado de ' + pv + ': ' + e.message);
+  }
+}
+
 function loadAdmFinanciaciones(forzar) {
   // depende de admVentasData: si falta (o se fuerza) lo trae loadAdmVentas y su
   // hook repinta esta solapa al llegar; si ya está, repinta directo.
@@ -2039,8 +2083,24 @@ function loadAdmFinanciaciones(forzar) {
   renderAdmFinanciaciones();
 }
 
+// Selector SI/NO de "crédito liquidado" (lo pone Mónica). SI = cobrado aunque el
+// recibo aún no esté. Guarda por PV y sella la hora para la alerta de +72h.
+function _finLiqSelector(pv, val) {
+  const opt = (o, lbl) => '<option value="' + o + '"' + (val === o ? ' selected' : '') + '>' + lbl + '</option>';
+  return '<select onchange="finSetLiquidado(\'' + pv + '\', this.value)" title="Crédito liquidado (cobrado aunque falte el recibo)" style="padding:2px 16px 2px 4px;border:1px solid var(--vw-grey-2);border-radius:5px;font-size:11px">'
+    + opt('', '—') + opt('SI', 'SI') + opt('NO', 'NO') + '</select>';
+}
+// Estadito al lado del selector: con recibo ✓, esperando recibo (Nh) o 🔴 +72h.
+function _finLiqBadge(liq) {
+  if (liq.liq && liq.conRecibo) return ' <span style="color:#0a7a30;font-size:11px">✓ con recibo</span>';
+  if (liq.alerta) return ' <span style="color:#cc3300;font-weight:700;font-size:11px" title="Marcado cobrado hace +72h y todavía sin recibo — chequear que se haya hecho el recibo">🔴 +72h sin recibo</span>';
+  if (liq.liq && !liq.conRecibo) return ' <span style="color:#cc6600;font-size:11px" title="Cobrado según Mónica; el recibo todavía no aparece en Oversoft">⏳ s/recibo' + (liq.horas !== null ? ' (' + Math.floor(liq.horas) + 'h)' : '') + '</span>';
+  return '';
+}
+
 // Tabla detalle. pendiente=true → columna "A cobrar" (saldo) + Vto + fila TOTAL;
-// pendiente=false → "Cobrado" + fecha de cobro + recibo.
+// pendiente=false → "Cobrado" + fecha de cobro + recibo. Última columna: el
+// SI/NO de "crédito liquidado" que maneja Mónica.
 function _finTabla(items, pendiente, total) {
   let h = '<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:6px">'
     + '<thead><tr style="color:var(--vw-grey-3)">'
@@ -2051,6 +2111,7 @@ function _finTabla(items, pendiente, total) {
     + '<th style="text-align:right;padding:4px 8px">' + (pendiente ? 'A cobrar' : 'Cobrado') + '</th>'
     + '<th style="padding:4px 8px">' + (pendiente ? 'Vto' : 'Cobrado el') + '</th>'
     + '<th style="text-align:left;padding:4px 8px">' + (pendiente ? 'Estado' : 'Recibo') + '</th>'
+    + '<th style="text-align:left;padding:4px 8px">Créd. liquidado</th>'
     + '</tr></thead><tbody>';
   const hoy = new Date().toISOString().slice(0, 10);
   for (const x of items) {
@@ -2058,21 +2119,24 @@ function _finTabla(items, pendiente, total) {
     const chip = TIPO_CHIP[v.tipo] || { txt: v.financia, bg: '#64748b' };
     let estado = '⏳ pendiente', col = '#cc6600';
     if (pendiente && fl.vto) { const d = _diasEntre(fl.vto, hoy); if (d !== null && d > 2) { estado = '🔴 vencida (' + d + 'd)'; col = '#cc3300'; } }
-    h += '<tr style="border-top:1px solid #eef1f6">'
+    // fecha de cobro: recibo real, o (si Moni lo dio por cobrado sin recibo) la fecha de la marca
+    const cobradoEl = fl.fechaCobro ? _fechaDMA(fl.fechaCobro) : (x.liq.ts ? _fechaDMA(x.liq.ts) + ' <small style="color:var(--vw-grey-3)">(marca)</small>' : '—');
+    h += '<tr style="border-top:1px solid #eef1f6' + (x.liq.alerta ? ';background:#fdecea' : '') + '">'
       + '<td style="padding:4px 8px;white-space:nowrap"><b>' + escapeHtml(v.preventa) + '</b></td>'
       + '<td style="padding:4px 8px">' + escapeHtml(v.cliente || '—') + '</td>'
       + '<td style="padding:4px 8px">' + escapeHtml(v.modelo || '—') + '</td>'
       + '<td style="padding:4px 8px"><span style="background:' + chip.bg + ';color:#fff;border-radius:8px;padding:1px 7px;font-size:11px;white-space:nowrap">' + escapeHtml(v.financia || chip.txt) + '</span></td>'
-      + '<td style="text-align:right;padding:4px 8px;font-weight:700;color:' + (pendiente ? col : '#0a7a30') + '">' + fmtPesos(pendiente ? fl.saldo : fl.cobrado) + '</td>'
-      + '<td style="text-align:center;padding:4px 8px;white-space:nowrap">' + (pendiente ? (fl.vto ? _fechaDMA(fl.vto) : '—') : (fl.fechaCobro ? _fechaDMA(fl.fechaCobro) : '—')) + '</td>'
+      + '<td style="text-align:right;padding:4px 8px;font-weight:700;color:' + (pendiente ? col : '#0a7a30') + '">' + fmtPesos(pendiente ? fl.saldo : _finCobradoEff(x)) + '</td>'
+      + '<td style="text-align:center;padding:4px 8px;white-space:nowrap">' + (pendiente ? (fl.vto ? _fechaDMA(fl.vto) : '—') : cobradoEl) + '</td>'
       + '<td style="padding:4px 8px;color:' + (pendiente ? col : 'var(--vw-grey-3)') + '">' + (pendiente ? estado : (fl.recibos && fl.recibos.length ? '#' + fl.recibos.join(' #') : '—')) + '</td>'
+      + '<td style="padding:4px 8px;white-space:nowrap">' + _finLiqSelector(v.preventa, (v.manual && v.manual.credito_liquidado) || '') + _finLiqBadge(x.liq) + '</td>'
       + '</tr>';
   }
   if (pendiente) {
     h += '<tr style="border-top:2px solid #cc6600;font-weight:700">'
       + '<td colspan="4" style="padding:5px 8px">TOTAL PENDIENTE DE COBRO</td>'
       + '<td style="text-align:right;padding:5px 8px;color:#cc6600">' + fmtPesos(total) + '</td>'
-      + '<td colspan="2"></td></tr>';
+      + '<td colspan="3"></td></tr>';
   }
   h += '</tbody></table>';
   return h;
@@ -2099,20 +2163,34 @@ function renderAdmFinanciaciones() {
 
   if (!list.length) { if (resu) resu.innerHTML = ''; cont.innerHTML = '<div class="empty">Sin financiaciones en ' + _mesLabel(mes) + '.</div>'; return; }
 
-  const pend = list.filter(x => !x.fl.cobrada);
-  const cobr = list.filter(x => x.fl.cobrada);
+  // "Cobrada efectiva" = tiene recibo real O Moni la marcó SI (crédito liquidado).
+  const pend = list.filter(x => !x.liq.cobradaEfectiva);
+  const cobr = list.filter(x => x.liq.cobradaEfectiva);
+  const alertas72 = list.filter(x => x.liq.alerta);         // SI sin recibo hace +72h
   const totPlan = list.reduce((a, x) => a + x.fl.plan, 0);
-  const totCobr = list.reduce((a, x) => a + x.fl.cobrado, 0);
+  const totCobr = cobr.reduce((a, x) => a + _finCobradoEff(x), 0);
   const totPend = pend.reduce((a, x) => a + x.fl.saldo, 0);
+  // cobrado sin recibo todavía (SI de Moni): dato para el resumen
+  const sinRecibo = cobr.filter(x => x.liq.liq && !x.liq.conRecibo);
+  const totSinRecibo = sinRecibo.reduce((a, x) => a + _finCobradoEff(x), 0);
 
   if (resu) resu.innerHTML =
     '<div class="cards">' +
     kpi('Financiaciones del mes', fmtPesos(totPlan), list.length + (list.length === 1 ? ' operación' : ' operaciones'), '') +
-    kpi('Cobradas', fmtPesos(totCobr), cobr.length + ' de ' + list.length, cobr.length ? 'good' : '') +
+    kpi('Cobradas', fmtPesos(totCobr), cobr.length + ' de ' + list.length + (sinRecibo.length ? ' · ' + sinRecibo.length + ' s/recibo' : ''), cobr.length ? 'good' : '') +
     kpi('Pendientes de cobro', fmtPesos(totPend), pend.length + (pend.length === 1 ? ' pendiente' : ' pendientes'), pend.length ? 'warn' : 'good') +
     '</div>';
 
   let h = '';
+
+  // Alerta arriba de todo: créditos marcados cobrados hace +72h sin que aparezca
+  // el recibo en Oversoft (hay que chequear que el recibo se haya hecho).
+  if (alertas72.length) {
+    h += '<div style="background:#fdecea;border:1px solid #cc3300;color:#a02010;border-radius:8px;padding:9px 12px;margin-bottom:12px;font-size:13px;font-weight:600">'
+      + '🔴 ' + alertas72.length + (alertas72.length === 1 ? ' crédito marcado cobrado hace +72h SIN recibo' : ' créditos marcados cobrados hace +72h SIN recibo')
+      + ': ' + alertas72.map(x => escapeHtml(x.v.preventa) + (x.liq.horas !== null ? ' (' + Math.floor(x.liq.horas) + 'h)' : '')).join(', ')
+      + ' — chequear que el recibo se haya hecho.</div>';
+  }
 
   // === PENDIENTES (una por una + suma) ===
   h += '<div style="font-weight:700;font-size:14px;color:#cc6600;margin:6px 0 6px">⏳ Pendientes de cobro — ' + pend.length + '</div>';
@@ -2125,8 +2203,8 @@ function renderAdmFinanciaciones() {
     const k = x.v.financia || x.v.tipo;
     if (!porFin[k]) porFin[k] = { fin: k, tipo: x.v.tipo, cant: 0, plan: 0, cobrado: 0, pend: 0, pendCant: 0 };
     const g = porFin[k];
-    g.cant++; g.plan += x.fl.plan; g.cobrado += x.fl.cobrado;
-    if (!x.fl.cobrada) { g.pend += x.fl.saldo; g.pendCant++; }
+    g.cant++; g.plan += x.fl.plan; g.cobrado += _finCobradoEff(x);
+    if (!x.liq.cobradaEfectiva) { g.pend += x.fl.saldo; g.pendCant++; }
   }
   const grupos = Object.keys(porFin).map(k => porFin[k]).sort((a, b) => b.pend - a.pend || b.plan - a.plan);
   h += '<div style="font-weight:700;font-size:14px;color:#001e50;margin:16px 0 6px">📊 Por financiador — ' + _mesLabel(mes) + '</div>';
@@ -2544,6 +2622,17 @@ async function guardarAdmVenta(preventa) {
   for (const c of ['patenta', 'admin', 'tipo_carpeta', 'mes_patentamiento', 'credito_liquidado', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'notas']) {
     const el = document.getElementById('adm_' + c + '_' + key);
     if (el) campos[c] = el.value.trim();
+  }
+  // crédito liquidado: al ponerlo en SI se sella la hora (alerta de +72h sin
+  // recibo, misma lógica que la solapa Financiaciones); al sacarlo se limpia.
+  if (campos.credito_liquidado !== undefined) {
+    if (campos.credito_liquidado === 'SI') {
+      const vv = (admVentasData.ventas || []).find(x => x.preventa === preventa);
+      const prev = (vv && vv.manual && vv.manual.credito_liquidado_ts) || '';
+      campos.credito_liquidado_ts = prev || new Date().toISOString();
+    } else {
+      campos.credito_liquidado_ts = '';
+    }
   }
   const btn = document.getElementById('admsave_' + key);
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
