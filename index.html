@@ -1530,6 +1530,10 @@ const GESTION_NEXT_URL   = 'https://gestion-next-fergonz00s-projects.vercel.app'
 const GESTION_NEXT_TOKEN = 'gtok_IE740qxp4uBANagjGH6MheFw';
 const MOTOR_NEXT = !new URLSearchParams(location.search).has('motorviejo');
 
+// Circuito reventas/FyF/costo unidad (desde 20/06): mapa preventa → estados.
+let reventasMap = {};
+function _normPvKey(s){ s = String(s || '').toUpperCase().replace('PV','').trim(); const p = s.split('/'); return (p[0].replace(/^0+/,'') || '0') + (p[1] ? '/' + p[1] : ''); }
+
 // ── Oversoft: consultas a la réplica de SOLO LECTURA de Tito González ──────
 // Pasa por el Apps Script (tipo=oversoft), que es quien tiene la anon key.
 // El navegador nunca ve la key. Tablas: 'detcash', 'servicios_ordenes'.
@@ -2592,6 +2596,14 @@ async function loadVentasOv(forzar) {
       : (APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=ventasv2' + (forzar ? '&fresh=1' : ''));
     const res = await fetch(url);
     ventasOvData = await res.json();
+    // Circuito reventas/FyF/costo unidad (solo motor nuevo): mapa PV → estados.
+    if (MOTOR_NEXT) { try {
+      const rr = await fetch(GESTION_NEXT_URL + '/api/reventas?token=' + encodeURIComponent(GESTION_NEXT_TOKEN) + (forzar ? '&fresh=1' : ''));
+      const rd = await rr.json();
+      const m = {};
+      for (const it of (rd.items || [])) { const k = _normPvKey(it.preventa); (m[k] = m[k] || {})[it.concepto === 'fyf' ? 'fyf' : 'costoUnidad'] = it.estado; }
+      reventasMap = m;
+    } catch (e) { /* si falla, no rompe la solapa Ventas */ } }
     setOvsSync(ventasOvData.syncOversoft);   // aprovecha el sello que ya trae ventasv2
     if (!ventasOvMes && ventasOvData.mesActual) ventasOvMes = ventasOvData.mesActual;
     // Gasto real por PV (desglose clickeable). OJO: gastosmap es pesado y se
@@ -2684,6 +2696,15 @@ function renderVentasOv() {
     const gasto = _gastoDe(v.preventaNum);
     const mencionaAcc = v.mencionaAcc || _gastoMencionaAcc(gasto);
     const accFlag = mencionaAcc ? ' <span title="Menciona accesorios en el comentario, o el Costo Unidad del gasto difiere de $1.110.000 — cargá el monto" style="background:#cc6600;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">acc</span>' : '';
+    // Badge del circuito reventas/FyF/costo unidad. Ámbar = pendiente que Valeria
+    // confirme cobrado; verde OK = Valeria confirmó → hay que moverlo en Oversoft.
+    const _rv = reventasMap[_normPvKey(v.preventaNum)];
+    let revBadge = '';
+    if (_rv) {
+      const _rb = (label, est) => { const ok = est === 'confirmado'; return ' <span title="' + (ok ? 'Valeria confirmó cobrado — mover en Oversoft y anotar en comentario' : 'Pendiente de que Valeria confirme cobrado') + '" style="background:' + (ok ? '#0a7a30' : '#b9770e') + ';color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">' + label + (ok ? ' OK' : '') + '</span>'; };
+      if (_rv.fyf) revBadge += _rb('FyF', _rv.fyf);
+      if (_rv.costoUnidad) revBadge += _rb('acc$', _rv.costoUnidad);
+    }
     const g = (typeof v.gciaVtaPesos === 'number');
     const gColor = g ? (v.gciaVtaPesos >= 0 ? '#0a7a30' : '#cc3300') : 'var(--vw-grey-3)';
     const puedeDet = !!v.breakdown;
@@ -2697,7 +2718,7 @@ function renderVentasOv() {
       ? '<button onclick="toggleVentasOvGasto(\'' + key + '\')" title="' + (gasto.sinEmitir ? 'Gastos cargados en la preventa — a facturar (sin emitir todavía)' : 'Ver desglose de gastos por concepto') + '" style="border:0;background:none;cursor:pointer;color:' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';font-weight:600;font-size:12px;padding:0">$' + _gMoney(gasto.total) + (gasto.sinEmitir ? ' · a fact.' : '') + ' ▸</button>'
       : '<span style="color:var(--vw-grey-3);font-size:11px">s/gastos</span>';
     h += '<tr' + (mencionaAcc ? ' style="background:#fff8e1"' : '') + '>'
-      + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + accFlag + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + _comisionTGControl(v) + '</td>'
+      + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + accFlag + revBadge + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + _comisionTGControl(v) + '</td>'
       + '<td>' + _fechaDMA(v.fechaPvIso) + '</td>'
       + '<td>' + escapeHtml(v.modelo) + '</td>'
       + '<td>' + escapeHtml(v.vendedor || '') + '</td>'
