@@ -1523,6 +1523,13 @@ const USUARIOS_PATENTAMIENTOS = [];
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby13NRmtve2ojB0IMZgFPnKh3HsLSBLDca4kOduRenO97KLH3W3ILbiJfDzGYVLAUpwpQ/exec';
 const APPS_SCRIPT_TOKEN = 'tga-gestion-R7nQ4xK8jL';
 
+// Motor nuevo (gestion-next, Next+Supabase en Vercel) que reemplaza al Apps Script.
+// Se activa con ?motornext=1 en la URL para probar la solapa Ventas contra el motor
+// nuevo sin tocar el default (Apps Script). Cuando esté validado, se vuelve default.
+const GESTION_NEXT_URL   = 'https://gestion-next-fergonz00s-projects.vercel.app';
+const GESTION_NEXT_TOKEN = 'gtok_IE740qxp4uBANagjGH6MheFw';
+const MOTOR_NEXT = new URLSearchParams(location.search).has('motornext');
+
 // ── Oversoft: consultas a la réplica de SOLO LECTURA de Tito González ──────
 // Pasa por el Apps Script (tipo=oversoft), que es quien tiene la anon key.
 // El navegador nunca ve la key. Tablas: 'detcash', 'servicios_ordenes'.
@@ -2580,7 +2587,9 @@ async function loadVentasOv(forzar) {
   const cont = document.getElementById('ventasOvContent');
   if (cont && !ventasOvData) cont.innerHTML = '<div class="empty">Cargando ventas (Oversoft)…</div>';
   try {
-    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=ventasv2' + (forzar ? '&fresh=1' : '');
+    const url = MOTOR_NEXT
+      ? (GESTION_NEXT_URL + '/api/ventas?token=' + encodeURIComponent(GESTION_NEXT_TOKEN))
+      : (APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=ventasv2' + (forzar ? '&fresh=1' : ''));
     const res = await fetch(url);
     ventasOvData = await res.json();
     setOvsSync(ventasOvData.syncOversoft);   // aprovecha el sello que ya trae ventasv2
