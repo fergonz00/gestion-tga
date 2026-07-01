@@ -2572,6 +2572,7 @@ async function guardarAdmVenta(preventa) {
 // cargar accesorios a mano (se suman). Detecta "acc" en el comentario de la PV.
 let ventasOvData = null;
 let ventasOvMes = '';                 // 'yyyy-mm' | '__todos__'
+let ventasOvSoloRev = false;          // filtro "solo acc/FyF" (todos los meses)
 let ventasOvComAbiertos = new Set();
 
 // Banner con la hora de la última sincronización de la réplica Oversoft.
@@ -2625,6 +2626,7 @@ async function loadVentasOv(forzar) {
   }
 }
 function setVentasOvMes(m) { ventasOvMes = m; renderVentasOv(); }
+function toggleVentasOvSoloRev() { ventasOvSoloRev = !ventasOvSoloRev; renderVentasOv(); }
 function toggleVentasOvCom(key) {
   const tr = document.getElementById('vovcom_' + key);
   if (!tr) return;
@@ -2679,16 +2681,33 @@ function renderVentasOv() {
   const todas = ventasOvData.ventas || [];
   const meses = ventasOvData.meses || [];
   const filtra = ventasOvMes && ventasOvMes !== '__todos__';
-  const rows = filtra ? todas.filter(v => v.mesKey === ventasOvMes) : todas;
-  let sel = '<select onchange="setVentasOvMes(this.value)" style="padding:5px 8px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px">';
+  let rows;
+  if (ventasOvSoloRev) {
+    // Filtro "solo acc/FyF": ignora el mes (toma TODOS), deja solo las PVs del
+    // circuito reventas/costo unidad y pone los pendientes (rojo/ámbar) arriba.
+    const _prio = { alerta: 0, pendiente: 1, confirmado: 2, cerrado: 3 };
+    const _estPv = v => { const r = reventasMap[_normPvKey(v.preventaNum)]; if (!r) return 99; const es = [r.fyf, r.costoUnidad].filter(Boolean).map(e => (_prio[e] != null ? _prio[e] : 9)); return es.length ? Math.min.apply(null, es) : 99; };
+    rows = todas.filter(v => reventasMap[_normPvKey(v.preventaNum)]).slice().sort((a, b) => _estPv(a) - _estPv(b));
+  } else {
+    rows = filtra ? todas.filter(v => v.mesKey === ventasOvMes) : todas;
+  }
+  let sel = '<select ' + (ventasOvSoloRev ? 'disabled ' : '') + 'onchange="setVentasOvMes(this.value)" style="padding:5px 8px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px' + (ventasOvSoloRev ? ';opacity:.5' : '') + '">';
   sel += '<option value="__todos__"' + (!filtra ? ' selected' : '') + '>Todos los meses</option>';
   for (const m of meses) sel += '<option value="' + m.mesKey + '"' + (m.mesKey === ventasOvMes ? ' selected' : '') + '>' + escapeHtml(m.label) + ' (' + m.cuenta + ')</option>';
   sel += '</select>';
   let totG = 0;
   for (const v of rows) if (typeof v.gciaVtaPesos === 'number') totG += v.gciaVtaPesos;
   let h = _ovsSyncBanner(ventasOvData.syncOversoft);
-  h += '<div style="margin:6px 0 12px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">' + sel
-    + '<span style="font-size:13px;color:var(--vw-grey-3)">' + rows.length + ' ventas · ganancia total <b style="color:#0a7a30">' + fmtPesos(totG) + '</b></span></div>';
+  const _revBtn = '<button onclick="toggleVentasOvSoloRev()" title="Ver solo las ventas con acc/FyF de TODOS los meses, para chequear pendientes sin ir mes a mes" style="padding:5px 10px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid ' + (ventasOvSoloRev ? '#0a66c2' : 'var(--vw-grey-2)') + ';background:' + (ventasOvSoloRev ? '#0a66c2' : '#fff') + ';color:' + (ventasOvSoloRev ? '#fff' : '#333') + '">' + (ventasOvSoloRev ? '✓ ' : '') + 'Solo acc/FyF</button>';
+  let _cntTxt;
+  if (ventasOvSoloRev) {
+    const _pend = rows.filter(v => { const r = reventasMap[_normPvKey(v.preventaNum)]; return r && [r.fyf, r.costoUnidad].some(e => e && e !== 'cerrado'); }).length;
+    _cntTxt = rows.length + ' con acc/FyF (todos los meses) · <b style="color:#cc3300">' + _pend + ' sin resolver</b>';
+  } else {
+    _cntTxt = rows.length + ' ventas · ganancia total <b style="color:#0a7a30">' + fmtPesos(totG) + '</b>';
+  }
+  h += '<div style="margin:6px 0 12px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">' + sel + _revBtn
+    + '<span style="font-size:13px;color:var(--vw-grey-3)">' + _cntTxt + '</span></div>';
   h += '<div style="overflow-x:auto"><table class="ventas-tbl"><thead><tr style="text-align:left">'
     + '<th>PV</th><th>Fecha</th><th>Modelo</th><th>Vend.</th><th style="text-align:right">Monto</th>'
     + '<th style="text-align:right" title="Gasto total cobrado al cliente (o cargado a facturar). Tocá para ver el desglose por concepto.">Gastos</th>'
