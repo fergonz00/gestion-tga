@@ -2703,11 +2703,12 @@ function renderVentasOv() {
     if (_rv) {
       // 3 estados: rojo=pendiente de cobro · ámbar=OK de Valeria (falta mover) · verde=completo (fuera de gastos + en comentarios)
       const _rb = (label, est) => {
-        const c = est === 'cerrado' ? '#0a7a30' : (est === 'confirmado' ? '#d99200' : '#cc3300');
+        const c = est === 'cerrado' ? '#0a7a30' : (est === 'confirmado' ? '#d99200' : (est === 'alerta' ? '#c2185b' : '#cc3300'));
         const t = est === 'cerrado' ? 'Completo: Valeria confirmó, salió de gastos y quedó anotado en comentarios'
                 : est === 'confirmado' ? 'Valeria confirmó cobrado — falta que lo muevas en Oversoft y lo anotes en el comentario'
+                : est === 'alerta' ? 'REVENTA SIN COSTO UNIDAD — preventa mal hecha: falta cargar el FyF $1.110.000 como costo unidad'
                 : 'Pendiente de cobro: falta que Valeria confirme';
-        const suf = est === 'cerrado' ? ' ✓' : (est === 'confirmado' ? ' OK' : '');
+        const suf = est === 'cerrado' ? ' ✓' : (est === 'confirmado' ? ' OK' : (est === 'alerta' ? ' ⚠' : ''));
         return ' <span title="' + t + '" style="background:' + c + ';color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">' + label + suf + '</span>';
       };
       if (_rv.fyf) revBadge += _rb('FyF', _rv.fyf);
