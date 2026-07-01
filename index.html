@@ -2311,7 +2311,7 @@ function renderAdmVentas() {
        + '<td data-label="Factura / Gastos" style="text-align:right;white-space:nowrap">'
          + (v.montoFc > 0 ? '<div title="Factura (precio de venta al cliente)"><b>' + fmtPesos(v.montoFc) + '</b></div>' : '<div style="color:var(--vw-grey-3)">s/factura</div>')
          + (gasto
-             ? '<div><button onclick="toggleAdmGasto(\'' + key + '\')" title="' + (gasto.sinEmitir ? 'Gastos cargados en la preventa — a facturar (sin emitir todavía)' : 'Ver desglose de gastos por concepto') + '" style="border:0;background:none;cursor:pointer;color:' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';font-weight:600;font-size:11px;padding:0">Gastos $' + _gMoney(gasto.total) + (gasto.sinEmitir ? ' · a facturar' : '') + (gasto.alertas && gasto.alertas.length ? ' <span title="' + gasto.alertas.length + ' alerta(s) — revisar" style="color:#c0392b">⚠</span>' : '') + ' ▸</button></div>'
+             ? '<div><button onclick="toggleAdmGasto(\'' + key + '\')" title="' + (gasto.sinEmitir ? 'Gastos cargados en la preventa — a facturar (sin emitir todavía)' : 'Ver desglose de gastos por concepto') + '" style="border:0;background:none;cursor:pointer;color:' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';font-weight:600;font-size:11px;padding:0">Gastos $' + _gMoney(gasto.total) + (gasto.sinEmitir ? ' · a facturar' : '') + (_gastoAdversas(gasto).length ? ' <span title="' + _gastoAdversas(gasto).length + ' a revisar (las diferencias a favor no se cuentan)" style="color:#c0392b">⚠</span>' : '') + ' ▸</button></div>'
              : '<div style="color:var(--vw-grey-3);font-size:11px">s/gastos</div>')
        + '</td>'
        + '<td data-label="Cliente" title="' + escapeHtml(String(v.cliente) + (v.localidad ? ' — ' + v.localidad : '')) + '">' + escapeHtml(String(v.cliente).slice(0, 17)) + (v.localidad ? '<br><small style="color:var(--vw-grey-3)">' + escapeHtml(String(v.localidad).slice(0, 17)) + '</small>' : '') + '</td>'
@@ -2750,7 +2750,7 @@ function renderVentasOv() {
       : '<span style="color:' + gColor + ';font-weight:600">' + gciaTxt + '</span>';
     // Gasto real por PV (mismo mapa que Adm. ventas). Clickeable → desglose por concepto.
     const gastoCell = gasto
-      ? '<button onclick="toggleVentasOvGasto(\'' + key + '\')" title="' + (gasto.sinEmitir ? 'Gastos cargados en la preventa — a facturar (sin emitir todavía)' : 'Ver desglose de gastos por concepto') + '" style="border:0;background:none;cursor:pointer;color:' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';font-weight:600;font-size:12px;padding:0">$' + _gMoney(gasto.total) + (gasto.sinEmitir ? ' · a fact.' : '') + (gasto.alertas && gasto.alertas.length ? ' <span title="' + gasto.alertas.length + ' alerta(s) — revisar" style="color:#c0392b">⚠</span>' : '') + ' ▸</button>'
+      ? '<button onclick="toggleVentasOvGasto(\'' + key + '\')" title="' + (gasto.sinEmitir ? 'Gastos cargados en la preventa — a facturar (sin emitir todavía)' : 'Ver desglose de gastos por concepto') + '" style="border:0;background:none;cursor:pointer;color:' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';font-weight:600;font-size:12px;padding:0">$' + _gMoney(gasto.total) + (gasto.sinEmitir ? ' · a fact.' : '') + (_gastoAdversas(gasto).length ? ' <span title="' + _gastoAdversas(gasto).length + ' a revisar (las diferencias a favor no se cuentan)" style="color:#c0392b">⚠</span>' : '') + ' ▸</button>'
       : '<span style="color:var(--vw-grey-3);font-size:11px">s/gastos</span>';
     h += '<tr>'
       + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + revBadge + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + _comisionTGControl(v) + '</td>'
@@ -4162,11 +4162,16 @@ function renderConciliaGastos() {
     '<th style="padding:6px 8px;text-align:right">Total gasto</th><th style="padding:6px 8px">Conciliación</th></tr></thead><tbody>';
   d.filas.forEach(f => {
     const abierto = gastosAbiertos.has(f.pv);
-    const alerta = f.estado === 'alerta';
-    const estadoHtml = alerta
-      ? '<span style="color:#c0392b;font-weight:600">⚠ ' + f.alertas.length + ' alerta' + (f.alertas.length > 1 ? 's' : '') + '</span>'
-      : '<span style="color:#27ae60">✓ OK</span>';
-    html += '<tr onclick="toggleGasto(\'' + f.pv + '\')" style="cursor:pointer;border-bottom:1px solid #eee;' + (alerta ? 'background:#fff8f7' : '') + '">' +
+    // Solo alarma (⚠ rojo) lo ADVERSO. Las diferencias a favor (cobró de más) no
+    // alarman antes de desplegar: se marcan neutras y se ven al abrir.
+    const adversas = _gastoAdversas(f);
+    const aFavor = !adversas.length && (f.difFavor || 0) > 0;
+    const estadoHtml = adversas.length
+      ? '<span style="color:#c0392b;font-weight:600">⚠ ' + adversas.length + ' a revisar</span>'
+      : (aFavor
+          ? '<span style="color:#0a7a30;font-weight:600">✓ OK</span> <span title="Cobró de más (a favor) — se ve al desplegar" style="color:#888;font-size:11px">· dif. a favor</span>'
+          : '<span style="color:#27ae60">✓ OK</span>');
+    html += '<tr onclick="toggleGasto(\'' + f.pv + '\')" style="cursor:pointer;border-bottom:1px solid #eee;' + (adversas.length ? 'background:#fff8f7' : '') + '">' +
       '<td style="padding:6px 8px;color:#999">' + (abierto ? '▾' : '▸') + '</td>' +
       '<td style="padding:6px 8px;font-weight:600">' + escapeHtml(f.pv) + '</td>' +
       '<td style="padding:6px 8px">' + escapeHtml(f.prov || '—') + '</td>' +
@@ -4179,6 +4184,12 @@ function renderConciliaGastos() {
   });
   html += '</tbody></table>';
   document.getElementById('gastosContent').innerHTML = html;
+}
+// Alertas "adversas" = las que ameritan el ⚠ en la fila colapsada (falta cobrar,
+// quebranto, prenda, sin tasa, etc). Las diferencias A FAVOR (cobró de más) NO
+// cuentan: se siguen destacando al desplegar, pero no alarman antes de abrir.
+function _gastoAdversas(g) {
+  return (g && g.alertas) ? g.alertas.filter(a => !/cobr[oó] de m[aá]s/i.test(a)) : [];
 }
 function _gastoDetalleHtml(f) {
   let h = '';
