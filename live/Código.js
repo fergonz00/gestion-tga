@@ -789,7 +789,10 @@ const GASTO_NOMBRES = {
 //    importe es CON iva en los gravados, y neto=importe en los exentos —sellados,
 //    aranceles—; verificado 1:1 contra el lado emitido).
 // `m` = { prov, fecha }. Devuelve además { deMas, faltan } para los totales.
-function _conciliarPV(rawLineas, m, qbRates, ovs, pv) {
+// `preFact` = true cuando es "a facturar" (antes de emitir): saltea el informe
+// inhibido, que nunca viaja en gastoxprevta (no es una línea que cargue el
+// vendedor), así no daría "falta" en el 100% de las financiadas por ruido.
+function _conciliarPV(rawLineas, m, qbRates, ovs, pv, preFact) {
   let base = 0, patent = 0, prenda = 0, financ = 0;
   let arMonto = 0, arRate = null, seMonto = 0, q21Neto = 0, tieneInsPrenda = false, tieneSelloPrenda = false, tieneInhib = false;
   const lineas = [];
@@ -843,8 +846,9 @@ function _conciliarPV(rawLineas, m, qbRates, ovs, pv) {
   }
   // PUNTO 5 — prenda incompleta (sellado de prenda sin inscripción)
   if (tieneSelloPrenda && !tieneInsPrenda) alertas.push('Sellado de prenda sin inscripción de prenda');
-  // PUNTO 7 — informe inhibido (solo PVs nuevas que financian)
-  if (financ > 0 && m.fecha >= INHIBIDO_DESDE && !tieneInhib) {
+  // PUNTO 7 — informe inhibido (solo PVs nuevas que financian; no aplica al
+  // "a facturar": el inhibido no viaja en gastoxprevta, se agrega al emitir)
+  if (!preFact && financ > 0 && m.fecha >= INHIBIDO_DESDE && !tieneInhib) {
     lineas.push({ cod: 99, concepto: 'Informe inhibido (falta)', cobrado: 0, correcto: INFORME_INHIBIDO, dif: -INFORME_INHIBIDO, estado: 'falta' });
     alertas.push('Falta informe inhibido $' + INFORME_INHIBIDO.toLocaleString('es-AR'));
     faltan += INFORME_INHIBIDO;
@@ -1010,9 +1014,17 @@ function getGastosMap() {
         const cod = _gCod(name);
         return { cod: cod, concepto: name, iva: r.importe, neto: (cod === 21 ? r.importe / 1.21 : r.importe), rate: _gRate(name) };
       });
-      const m = metaAf[pv] || { prov: '', fecha: '' };
-      const c = _conciliarPV(rawLineas, m, qbRates, ovs, origPv[pv] || pv);
-      af[pv] = { total: cur.reduce((s, r) => s + r.importe, 0), c: c, prov: m.prov };
+      // Provincia: la PV pendiente todavía no tiene comprobante de auto, así que el
+      // metaAf casi nunca la trae. La jurisdicción del sellado la delata el gastoid
+      // del concepto: 441 = CABA, 442 = Pcia Bs As (416 = otras, queda sin tasa).
+      let prov = (metaAf[pv] || {}).prov || '';
+      if (!prov) {
+        if (cur.some((r) => r.gastoid === 441)) prov = 'CAPITAL FEDERAL';
+        else if (cur.some((r) => r.gastoid === 442)) prov = 'BUENOS AIRES';
+      }
+      const m = { prov: prov, fecha: (metaAf[pv] || {}).fecha || '' };
+      const c = _conciliarPV(rawLineas, m, qbRates, ovs, origPv[pv] || pv, true);
+      af[pv] = { total: cur.reduce((s, r) => s + r.importe, 0), c: c, prov: prov };
     });
     Object.keys(af).forEach((pv) => {
       if (map[pv]) return;   // ya tiene gasto emitido/conciliado: ese manda
