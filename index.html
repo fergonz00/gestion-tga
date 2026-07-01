@@ -2588,7 +2588,7 @@ async function loadVentasOv(forzar) {
   if (cont && !ventasOvData) cont.innerHTML = '<div class="empty">Cargando ventas (Oversoft)…</div>';
   try {
     const url = MOTOR_NEXT
-      ? (GESTION_NEXT_URL + '/api/ventas?token=' + encodeURIComponent(GESTION_NEXT_TOKEN))
+      ? (GESTION_NEXT_URL + '/api/ventas?token=' + encodeURIComponent(GESTION_NEXT_TOKEN) + (forzar ? '&fresh=1' : ''))
       : (APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=ventasv2' + (forzar ? '&fresh=1' : ''));
     const res = await fetch(url);
     ventasOvData = await res.json();
