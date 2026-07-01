@@ -2311,7 +2311,7 @@ function renderAdmVentas() {
        + '<td data-label="Factura / Gastos" style="text-align:right;white-space:nowrap">'
          + (v.montoFc > 0 ? '<div title="Factura (precio de venta al cliente)"><b>' + fmtPesos(v.montoFc) + '</b></div>' : '<div style="color:var(--vw-grey-3)">s/factura</div>')
          + (gasto
-             ? '<div><button onclick="toggleAdmGasto(\'' + key + '\')" title="' + (gasto.sinEmitir ? 'Gastos cargados en la preventa — a facturar (sin emitir todavía)' : 'Ver desglose de gastos por concepto') + '" style="border:0;background:none;cursor:pointer;color:' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';font-weight:600;font-size:11px;padding:0">Gastos $' + _gMoney(gasto.total) + (gasto.sinEmitir ? ' · a facturar' : '') + ' ▸</button></div>'
+             ? '<div><button onclick="toggleAdmGasto(\'' + key + '\')" title="' + (gasto.sinEmitir ? 'Gastos cargados en la preventa — a facturar (sin emitir todavía)' : 'Ver desglose de gastos por concepto') + '" style="border:0;background:none;cursor:pointer;color:' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';font-weight:600;font-size:11px;padding:0">Gastos $' + _gMoney(gasto.total) + (gasto.sinEmitir ? ' · a facturar' : '') + (gasto.alertas && gasto.alertas.length ? ' <span title="' + gasto.alertas.length + ' alerta(s) — revisar" style="color:#c0392b">⚠</span>' : '') + ' ▸</button></div>'
              : '<div style="color:var(--vw-grey-3);font-size:11px">s/gastos</div>')
        + '</td>'
        + '<td data-label="Cliente" title="' + escapeHtml(String(v.cliente) + (v.localidad ? ' — ' + v.localidad : '')) + '">' + escapeHtml(String(v.cliente).slice(0, 17)) + (v.localidad ? '<br><small style="color:var(--vw-grey-3)">' + escapeHtml(String(v.localidad).slice(0, 17)) + '</small>' : '') + '</td>'
@@ -2724,10 +2724,10 @@ function renderVentasOv() {
       : '<span style="color:' + gColor + ';font-weight:600">' + gciaTxt + '</span>';
     // Gasto real por PV (mismo mapa que Adm. ventas). Clickeable → desglose por concepto.
     const gastoCell = gasto
-      ? '<button onclick="toggleVentasOvGasto(\'' + key + '\')" title="' + (gasto.sinEmitir ? 'Gastos cargados en la preventa — a facturar (sin emitir todavía)' : 'Ver desglose de gastos por concepto') + '" style="border:0;background:none;cursor:pointer;color:' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';font-weight:600;font-size:12px;padding:0">$' + _gMoney(gasto.total) + (gasto.sinEmitir ? ' · a fact.' : '') + ' ▸</button>'
+      ? '<button onclick="toggleVentasOvGasto(\'' + key + '\')" title="' + (gasto.sinEmitir ? 'Gastos cargados en la preventa — a facturar (sin emitir todavía)' : 'Ver desglose de gastos por concepto') + '" style="border:0;background:none;cursor:pointer;color:' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';font-weight:600;font-size:12px;padding:0">$' + _gMoney(gasto.total) + (gasto.sinEmitir ? ' · a fact.' : '') + (gasto.alertas && gasto.alertas.length ? ' <span title="' + gasto.alertas.length + ' alerta(s) — revisar" style="color:#c0392b">⚠</span>' : '') + ' ▸</button>'
       : '<span style="color:var(--vw-grey-3);font-size:11px">s/gastos</span>';
-    h += '<tr' + (mencionaAcc ? ' style="background:#fff8e1"' : '') + '>'
-      + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + accFlag + revBadge + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + _comisionTGControl(v) + '</td>'
+    h += '<tr>'
+      + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + revBadge + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + _comisionTGControl(v) + '</td>'
       + '<td>' + _fechaDMA(v.fechaPvIso) + '</td>'
       + '<td>' + escapeHtml(v.modelo) + '</td>'
       + '<td>' + escapeHtml(v.vendedor || '') + '</td>'
@@ -2754,7 +2754,7 @@ function renderVentasOv() {
   }
   if (!rows.length) h += '<tr><td colspan="9" class="empty">Sin ventas.</td></tr>';
   h += '</tbody></table></div>';
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Ganancia = venta − costo de reposición (con incentivos) − comisión − IIBB + accesorios. Las marcadas <span style="background:#cc6600;color:#fff;border-radius:8px;padding:0 5px">acc</span> mencionan accesorios en el comentario (💬) o tienen el "Costo Unidad" del gasto distinto del estándar $1.110.000 — cargá el monto y se suma. "s/BT" = mes sin BT cargada. <b>Gastos</b>: tocá el monto para ver el desglose por concepto (mismo dato que Adm. ventas); en ámbar "a fact." = cargado en la preventa, sin emitir todavía. (Versión nueva: sale de Oversoft, sin Sheet.)</div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Ganancia = venta − costo de reposición (con incentivos) − comisión − IIBB + accesorios. Los badges <span style="background:#cc3300;color:#fff;border-radius:8px;padding:0 5px">FyF</span>/<span style="background:#cc3300;color:#fff;border-radius:8px;padding:0 5px">acc$</span> son el costo unidad del circuito que se concilia con saldos: rojo = pendiente de cobro · ámbar OK = Valeria confirmó (mover en Oversoft) · verde ✓ = completo · magenta ⚠ = reventa sin costo unidad. "s/BT" = mes sin BT cargada. <b>Gastos</b>: tocá el monto para ver el desglose por concepto (mismo dato que Adm. ventas); en ámbar "a fact." = cargado en la preventa, sin emitir todavía. (Versión nueva: sale de Oversoft, sin Sheet.)</div>';
   cont.innerHTML = h;
   const u = document.getElementById('updatedAtVentasOv');
   if (u && ventasOvData.updatedAt) u.textContent = 'Actualizado: ' + new Date(ventasOvData.updatedAt).toLocaleString('es-AR');
@@ -4203,22 +4203,53 @@ function _gastoDetalleHtml(f) {
 
 // Desglose de gastos "A FACTURAR": los que el vendedor cargó en la preventa pero
 // todavía no se emitieron como comprobante (vienen de gastoxprevta, factura vacía).
-// Se muestran apenas se cargan, igual que el precio. Sin conciliación todavía
-// (sellado/quebranto se chequean recién cuando se factura).
+// Ahora se AUDITAN antes de facturar (mismo núcleo que lo emitido): sellado vs
+// provincia, quebranto vs plan VWFS, informe inhibido. Así se ve si se cobró de
+// más o de menos ANTES de emitir el comprobante, no sólo después.
 function _gastoAFacturarHtml(g) {
   let h = '<div style="margin:6px 0;padding:8px 10px;background:#fff8ec;border-radius:6px;color:#8a6100;font-size:12px">'
-    + '⏳ Gastos <b>cargados en la preventa</b> por el vendedor, <b>a facturar</b> (sin emitir todavía). '
-    + 'La conciliación (sellado, quebranto) se hace cuando se emite el comprobante.</div>';
+    + '⏳ Gastos <b>cargados en la preventa</b>, <b>a facturar</b> (sin emitir todavía). '
+    + 'Lo de abajo es una <b>auditoría preliminar</b>: revisa lo cargado por el vendedor <b>antes de facturar</b>.</div>';
+  // conciliación preliminar (misma vista que lo emitido: cargado vs corresponde)
+  if (g.alertas && g.alertas.length) {
+    h += '<div style="margin:8px 0;padding:8px 10px;background:#fdecea;border-radius:6px;color:#922">';
+    h += g.alertas.map(a => '⚠ ' + escapeHtml(a)).join('<br>');
+    h += '</div>';
+  }
+  const gd = g.desglose || {};
+  h += '<div style="margin:6px 0;color:#666;font-size:12px">Base $' + _gMoney(gd.base) + ' · Patentamiento $' + _gMoney(gd.patent) + ' · Prenda $' + _gMoney(gd.prenda) + ' · Financiación $' + _gMoney(gd.financ) + '</div>';
+  if (g.fin) {
+    const finTxt = g.fin.sinDato
+      ? '<span style="color:#999">sin monto financiado cargado aún (no se puede validar el quebranto todavía)</span>'
+      : (g.fin.ok ? '<span style="color:#27ae60">✓ plan válido</span>' : '<span style="color:#c0392b">⚠ revisar</span>');
+    h += '<div style="margin:6px 0;color:#555;font-size:12px">Financia: <b>' + escapeHtml(g.fin.financiador || '—') + '</b> · monto $' + _gMoney(g.fin.montoFin) + ' · quebranto ' + g.fin.pct + '% ' + finTxt + '</div>';
+  }
   h += '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:6px">';
-  h += '<thead><tr style="text-align:left;color:#888;border-bottom:1px solid #ddd"><th style="padding:3px 6px">Concepto</th><th style="padding:3px 6px;text-align:right">Importe</th></tr></thead><tbody>';
+  h += '<thead><tr style="text-align:left;color:#888;border-bottom:1px solid #ddd"><th style="padding:3px 6px">Concepto</th><th style="padding:3px 6px;text-align:right">Cargado</th><th style="padding:3px 6px;text-align:right">Corresponde</th><th style="padding:3px 6px;text-align:right">Diferencia</th><th style="padding:3px 6px;text-align:center">Estado</th></tr></thead><tbody>';
   (g.lineas || []).forEach(l => {
-    h += '<tr style="border-bottom:1px solid #f0f0f0">'
+    const malo = l.estado === 'mal' || l.estado === 'falta';
+    const revisar = l.estado === 'revisar';
+    const difTxt = l.dif ? (l.dif > 0 ? '+' : '') + _gMoney(l.dif) : '';
+    const difColor = l.dif > 0 ? '#c0392b' : (l.dif < 0 ? '#b9770e' : '#999');
+    const estadoCell = malo
+      ? '<span title="Diferencia detectada" style="color:#c0392b;font-weight:700">⚠ ' + (l.estado === 'falta' ? 'falta' : 'revisar') + '</span>'
+      : (revisar
+        ? '<span title="Sin tasa de referencia o plan que no coincide" style="color:#b9770e;font-weight:700">⚠ revisar</span>'
+        : '<span title="Sin observaciones" style="color:#27ae60;font-weight:700">✓</span>');
+    h += '<tr style="border-bottom:1px solid #f0f0f0;' + (malo ? 'background:#fdecea' : (revisar ? 'background:#fff8ec' : '')) + '">'
       + '<td style="padding:3px 6px">' + escapeHtml(l.concepto) + '</td>'
-      + '<td style="padding:3px 6px;text-align:right">$' + _gMoney(l.importe) + '</td></tr>';
+      + '<td style="padding:3px 6px;text-align:right">$' + _gMoney(l.cobrado) + '</td>'
+      + '<td style="padding:3px 6px;text-align:right;color:#666">' + (l.correcto != null ? '$' + _gMoney(l.correcto) : '<span style="color:#bbb">—</span>') + '</td>'
+      + '<td style="padding:3px 6px;text-align:right;font-weight:600;color:' + difColor + '">' + difTxt + '</td>'
+      + '<td style="padding:3px 6px;text-align:center">' + estadoCell + '</td></tr>';
   });
   h += '<tr style="border-top:1px solid #ccc"><td style="padding:3px 6px;font-weight:700">Total a facturar</td>'
-    + '<td style="padding:3px 6px;text-align:right;font-weight:700">$' + _gMoney(g.total) + '</td></tr>';
+    + '<td style="padding:3px 6px;text-align:right;font-weight:700">$' + _gMoney(g.total) + '</td><td colspan="3"></td></tr>';
   h += '</tbody></table>';
+  if (g.difFavor) {
+    h += '<div style="margin-top:6px;text-align:right;font-weight:600;color:' + (g.difFavor > 0 ? '#c0392b' : '#b9770e') + '">' +
+      (g.difFavor > 0 ? 'Cobró de más: $' + _gMoney(g.difFavor) : 'Falta cobrar: $' + _gMoney(-g.difFavor)) + '</div>';
+  }
   return '<div style="max-width:680px">' + h + '</div>';
 }
 

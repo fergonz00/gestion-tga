@@ -779,6 +779,86 @@ const GASTO_NOMBRES = {
   536: 'Gastos Varios',
 };
 
+// NÚCLEO de la conciliación de UNA preventa. Recibe las líneas ya normalizadas a
+// { cod, concepto, iva, neto, rate } y devuelve las líneas conciliadas + alertas
+// + fin + difFavor + patenta + desglose. Lo usan DOS caminos con la MISMA lógica,
+// para que la auditoría sea idéntica antes y después de facturar:
+//  · lado EMITIDO (getConciliacionGastos): saca iva/neto de gravado/exento del
+//    comprobante de Servicios ya facturado.
+//  · lado "A FACTURAR" (getGastosMap): saca iva/neto de gastoxprevta.importe (el
+//    importe es CON iva en los gravados, y neto=importe en los exentos —sellados,
+//    aranceles—; verificado 1:1 contra el lado emitido).
+// `m` = { prov, fecha }. Devuelve además { deMas, faltan } para los totales.
+function _conciliarPV(rawLineas, m, qbRates, ovs, pv) {
+  let base = 0, patent = 0, prenda = 0, financ = 0;
+  let arMonto = 0, arRate = null, seMonto = 0, q21Neto = 0, tieneInsPrenda = false, tieneSelloPrenda = false, tieneInhib = false;
+  const lineas = [];
+  rawLineas.forEach((l) => {
+    const cod = l.cod, iva = Number(l.iva) || 0, neto = Number(l.neto) || 0;
+    if (cod === 12 || cod === 13) { arMonto = neto; arRate = l.rate; }
+    if (cod >= 14 && cod <= 16) seMonto = neto;
+    if (cod === 18) tieneInsPrenda = true;
+    if (cod === 20) tieneSelloPrenda = true;
+    if (cod === 21) q21Neto += neto;
+    if (/inhib/i.test(String(l.concepto))) tieneInhib = true;
+    if (cod >= 9 && cod <= 16) patent += iva;
+    else if (cod >= 17 && cod <= 20) prenda += iva;
+    else if (cod === 21) financ += iva;
+    else base += iva;
+    lineas.push({ cod: cod, concepto: String(l.concepto || ''), cobrado: Math.round(iva), correcto: null, dif: 0, estado: 'ok' });
+  });
+  const prov = String(m.prov || '').toUpperCase();
+  const patenta = patent > 1 ? 'TG' : 'CLIENTE';
+  const expRate = SELLO_INSC.hasOwnProperty(prov) ? SELLO_INSC[prov] : null;
+  const baseImp = arRate ? arMonto / arRate : 0;
+  const alertas = [];
+  let deMas = 0, faltan = 0;
+
+  // PUNTO 4 — sellado vs tasa de la provincia
+  if (patenta === 'TG' && seMonto > 0 && baseImp > 0) {
+    const ln = lineas.filter((x) => x.cod >= 14 && x.cod <= 16)[0];
+    if (expRate === null) { if (ln) ln.estado = 'revisar'; alertas.push('Provincia ' + m.prov + ' sin tasa de referencia'); }
+    else {
+      const correcto = Math.round(baseImp * expRate);
+      const dif = Math.round(seMonto - correcto);   // + = cobró de más
+      if (ln) { ln.correcto = correcto; ln.dif = dif; ln.estado = (Math.abs(dif) < Math.max(1000, baseImp * 0.0005)) ? 'ok' : 'mal'; }
+      if (ln && ln.estado === 'mal') { alertas.push('Sellado ' + (Math.round((seMonto / baseImp) * 1000) / 10) + '% vs ' + (expRate * 100) + '% (' + (dif > 0 ? 'cobró de más' : 'cobró de menos') + ' ' + Math.abs(dif).toLocaleString('es-AR') + ')'); if (dif > 0) deMas += dif; else faltan += -dif; }
+    }
+  }
+  // PUNTO 8 — quebranto vs plan VWFS (sobre monto financiado real de detcash).
+  // Solo se puede validar si detcash ya tiene el monto financiado (montoFin>0):
+  // antes de facturar puede no estar cargado todavía, así que no se marca alerta.
+  let fin = null;
+  if (financ > 0) {
+    let montoFin = 0, financiador = '';
+    const dc = ovs('/detcash?referencia=eq.' + encodeURIComponent('PV ' + pv) + '&motivo=ilike.FIN*&select=importe,motivo');
+    dc.forEach((r) => { const imp = Number(r.importe) || 0; if (imp > 0) { montoFin += imp; const fi = _finInfo(r.motivo); if (fi) financiador = fi.nombre; } });
+    const impliedQb = montoFin > 0 ? q21Neto / montoFin : 0;
+    const planOk = qbRates.some((q) => Math.abs(q / 100 - impliedQb) < 0.003);
+    const esFijoSinQb = q21Neto <= 120000;
+    const ok = (montoFin <= 0) || planOk || esFijoSinQb;   // sin monto financiado no se puede validar → no alerta
+    fin = { montoFin: Math.round(montoFin), financiador: financiador, quebrantoNeto: Math.round(q21Neto), pct: Math.round(impliedQb * 1000) / 10, ok: ok, sinDato: montoFin <= 0 };
+    const lnq = lineas.filter((x) => x.cod === 21)[0];
+    if (lnq && !ok && montoFin > 0) { lnq.estado = 'revisar'; alertas.push('Quebranto ' + fin.pct + '% no coincide con ningún plan VWFS'); }
+  }
+  // PUNTO 5 — prenda incompleta (sellado de prenda sin inscripción)
+  if (tieneSelloPrenda && !tieneInsPrenda) alertas.push('Sellado de prenda sin inscripción de prenda');
+  // PUNTO 7 — informe inhibido (solo PVs nuevas que financian)
+  if (financ > 0 && m.fecha >= INHIBIDO_DESDE && !tieneInhib) {
+    lineas.push({ cod: 99, concepto: 'Informe inhibido (falta)', cobrado: 0, correcto: INFORME_INHIBIDO, dif: -INFORME_INHIBIDO, estado: 'falta' });
+    alertas.push('Falta informe inhibido $' + INFORME_INHIBIDO.toLocaleString('es-AR'));
+    faltan += INFORME_INHIBIDO;
+  }
+  const difFavor = lineas.reduce((a, x) => a + (Number(x.dif) || 0), 0);
+  return {
+    patenta: patenta,
+    total: Math.round(base + patent + prenda + financ),
+    desglose: { base: Math.round(base), patent: Math.round(patent), prenda: Math.round(prenda), financ: Math.round(financ) },
+    fin: fin, lineas: lineas, alertas: alertas, difFavor: Math.round(difFavor),
+    estado: alertas.length ? 'alerta' : 'ok', deMas: deMas, faltan: faltan,
+  };
+}
+
 function getConciliacionGastos(params) {
   const mes = String((params && params.mes) || '').match(/^\d{4}-\d{2}$/) ? params.mes : _yyyyMm(new Date());
   const desde = (mes + '-01') < GASTOS_DESDE ? GASTOS_DESDE : mes + '-01';
@@ -823,70 +903,13 @@ function getConciliacionGastos(params) {
   Object.keys(gComp).forEach((pv) => {
     const m = meta[pv] || { prov: '', fecha: '', lista: 0 };
     const det = ovs('/comprobantesdetallesgastos?comprobanteid=eq.' + gComp[pv].id + '&select=concepto,montogravado,montoexento');
-    let base = 0, patent = 0, prenda = 0, financ = 0;
-    let arMonto = 0, arRate = null, seMonto = 0, q21Neto = 0, tieneInsPrenda = false, tieneSelloPrenda = false, tieneInhib = false;
-    const lineas = [];
-    det.forEach((l) => {
-      const cod = _gCod(l.concepto), iva = _gIva(l), neto = _gNeto(l);
-      if (cod === 12 || cod === 13) { arMonto = neto; arRate = _gRate(l.concepto); }
-      if (cod >= 14 && cod <= 16) seMonto = neto;
-      if (cod === 18) tieneInsPrenda = true;
-      if (cod === 20) tieneSelloPrenda = true;
-      if (cod === 21) q21Neto += neto;
-      if (/inhib/i.test(String(l.concepto))) tieneInhib = true;
-      if (cod >= 9 && cod <= 16) patent += iva;
-      else if (cod >= 17 && cod <= 20) prenda += iva;
-      else if (cod === 21) financ += iva;
-      else base += iva;
-      lineas.push({ cod: cod, concepto: String(l.concepto || ''), cobrado: Math.round(iva), correcto: null, dif: 0, estado: 'ok' });
-    });
-    const prov = m.prov.toUpperCase();
-    const patenta = patent > 1 ? 'TG' : 'CLIENTE';
-    const expRate = SELLO_INSC.hasOwnProperty(prov) ? SELLO_INSC[prov] : null;
-    const baseImp = arRate ? arMonto / arRate : 0;
-    const alertas = [];
-
-    // PUNTO 4 — sellado vs tasa de la provincia
-    if (patenta === 'TG' && seMonto > 0 && baseImp > 0) {
-      const ln = lineas.filter((x) => x.cod >= 14 && x.cod <= 16)[0];
-      if (expRate === null) { if (ln) ln.estado = 'revisar'; alertas.push('Provincia ' + m.prov + ' sin tasa de referencia'); }
-      else {
-        const correcto = Math.round(baseImp * expRate);
-        const dif = Math.round(seMonto - correcto);   // + = cobró de más
-        if (ln) { ln.correcto = correcto; ln.dif = dif; ln.estado = (Math.abs(dif) < Math.max(1000, baseImp * 0.0005)) ? 'ok' : 'mal'; }
-        if (ln && ln.estado === 'mal') { alertas.push('Sellado ' + (Math.round((seMonto / baseImp) * 1000) / 10) + '% vs ' + (expRate * 100) + '% (' + (dif > 0 ? 'cobró de más' : 'cobró de menos') + ' ' + Math.abs(dif).toLocaleString('es-AR') + ')'); if (dif > 0) totDeMas += dif; else totFaltan += -dif; }
-      }
-    }
-    // PUNTO 8 — quebranto vs plan VWFS (sobre monto financiado real de detcash)
-    let fin = null;
-    if (financ > 0) {
-      let montoFin = 0, financiador = '';
-      const dc = ovs('/detcash?referencia=eq.' + encodeURIComponent('PV ' + pv) + '&motivo=ilike.FIN*&select=importe,motivo');
-      dc.forEach((r) => { const imp = Number(r.importe) || 0; if (imp > 0) { montoFin += imp; const fi = _finInfo(r.motivo); if (fi) financiador = fi.nombre; } });
-      const impliedQb = montoFin > 0 ? q21Neto / montoFin : 0;
-      const planOk = qbRates.some((q) => Math.abs(q / 100 - impliedQb) < 0.003);
-      const esFijoSinQb = q21Neto <= 120000;
-      const ok = planOk || esFijoSinQb;
-      fin = { montoFin: Math.round(montoFin), financiador: financiador, quebrantoNeto: Math.round(q21Neto), pct: Math.round(impliedQb * 1000) / 10, ok: ok };
-      const lnq = lineas.filter((x) => x.cod === 21)[0];
-      if (lnq && !ok) { lnq.estado = 'revisar'; alertas.push('Quebranto ' + fin.pct + '% no coincide con ningún plan VWFS'); }
-    }
-    // PUNTO 5 — prenda incompleta (sellado de prenda sin inscripción)
-    if (tieneSelloPrenda && !tieneInsPrenda) alertas.push('Sellado de prenda sin inscripción de prenda');
-    // PUNTO 7 — informe inhibido (solo PVs nuevas que financian)
-    if (financ > 0 && m.fecha >= INHIBIDO_DESDE && !tieneInhib) {
-      lineas.push({ cod: 99, concepto: 'Informe inhibido (falta)', cobrado: 0, correcto: INFORME_INHIBIDO, dif: -INFORME_INHIBIDO, estado: 'falta' });
-      alertas.push('Falta informe inhibido $' + INFORME_INHIBIDO.toLocaleString('es-AR'));
-      totFaltan += INFORME_INHIBIDO;
-    }
-
-    const difFavor = lineas.reduce((a, x) => a + (Number(x.dif) || 0), 0);
+    const rawLineas = det.map((l) => ({ cod: _gCod(l.concepto), concepto: String(l.concepto || ''), iva: _gIva(l), neto: _gNeto(l), rate: _gRate(l.concepto) }));
+    const c = _conciliarPV(rawLineas, m, qbRates, ovs, pv);
+    totDeMas += c.deMas; totFaltan += c.faltan;
     filas.push({
-      pv: pv, prov: m.prov, fecha: m.fecha, patenta: patenta,
-      total: Math.round(base + patent + prenda + financ),
-      desglose: { base: Math.round(base), patent: Math.round(patent), prenda: Math.round(prenda), financ: Math.round(financ) },
-      fin: fin, lineas: lineas, alertas: alertas, difFavor: Math.round(difFavor),
-      estado: alertas.length ? 'alerta' : 'ok',
+      pv: pv, prov: m.prov, fecha: m.fecha, patenta: c.patenta,
+      total: c.total, desglose: c.desglose, fin: c.fin, lineas: c.lineas,
+      alertas: c.alertas, difFavor: c.difFavor, estado: c.estado,
     });
   });
   filas.sort((a, b) => a.pv.localeCompare(b.pv));
@@ -933,9 +956,28 @@ function getGastosMap() {
       const res = UrlFetchApp.fetch(OVERSOFT_URL + path, { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true });
       return res.getResponseCode() < 300 ? JSON.parse(res.getContentText()) : [];
     };
+    // Provincia + fecha por PV (del comprobante de auto) para poder AUDITAR el
+    // "a facturar" igual que lo emitido (sellado vs provincia, etc). Keyeado por
+    // _normPv para matchear con las PVs de gastoxprevta.
+    const metaAf = {};
+    ovs('/comprobantes?tipo=ilike.Automoviles*&fecha=gte.' + GASTOS_DESDE + '&select=referencia,provincia,fecha&limit=5000').forEach((r) => {
+      const ref = String(r.referencia || ''); if (ref.indexOf('PV ') !== 0) return;
+      const k = _normPv(ref); if (!metaAf[k]) metaAf[k] = { prov: String(r.provincia || ''), fecha: String(r.fecha || '').slice(0, 10) };
+    });
+    // Tasas de quebranto válidas (planes VWFS) — misma fuente que la conciliación.
+    let qbRates = [];
+    try {
+      const svc = PropertiesService.getScriptProperties().getProperty('SUPA_SERVICE');
+      if (svc) {
+        const res = UrlFetchApp.fetch(SUPA_URL + '/portal_campanas?select=quebranto_pct', { headers: { apikey: svc, Authorization: 'Bearer ' + svc }, muteHttpExceptions: true });
+        if (res.getResponseCode() < 300) qbRates = JSON.parse(res.getContentText()).map((c) => Number(c.quebranto_pct) || 0);
+      }
+    } catch (e) {}
+
     const pvs = ovs('/preventas?select=prevtaid&anulada=not.is.true&tipopv=eq.O&fecha=gte.' + GASTOS_DESDE + '&limit=3000');
     const ids = pvs.map((p) => p.prevtaid).filter((x) => x || x === 0);
     const raw = {};  // normPv -> [{gxid, gastoid, importe}] (crudas, a facturar)
+    const origPv = {};  // normPv -> 'NNNNN/N' (con ceros, para matchear detcash)
     // Lotes chicos (25 PVs): la réplica capea ~1000 filas/respuesta. Filtro por
     // prevtaid solo (sin %20/* ni eq.vacio en la URL, que Apps Script encodea raro)
     // y descarto en JS lo ya facturado y lo que no sea la PV (ej. remitos GR).
@@ -945,7 +987,7 @@ function getGastosMap() {
         if (String(r.factura || '') !== '') return;            // solo lo que esta a facturar
         if (!/^PV\s/i.test(String(r.prevtanro || ''))) return; // solo la PV (no GR/otros)
         const pv = _normPv(r.prevtanro); if (!pv) return;
-        if (!raw[pv]) raw[pv] = [];
+        if (!raw[pv]) { raw[pv] = []; origPv[pv] = String(r.prevtanro).replace(/^PV\s+/i, ''); }
         raw[pv].push({ gxid: Number(r.gastosxprevtaid) || 0, gastoid: r.gastoid, importe: Math.round(Number(r.importe) || 0) });
       });
     }
@@ -959,13 +1001,28 @@ function getGastosMap() {
       let cut = 0;
       for (let i = 1; i < rows.length; i++) if (rows[i].gxid - rows[i - 1].gxid > 10) cut = i;
       const cur = rows.slice(cut);
-      const lineas = cur.map((r) => ({ gastoid: r.gastoid, concepto: GASTO_NOMBRES[r.gastoid] || ('Gasto #' + r.gastoid), importe: r.importe }));
-      lineas.sort((x, y) => String(x.concepto).localeCompare(String(y.concepto)));
-      af[pv] = { total: cur.reduce((s, r) => s + r.importe, 0), lineas: lineas };
+      // Auditoría PRELIMINAR (antes de facturar): mismo núcleo que lo emitido.
+      // gastoxprevta.importe es CON iva en los gravados; neto=importe/1,21 solo en
+      // la financiación (cod 21, gravada), y neto=importe en los exentos (sellados,
+      // aranceles, formularios) — que son los que usa el cálculo de sellado.
+      const rawLineas = cur.map((r) => {
+        const name = GASTO_NOMBRES[r.gastoid] || ('Gasto #' + r.gastoid);
+        const cod = _gCod(name);
+        return { cod: cod, concepto: name, iva: r.importe, neto: (cod === 21 ? r.importe / 1.21 : r.importe), rate: _gRate(name) };
+      });
+      const m = metaAf[pv] || { prov: '', fecha: '' };
+      const c = _conciliarPV(rawLineas, m, qbRates, ovs, origPv[pv] || pv);
+      af[pv] = { total: cur.reduce((s, r) => s + r.importe, 0), c: c, prov: m.prov };
     });
     Object.keys(af).forEach((pv) => {
       if (map[pv]) return;   // ya tiene gasto emitido/conciliado: ese manda
-      map[pv] = { total: af[pv].total, sinEmitir: true, lineas: af[pv].lineas, estado: 'afacturar' };
+      const c = af[pv].c;
+      map[pv] = {
+        total: af[pv].total, sinEmitir: true, estado: 'afacturar',
+        // conciliación preliminar (misma forma que lo emitido, la usa el front)
+        lineas: c.lineas, desglose: c.desglose, fin: c.fin, alertas: c.alertas,
+        difFavor: c.difFavor, patenta: c.patenta, prov: af[pv].prov,
+      };
     });
   } catch (e) {}
 
