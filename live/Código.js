@@ -988,7 +988,7 @@ function getVentasV2(targetMes) {
   // unidades (serie + color) en lotes de 100
   const uidSet = {}; for (const p of pvs) if (p.unidadid) uidSet[p.unidadid] = true;
   const uids = Object.keys(uidSet); const unis = {};
-  for (let i = 0; i < uids.length; i += 100) for (const u of get('/unidades?select=unidadid,serie,color&unidadid=in.(' + uids.slice(i, i + 100).join(',') + ')')) unis[u.unidadid] = u;
+  for (let i = 0; i < uids.length; i += 100) for (const u of get('/unidades?select=unidadid,serie,color,fechapatentamiento&unidadid=in.(' + uids.slice(i, i + 100).join(',') + ')')) unis[u.unidadid] = u;
   const colorDe = {};
   for (const c of get('/colores?select=colorid,descripcion&limit=2000')) colorDe[String(c.colorid)] = String(c.descripcion || '').trim();
 
@@ -1002,9 +1002,22 @@ function getVentasV2(targetMes) {
   // el margen. Solo consulto las PVs del mes objetivo (las que se calculan por
   // fórmula; los meses cerrados ya vienen congelados de ventas_hist).
   const mesActualV0 = _yyyyMm(new Date());
-  const mesObjetivo0 = targetMes || mesActualV0;
+  // Congeladas (ventas_hist) = fotos finales de autos YA PATENTADOS de meses
+  // cerrados. Las traigo temprano para saber qué PVs NO recalcular por fórmula.
+  // Un auto de mes cerrado que NO está congelado (no patentado, o patentado pero
+  // aún sin congelar) se calcula EN VIVO acá → editable (lee ventas_manual + comentario).
+  let histRows = [];
+  if (!targetMes) { try { histRows = _supaGet('/ventas_hist?select=*&mes=lt.' + mesActualV0 + '&order=mes.desc,preventa.desc'); } catch (e) { histRows = []; } }
+  const frozenPv = {}; for (const h of histRows) frozenPv[_normPv(h.preventa)] = true;
+  // ¿esta PV se calcula por fórmula? (mismo criterio que el loop de abajo)
+  const calcPorFormula = (p) => {
+    const mk = String(p.fecha || '').slice(0, 7);
+    if (mk < VENTAS_MES_MINIMO) return false;
+    if (targetMes) return mk === targetMes;
+    return mk === mesActualV0 || !frozenPv[_normPv(p.numero)];   // mes actual, o cerrado sin congelar
+  };
   const vtpdaSet = {};
-  const numsObj = pvs.filter(p => String(p.fecha || '').slice(0, 7) === mesObjetivo0).map(p => p.numero).filter(Boolean);
+  const numsObj = pvs.filter(calcPorFormula).map(p => p.numero).filter(Boolean);
   for (let i = 0; i < numsObj.length; i += 50) {
     const lote = numsObj.slice(i, i + 50).map(n => '"' + n + '"').join(',');
     for (const r of get('/detcash?select=referencia&origen=eq.VTPDA&referencia=in.(' + encodeURIComponent(lote) + ')&limit=1000')) vtpdaSet[r.referencia] = true;
@@ -1049,13 +1062,14 @@ function getVentasV2(targetMes) {
   // Meses CERRADOS (< mes actual) = resultados congelados de la hoja (ventas_hist).
   // El mes ACTUAL se calcula con la fórmula (Oversoft+BT) acá abajo.
   const mesActualV = _yyyyMm(new Date());
-  const mesObjetivo = targetMes || mesActualV;   // qué mes calcular por fórmula
+  const seenPv = {};   // preventas calculadas por fórmula (para no duplicar con ventas_hist)
   // proceso cronológico (asc) para la gcia neta acumulada por mes
   for (const p of pvs.slice().reverse()) {
     if (!p.fecha) continue;
     const mesKey = String(p.fecha).slice(0, 7);
-    if (mesKey < VENTAS_MES_MINIMO) continue;
-    if (mesKey !== mesObjetivo) continue;   // solo el mes objetivo se calcula por fórmula
+    if (!calcPorFormula(p)) continue;   // mes actual + meses cerrados sin congelar (no patentados)
+    const patentado = !!((unis[p.unidadid] || {}).fechapatentamiento);
+    seenPv[_normPv(p.numero)] = true;
     cuentaPorMes[mesKey] = (cuentaPorMes[mesKey] || 0) + 1;
 
     const monto = Number(p.precioventa) || 0;
@@ -1130,6 +1144,7 @@ function getVentasV2(targetMes) {
       fechaPvIso: String(p.fecha).slice(0, 10),
       fechaPvStr: String(p.fecha).slice(0, 10),
       mesKey: mesKey,
+      patentado: patentado,
       preventaNum: String(p.numero || '').trim(),
       montoFc: monto,
       iva: ivaFrac * 100,
@@ -1162,8 +1177,8 @@ function getVentasV2(targetMes) {
   // modo normal (sin targetMes) y solo meses ANTERIORES al actual (el actual
   // siempre sale de la fórmula, aunque ya esté congelado).
   if (!targetMes) try {
-    const hist = _supaGet('/ventas_hist?select=*&mes=lt.' + mesActualV + '&order=mes.desc,preventa.desc');
-    for (const h of hist) {
+    for (const h of histRows) {
+      if (seenPv[_normPv(h.preventa)]) continue;   // ya está viva por fórmula (sin congelar) → no duplicar
       cuentaPorMes[h.mes] = (cuentaPorMes[h.mes] || 0) + 1;
       filas.push({
         ventaNum: 0, fechaPvIso: h.fecha || '', fechaPvStr: h.fecha || '',
@@ -1201,6 +1216,7 @@ function congelarMes(mes) {
   const rows = [];
   for (const v of (r.ventas || [])) {
     if (v.mesKey !== mes || typeof v.gciaVtaPesos !== 'number') continue;
+    if (!v.patentado) continue;   // solo se congelan patentados; los no patentados siguen vivos/editables
     const pv = _normPv(v.preventaNum);
     if (!pv) continue;
     const monto = Math.round(Number(v.montoFc) || 0);
@@ -1868,9 +1884,11 @@ function getStockUnidades() {
   const cat = _supaGet('/catalogo_modelos?select=codigo,nombre_corto,nombre_bt,familia&activo=eq.true');
   const catByNorm = {};   // norm(desc operativa | nombre_bt | nombre_corto) → nombre_corto
   const btByNc = {};      // nombre_corto → nombre_bt
+  const catByBase = {};   // código base (sin sufijo MY/año) → nombre_corto — fallback para MY nuevos
   for (const c of cat) {
     if (c.nombre_corto) { catByNorm[_ntrim(c.nombre_corto)] = c.nombre_corto; btByNc[c.nombre_corto] = c.nombre_bt || c.nombre_corto; }
     if (c.nombre_bt)    catByNorm[_ntrim(c.nombre_bt)] = c.nombre_corto;
+    if (c.codigo && c.nombre_corto) catByBase[_baseCod(c.codigo)] = c.nombre_corto;
   }
   const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
   // descripción operativa por código de compra (paginado, igual que _oversoftMotorData)
@@ -1897,7 +1915,9 @@ function getStockUnidades() {
   const out = [];
   for (const u of us) {
     const d = desc[String(u.modelo || '').trim()];
-    const nc = d ? (catByNorm[_ntrim(d)] || null) : null;
+    // 1º por descripción operativa; si el MY es tan nuevo que Oversoft no lo describió
+    // todavía (desc vacía), fallback por código base (ej "5URTT4 MY27" → "5URTT4").
+    const nc = (d ? (catByNorm[_ntrim(d)] || null) : null) || (catByBase[_baseCod(u.modelo)] || null);
     const fc = u.fechadepedido ? String(u.fechadepedido).slice(0, 10)
              : (u.fechaderecepcion ? String(u.fechaderecepcion).slice(0, 10) : null);
     let antig = null;
