@@ -745,6 +745,7 @@ function getAdmVentas() {
 const GASTOS_DESDE     = '2026-06-01';
 const INHIBIDO_DESDE   = '2026-06-19';  // el informe inhibido se exige en PVs nuevas (>= esta fecha)
 const INFORME_INHIBIDO = 65000;
+const SELLO_TOLERANCIA = 100;  // diferencia de sellado tolerada (redondeos): hasta $100 = OK
 const SELLO_INSC = {
   'CAPITAL FEDERAL': 0.03, 'BUENOS AIRES': 0.025, 'CATAMARCA': 0.01, 'CHACO': 0.01,
   'CHUBUT': 0.02, 'CORDOBA': 0.015, 'CORRIENTES': 0.01, 'ENTRE RIOS': 0.0225,
@@ -826,8 +827,9 @@ function _conciliarPV(rawLineas, m, qbRates, ovs, pv, preFact) {
     else {
       const correcto = Math.round(baseImp * expRate);
       const dif = Math.round(seMonto - correcto);   // + = cobró de más
-      if (ln) { ln.correcto = correcto; ln.dif = dif; ln.estado = (Math.abs(dif) < Math.max(1000, baseImp * 0.0005)) ? 'ok' : 'mal'; }
-      if (ln && ln.estado === 'mal') { alertas.push('Sellado ' + (Math.round((seMonto / baseImp) * 1000) / 10) + '% vs ' + (expRate * 100) + '% (' + (dif > 0 ? 'cobró de más' : 'cobró de menos') + ' ' + Math.abs(dif).toLocaleString('es-AR') + ')'); if (dif > 0) deMas += dif; else faltan += -dif; }
+      // Tolerancia: hasta $100 de diferencia = OK (redondeos); más que eso se marca.
+      if (ln) { ln.correcto = correcto; ln.dif = dif; ln.estado = (Math.abs(dif) <= SELLO_TOLERANCIA) ? 'ok' : 'mal'; }
+      if (ln && ln.estado === 'mal') { alertas.push('Sellado ' + (Math.round((seMonto / baseImp) * 10000) / 100) + '% vs ' + (expRate * 100) + '% (' + (dif > 0 ? 'cobró de más' : 'cobró de menos') + ' ' + Math.abs(dif).toLocaleString('es-AR') + ')'); if (dif > 0) deMas += dif; else faltan += -dif; }
     }
   }
   // PUNTO 8 — quebranto vs plan VWFS (sobre monto financiado real de detcash).
