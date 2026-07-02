@@ -436,12 +436,17 @@ function _oversoftMotorData(catByNorm) {
 // y allá la mirada cortoplacista del ritmo actual). A diferencia de "meses de
 // stock", esta métrica responde incluso para modelos/colores que hoy no hay:
 // mide la velocidad real cuando los hubo.
+// Además, para que el promedio de lo vendido no engañe (es optimista por
+// construcción: lo que nunca se vende no entra), se marca el STOCK LENTO: las
+// unidades HOY en stock que llevan MÁS días disponibles que el promedio de
+// rotación del modelo → lentoN (cuántas) + lentoMax (la más vieja, en días).
 // =======================================================================
 function _diasEnVenta(ncDe, colorDe, h) {
   const hoy = new Date();
   const fin = new Date(hoy.getFullYear(), hoy.getMonth(), 1);       // 1° del mes actual (excluido)
   const ini = new Date(hoy.getFullYear(), hoy.getMonth() - 12, 1);  // 1° de 12 meses atrás
   const iso = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-01';
+  const dias0 = (desde, hasta) => Math.max(0, Math.round((hasta - new Date(String(desde).slice(0, 10))) / 86400000));
   const res = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo,color,fechadepedido,fechaderecepcion,fechaasignacion&fechaasignacion=gte.' + iso(ini) + '&fechaasignacion=lt.' + iso(fin) + '&limit=5000', h);
   const us = (res.getResponseCode() < 300) ? JSON.parse(res.getContentText()) : [];
   const acc = {};   // nc → { sum, n, colores: { col → {sum,n} } }
@@ -451,7 +456,7 @@ function _diasEnVenta(ncDe, colorDe, h) {
     const desde = u.fechadepedido || u.fechaderecepcion;
     if (!desde || !u.fechaasignacion) continue;   // sin fecha de alta: no se puede medir
     // clamp a 0: asignada antes de entrar al sistema = se vendió al instante
-    const dias = Math.max(0, Math.round((new Date(String(u.fechaasignacion).slice(0, 10)) - new Date(String(desde).slice(0, 10))) / 86400000));
+    const dias = dias0(desde, new Date(String(u.fechaasignacion).slice(0, 10)));
     const col = colorDe[String(u.color)] || ('color ' + u.color);
     if (!acc[nc]) acc[nc] = { sum: 0, n: 0, colores: {} };
     const t = acc[nc];
@@ -469,6 +474,31 @@ function _diasEnVenta(ncDe, colorDe, h) {
     });
     out[nc] = { diasProm: Math.round(t.sum / t.n), n: t.n, colores: cols };
   });
+
+  // STOCK LENTO: unidades disponibles hoy con más días que el promedio del
+  // modelo (o del color, si ese color tiene promedio propio).
+  try {
+    const resS = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo,color,fechadepedido,fechaderecepcion&entregada=eq.false&asignada=eq.false&preventa=eq.&limit=3000', h);
+    const stk = (resS.getResponseCode() < 300) ? JSON.parse(resS.getContentText()) : [];
+    for (const u of stk) {
+      const nc = ncDe(u.modelo);
+      if (!nc || !out[nc]) continue;               // sin rotación medida: no hay referencia
+      const desde = u.fechadepedido || u.fechaderecepcion;
+      if (!desde) continue;
+      const edad = dias0(desde, hoy);
+      const col = colorDe[String(u.color)] || ('color ' + u.color);
+      const t = out[nc];
+      if (edad > t.diasProm) {
+        t.lentoN = (t.lentoN || 0) + 1;
+        t.lentoMax = Math.max(t.lentoMax || 0, edad);
+      }
+      const tc = t.colores[col];
+      if (tc && edad > tc.diasProm) {
+        tc.lentoN = (tc.lentoN || 0) + 1;
+        tc.lentoMax = Math.max(tc.lentoMax || 0, edad);
+      }
+    }
+  } catch (e) {}
   return out;
 }
 
@@ -2227,13 +2257,15 @@ function getAnalisisStock() {
       const cvMes = cv4 / N;
       const cdv = (dv && dv.colores && dv.colores[col]) || null;
       return { color: col, stock: cstk, venta4m: cv4, ventaMes: cvMes, mesesStock: cvMes > 0 ? cstk / cvMes : null, ventasPorMes: cvpm,
-               diasVenta: cdv ? cdv.diasProm : null, diasVentaN: cdv ? cdv.n : 0 };
+               diasVenta: cdv ? cdv.diasProm : null, diasVentaN: cdv ? cdv.n : 0,
+               diasLentoN: (cdv && cdv.lentoN) || 0, diasLentoMax: (cdv && cdv.lentoMax) || 0 };
     }).sort((a, b) => b.stock - a.stock || b.venta4m - a.venta4m || a.color.localeCompare(b.color));
     items.push({
       nombreCorto: nc, modelo: btByNc[nc] || nc, familia: famByNc[nc] || '',
       stock: stock, venta4m: v4, ventaMes: vMes, mesesStock: vMes > 0 ? stock / vMes : null,
       ventasPorMes: vpm, colores: colores,
       diasVenta: dv ? dv.diasProm : null, diasVentaN: dv ? dv.n : 0,
+      diasLentoN: (dv && dv.lentoN) || 0, diasLentoMax: (dv && dv.lentoMax) || 0,
       orden: ordenNc.indexOf(nc),
     });
   }
@@ -4570,13 +4602,15 @@ function _repartoRotacion(motor, virt) {
       var cstk = stkCol[col] || 0;
       var cdv = (dv && dv.colores && dv.colores[col]) || null;
       return { color: col, stock: cstk, venta4m: cv4, ventaMes: cv4 / nMes, mesesStock: cv4 > 0 ? cstk / (cv4 / nMes) : null,
-               diasVenta: cdv ? cdv.diasProm : null, diasVentaN: cdv ? cdv.n : 0 };
+               diasVenta: cdv ? cdv.diasProm : null, diasVentaN: cdv ? cdv.n : 0,
+               diasLentoN: (cdv && cdv.lentoN) || 0, diasLentoMax: (cdv && cdv.lentoMax) || 0 };
     }).sort(function (a, b) { return b.venta4m - a.venta4m || b.stock - a.stock; });
     out.push({
       modelo: m.modelo, nombreCorto: m.nombreCorto, familia: m.familia,
       stock: stock, venta4m: v4, ventaMes: v4 / nMes,
       mesesStock: v4 > 0 ? stock / (v4 / nMes) : null,
       diasVenta: dv ? dv.diasProm : null, diasVentaN: dv ? dv.n : 0,
+      diasLentoN: (dv && dv.lentoN) || 0, diasLentoMax: (dv && dv.lentoMax) || 0,
       colores: colores
     });
   });
