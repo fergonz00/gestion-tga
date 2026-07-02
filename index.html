@@ -1323,7 +1323,7 @@ table.patent-tbl.resumida .col-extra { display: none; }
 
       <div class="subpanel" id="subpanelAnalisisStock">
         <div class="toolbar">
-          <div class="updated" id="updatedAtAnalisis">Stock por modelo y color + rotación de los últimos 6 meses completos.</div>
+          <div class="updated" id="updatedAtAnalisis">Stock por modelo y color + rotación de los últimos 4 meses completos.</div>
           <div class="actions">
             <button class="refresh" onclick="loadAnalisisStock(true)">Actualizar</button>
           </div>
@@ -4587,8 +4587,11 @@ function setStockSubtab(name) {
 
 // =======================================================================
 // ANÁLISIS DE STOCK — stock por modelo y, dentro, por color + rotación de los
-// últimos 6 meses completos y "meses de stock". Data del backend
-// (tipo=analisisstock, todo Oversoft).  Meses de stock = stock ÷ (ventas6m÷6).
+// últimos 4 meses completos y "meses de stock". Data del backend
+// (tipo=analisisstock, todo Oversoft).  Meses de stock = stock ÷ (ventas4m÷4).
+// Además "días en venderse" (rotación REAL): promedio de días que tardó cada
+// unidad en venderse cuando efectivamente estuvo en stock; las vendidas a
+// pedido (asignadas antes de recibirse) se cuentan aparte como "a pedido".
 // =======================================================================
 let analisisStockData = null;
 let analisisOrden = 'catalogo';        // catalogo | sobrestock | rotacion | stock
@@ -4625,6 +4628,29 @@ function _mesesBadge(meses, stock) {
   else if (meses <= 8) { bg='#fff3cd'; fg='#a07000'; txt=fmtNumLite(meses)+' m'; }
   else                 { bg='#fae0d4'; fg='#c0657a'; txt=fmtNumLite(meses)+' m · sobrestock'; }
   return '<span style="background:'+bg+';color:'+fg+';font-weight:700;padding:3px 9px;border-radius:5px;white-space:nowrap;font-size:12px">'+txt+'</span>';
+}
+// Badge de rotación REAL: días promedio en venderse cuando estuvo en stock.
+// n = unidades del promedio; nPre = pre-vendidas (a pedido, no entran al promedio).
+function _diasBadge(dias, n, nPre) {
+  n = n || 0; nPre = nPre || 0;
+  if (!n && !nPre) return '<span style="color:var(--vw-grey-3)">—</span>';
+  let h = '';
+  if (n) {
+    let bg, fg;
+    if (dias <= 30)      { bg='#d4edda'; fg='#2d6a4f'; }
+    else if (dias <= 60) { bg='#fff3cd'; fg='#a07000'; }
+    else                 { bg='#fae0d4'; fg='#c0657a'; }
+    h += '<span style="background:'+bg+';color:'+fg+';font-weight:700;padding:3px 9px;border-radius:5px;white-space:nowrap;font-size:12px" '
+       + 'title="Promedio sobre '+n+' unidad'+(n===1?'':'es')+' que estuvieron físicamente en stock antes de venderse (últimos 4 meses completos)">'
+       + dias+' d <span style="font-weight:400;opacity:.75">· '+n+' u.</span></span>';
+  }
+  if (nPre) {
+    const pct = Math.round(100 * nPre / (n + nPre));
+    h += (h ? ' ' : '') + '<span style="color:var(--vw-grey-3);font-size:11px;white-space:nowrap" '
+       + 'title="'+nPre+' unidad'+(nPre===1?'':'es')+' vendida'+(nPre===1?'':'s')+' a pedido (asignadas antes de llegar al stock): no entran al promedio">'
+       + pct+'% a pedido</span>';
+  }
+  return h;
 }
 // Mini-barras de ventas por mes (de más viejo a más nuevo).
 function _sparkline(vpm, meses) {
@@ -4667,11 +4693,11 @@ function renderAnalisisStock() {
   if (!d || !d.items) { wrap.innerHTML = '<div class="empty">Sin datos.</div>'; return; }
   const meses = d.meses || [];
   const upd = document.getElementById('updatedAtAnalisis');
-  if (upd && d.updatedAt) upd.textContent = 'Stock por modelo y color + rotación de los últimos 6 meses · actualizado ' + new Date(d.updatedAt).toLocaleString('es-AR');
+  if (upd && d.updatedAt) upd.textContent = 'Stock por modelo y color + rotación de los últimos 4 meses · actualizado ' + new Date(d.updatedAt).toLocaleString('es-AR');
 
   // KPIs globales
-  const ventas6m = d.ventasTotal || 0;
-  const vtaMesGlobal = ventas6m / (meses.length || 6);
+  const ventas4m = d.ventasTotal || 0;
+  const vtaMesGlobal = ventas4m / (meses.length || 4);
   const mesesGlobal = vtaMesGlobal > 0 ? d.stockCatalogado / vtaMesGlobal : null;
 
   // ordenar copia (catalogo = orden del backend)
@@ -4685,14 +4711,15 @@ function renderAnalisisStock() {
   h += '<div class="cards">';
   h += _anaCard('Stock catalogado', d.stockCatalogado + (d.stockSinCatalogo ? ' <span style="font-size:12px;color:var(--vw-grey-3)">(+'+d.stockSinCatalogo+' s/cat.)</span>' : ''));
   h += _anaCard('Modelos en stock', items.filter(i=>i.stock>0).length);
-  h += _anaCard('Ventas 6 meses', ventas6m);
+  h += _anaCard('Ventas 4 meses', ventas4m);
   h += _anaCard('Prom. ventas/mes', fmtNumLite(vtaMesGlobal));
   h += _anaCard('Meses de stock', mesesGlobal!=null ? fmtNumLite(mesesGlobal)+' m' : '—');
   h += '</div>';
 
   h += '<div style="font-size:12px;color:var(--vw-grey-4);margin-bottom:10px">'
      + 'Rotación calculada sobre <strong>'+ (meses.length ? (_mesAbr(meses[0])+' → '+_mesAbr(meses[meses.length-1])) : '—') +'</strong> '
-     + '(6 meses completos; el mes en curso no cuenta). <em>Meses de stock = stock ÷ (ventas 6m ÷ 6)</em>. Tocá un modelo para ver el desglose por color.'
+     + '(4 meses completos; el mes en curso no cuenta). <em>Meses de stock = stock ÷ (ventas 4m ÷ 4)</em>. '
+     + '<em>Días en venderse</em> = promedio real de días entre que la unidad llegó al stock y se vendió (las vendidas a pedido no cuentan y se muestran como "% a pedido"). Tocá un modelo para ver el desglose por color.'
      + '</div>';
   h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">';
   h += '<div style="display:flex;gap:14px;align-items:center;font-size:12px;color:var(--vw-grey-4);flex-wrap:wrap">'
@@ -4705,7 +4732,7 @@ function renderAnalisisStock() {
   h += '</div>';
 
   h += '<div class="evol-tbl-card"><table class="evol-tbl">';
-  h += '<thead><tr><th style="width:20px"></th><th>Modelo</th><th class="num">Stock</th><th class="num">Vta 6m</th><th class="num">Vta/mes</th><th class="num">Meses stock</th><th style="text-align:center">Tendencia</th></tr></thead><tbody>';
+  h += '<thead><tr><th style="width:20px"></th><th>Modelo</th><th class="num">Stock</th><th class="num">Vta 4m</th><th class="num">Vta/mes</th><th class="num">Meses stock</th><th class="num" title="Rotación real: días promedio en venderse cuando estuvo en stock (4 meses completos)">Días en venderse</th><th style="text-align:center">Tendencia</th></tr></thead><tbody>';
   items.forEach((it, idx) => {
     const abierto = analisisAbiertos.has(it.nombreCorto);
     h += '<tr style="cursor:pointer" onclick="toggleAnalisisModelo('+idx+')">';
@@ -4713,13 +4740,14 @@ function renderAnalisisStock() {
     h += '<td><div style="font-weight:700;color:var(--vw-grey-5)">'+escapeHtml(it.modelo)+'</div>'
        + (it.familia ? '<div style="font-size:11px;color:var(--vw-grey-3)">'+escapeHtml(it.familia)+'</div>' : '')+'</td>';
     h += '<td class="num" style="font-size:15px">'+it.stock+'</td>';
-    h += '<td class="num">'+it.venta6m+'</td>';
+    h += '<td class="num">'+it.venta4m+'</td>';
     h += '<td class="num">'+fmtNumLite(it.ventaMes)+'</td>';
     h += '<td class="num">'+_mesesBadge(it.mesesStock, it.stock)+'</td>';
+    h += '<td class="num">'+_diasBadge(it.diasVenta, it.diasVentaN, it.prevendidas)+'</td>';
     h += '<td style="text-align:center">'+_sparkline(it.ventasPorMes, meses)+'</td>';
     h += '</tr>';
     if (abierto) {
-      h += '<tr class="actual"><td></td><td colspan="6" style="padding:0 14px 12px">';
+      h += '<tr class="actual"><td></td><td colspan="7" style="padding:0 14px 12px">';
       if (!it.colores || !it.colores.length) {
         h += '<div style="font-size:12px;color:var(--vw-grey-3);padding:8px 0">Sin detalle de color.</div>';
       } else {
@@ -4727,17 +4755,19 @@ function renderAnalisisStock() {
         h += '<thead><tr style="color:var(--vw-grey-3)">'
            + '<th style="text-align:left;padding:6px 8px;font-weight:700">Color</th>'
            + '<th style="text-align:right;padding:6px 8px">Stock</th>'
-           + '<th style="text-align:right;padding:6px 8px">Vta 6m</th>'
+           + '<th style="text-align:right;padding:6px 8px">Vta 4m</th>'
            + '<th style="text-align:right;padding:6px 8px">Vta/mes</th>'
            + '<th style="text-align:right;padding:6px 8px">Meses stock</th>'
+           + '<th style="text-align:right;padding:6px 8px">Días en venderse</th>'
            + '<th style="text-align:center;padding:6px 8px">Tendencia</th></tr></thead><tbody>';
         it.colores.forEach(c => {
           h += '<tr style="border-top:1px solid var(--vw-grey-1)">';
           h += '<td style="padding:6px 8px;font-weight:600;color:var(--vw-grey-5)">'+escapeHtml(c.color)+'</td>';
           h += '<td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums">'+c.stock+'</td>';
-          h += '<td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums">'+c.venta6m+'</td>';
+          h += '<td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums">'+c.venta4m+'</td>';
           h += '<td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums">'+fmtNumLite(c.ventaMes)+'</td>';
           h += '<td style="padding:6px 8px;text-align:right">'+_mesesBadge(c.mesesStock, c.stock)+'</td>';
+          h += '<td style="padding:6px 8px;text-align:right">'+_diasBadge(c.diasVenta, c.diasVentaN, c.prevendidas)+'</td>';
           h += '<td style="padding:6px 8px;text-align:center">'+_sparkline(c.ventasPorMes, meses)+'</td>';
           h += '</tr>';
         });
@@ -5275,7 +5305,7 @@ function repartoElegidasSec(items) {
   const vinsJson = JSON.stringify(eleg.map(i => i.vin));
   h += '<div class="reparto-row" style="margin-bottom:8px"><button class="refresh reparto-comprar" onclick=\'repartoComprarElegidas(' + vinsJson + ')\'>Marcar todas compradas (' + eleg.length + ')</button></div>';
   h += '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
-    + '<th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num" title="Meses de stock = stock ÷ venta mensual promedio (mismos 3 meses que la sección Rotación)">Meses stock</th><th class="num">Acción</th></tr></thead><tbody>';
+    + '<th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num" title="Meses de stock = stock ÷ venta mensual promedio (mismos 4 meses que la sección Rotación)">Meses stock</th><th class="num">Acción</th></tr></thead><tbody>';
   eleg.forEach(it => {
     h += '<tr>';
     h += '<td><div class="reparto-modelo">' + escapeHtml((it.descripcion || '').replace(/^VW /, '')) + '</div><div class="reparto-fam">' + escapeHtml(it.familia || '') + '</div></td>';
@@ -5389,7 +5419,7 @@ function repartoFiltrar() {
     return;
   }
   let h = '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
-    + '<th></th><th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num">Vendido</th><th class="num" title="Meses de stock = stock ÷ venta mensual promedio (mismos 3 meses que la sección Rotación)">Meses stock</th><th>Estado</th><th class="num">Acción</th></tr></thead><tbody>';
+    + '<th></th><th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num">Vendido</th><th class="num" title="Meses de stock = stock ÷ venta mensual promedio (mismos 4 meses que la sección Rotación)">Meses stock</th><th>Estado</th><th class="num">Acción</th></tr></thead><tbody>';
   items.forEach(it => {
     const rowCls = it.alerta ? 'reparto-tr-alerta' : (it.enOversoft ? 'reparto-tr-ovs' : '');
     const vend = _repVendido(it.ventasPorMes, repartoMeses);
@@ -5510,14 +5540,15 @@ function repartoRotFiltrar() {
     || (m.modelo || '').toLowerCase().includes(q) || (m.familia || '').toLowerCase().includes(q));
   if (!items.length) { wrap.innerHTML = '<div class="empty">Sin datos de rotación' + (q ? ' para la búsqueda.' : '.') + '</div>'; return; }
   let h = '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla rot-tabla"><thead><tr>'
-    + '<th>Modelo</th><th class="num">Stock</th><th class="num">Vta/mes</th><th class="num">Meses stock</th></tr></thead><tbody>';
+    + '<th>Modelo</th><th class="num">Stock</th><th class="num">Vta/mes</th><th class="num">Meses stock</th><th class="num" title="Rotación real: días promedio en venderse cuando estuvo en stock (4 meses completos); las vendidas a pedido no cuentan">Días en venderse</th></tr></thead><tbody>';
   items.forEach((m, idx) => {
     h += '<tr class="rot-row" onclick="repartoRotToggle(' + idx + ')">';
     h += '<td><span class="reparto-chev" id="rotchev-' + idx + '">▸</span> <span class="reparto-modelo">' + escapeHtml((m.modelo || '').replace(/^VW /, '')) + '</span><div class="reparto-fam">' + escapeHtml(m.familia || '') + '</div></td>';
     h += '<td class="num">' + m.stock + '</td>';
     h += '<td class="num">' + _rotFmt(m.ventaMes) + '</td>';
-    h += '<td class="num">' + _rotMesesCell(m.mesesStock, m.stock) + '</td></tr>';
-    h += '<tr id="rotdet-' + idx + '" class="reparto-detalle hidden"><td colspan="4">' + _rotColoresHtml(m) + '</td></tr>';
+    h += '<td class="num">' + _rotMesesCell(m.mesesStock, m.stock) + '</td>';
+    h += '<td class="num">' + _diasBadge(m.diasVenta, m.diasVentaN, m.prevendidas) + '</td></tr>';
+    h += '<tr id="rotdet-' + idx + '" class="reparto-detalle hidden"><td colspan="5">' + _rotColoresHtml(m) + '</td></tr>';
   });
   h += '</tbody></table></div></div>';
   wrap.innerHTML = h;
@@ -5525,15 +5556,16 @@ function repartoRotFiltrar() {
 function _rotColoresHtml(m) {
   const cols = m.colores || [];
   if (!cols.length) return '<div class="reparto-fam">Sin datos por color.</div>';
-  let h = '<div class="reparto-det-ttl">Por color · vta/mes · stock · meses de stock:</div>';
+  let h = '<div class="reparto-det-ttl">Por color · vta/mes · stock · meses de stock · días en venderse:</div>';
   h += '<table class="rot-col-tabla"><tbody>';
   cols.forEach(c => {
-    const agotado = (c.stock || 0) === 0 && (c.venta3m || 0) > 0;
+    const agotado = (c.stock || 0) === 0 && (c.venta4m || 0) > 0;
     h += '<tr' + (agotado ? ' class="rot-agotado"' : '') + '>'
       + '<td><strong>' + escapeHtml(c.color) + '</strong></td>'
       + '<td class="num">' + _rotFmt(c.ventaMes) + '/mes</td>'
       + '<td class="num">stock ' + c.stock + '</td>'
       + '<td class="num">' + _rotMesesCell(c.mesesStock, c.stock) + '</td>'
+      + '<td class="num">' + _diasBadge(c.diasVenta, c.diasVentaN, c.prevendidas) + '</td>'
       + '<td>' + (agotado ? '<span class="rot-agotado-lbl">⚠ se vendió todo · reponé este color</span>' : '') + '</td></tr>';
   });
   h += '</tbody></table>';
