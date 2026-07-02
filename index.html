@@ -665,6 +665,17 @@ h4.desg-title {
 /* Resumida en patentamientos: oculta col-extra (Serie/Admin/Tipo/Rev-Part/Cliente/Dominio) */
 table.patent-tbl.resumida .col-extra { display: none; }
 
+/* Separadores "Pendientes de patentar" / "Patentadas" en la tabla de carpetas */
+table.patent-tbl tr.tbl-sep td {
+  padding: 7px 10px;
+  font-size: 10.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+table.patent-tbl tr.tbl-sep.pend td { background: var(--orange-soft); color: var(--orange-dark); }
+table.patent-tbl tr.tbl-sep.pat td  { background: var(--green-soft);  color: var(--green-dark); }
+table.patent-tbl tr.tbl-sep.pend:hover td { background: var(--orange-soft); }
+table.patent-tbl tr.tbl-sep.pat:hover td  { background: var(--green-soft); }
+
 /* Sección de calculadora (arriba de la tabla, no inline) */
 .calc-section {
   background: white; border-radius: var(--radius);
@@ -843,6 +854,23 @@ table.patent-tbl.resumida .col-extra { display: none; }
   table.responsive-cards tr.expo:hover {
     background: linear-gradient(to bottom, rgba(139,92,246,0.08), white 60px);
   }
+  /* Separadores Pendientes/Patentadas: título de sección, no tarjeta */
+  table.responsive-cards tr.tbl-sep {
+    border: none; border-radius: 8px;
+    box-shadow: none;
+    margin: 18px 12px 4px;
+    padding: 0;
+  }
+  table.responsive-cards tr.tbl-sep td {
+    display: block; padding: 7px 12px;
+    text-align: left !important;
+    border-radius: 8px;
+  }
+  table.responsive-cards tr.tbl-sep td::before { display: none; }
+  table.responsive-cards tr.tbl-sep.pend,
+  table.responsive-cards tr.tbl-sep.pend:hover { background: var(--orange-soft); }
+  table.responsive-cards tr.tbl-sep.pat,
+  table.responsive-cards tr.tbl-sep.pat:hover  { background: var(--green-soft); }
 
   table.responsive-cards td {
     display: flex; justify-content: space-between; align-items: center;
@@ -8117,7 +8145,17 @@ function renderPatentamientos() {
   if (!delMes.length) {
     html += '<tr><td colspan="12" class="empty">No hay carpetas para este filtro.</td></tr>';
   } else {
-    for (const c of delMes) html += filaPatent(c);
+    // Pendientes arriba, patentadas todas juntas al final (no mezcladas)
+    const pendList = delMes.filter(c => !c.patentada);
+    const patList  = delMes.filter(c => c.patentada);
+    if (pendList.length) {
+      html += '<tr class="tbl-sep pend"><td colspan="12">Pendientes de patentar · ' + pendList.length + '</td></tr>';
+      for (const c of pendList) html += filaPatent(c);
+    }
+    if (patList.length) {
+      html += '<tr class="tbl-sep pat"><td colspan="12">Patentadas · ' + patList.length + '</td></tr>';
+      for (const c of patList) html += filaPatent(c);
+    }
   }
   html += '</tbody></table></div></div>';
 
