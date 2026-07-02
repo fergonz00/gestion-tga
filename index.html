@@ -3432,22 +3432,23 @@ function renderFlujo() {
 // =======================================================================
 let preciosFiltro = '';
 let preciosSoloStock = true;          // tilde "stock disponible" — arranca marcado
-let preciosVentasMeses = 1;           // ventana de ventas: 3 / 2 / 1 meses calendario — default: mes actual
 let preciosExpand = new Set();        // keys de modelos con el detalle/simulador abierto
 let preciosByKey  = {};               // key → modelo (para el simulador)
-// Devuelve los últimos n meses calendario como ['2026-06','2026-05',...] (incluye el actual)
-function _ventanaMeses(nm) {
+// Los 4 meses calendario COMPLETOS anteriores (sin el mes en curso, parcial).
+// MISMA ventana que "meses de stock" en Análisis de stock, Reparto y el portal:
+// el "Vendido" de todos lados es este mismo número, para que sea fácil de leer.
+function _ventanaMeses4() {
   const hoy = new Date(); const arr = [];
-  for (let i = 0; i < nm; i++) {
+  for (let i = 1; i <= 4; i++) {
     const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
     arr.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
   }
   return arr;
 }
-// Suma de ventas del modelo en la ventana elegida
+// Suma de ventas del modelo en los últimos 4 meses completos
 function _ventasVentana(m) {
   const v = m.ventasPorMes || {};
-  return _ventanaMeses(preciosVentasMeses).reduce((a, mk) => a + (Number(v[mk]) || 0), 0);
+  return _ventanaMeses4().reduce((a, mk) => a + (Number(v[mk]) || 0), 0);
 }
 function _precioKey(modelo) { return String(modelo).replace(/[^a-zA-Z0-9]/g, '_'); }
 // Recalcula la ganancia replicando EXACTO las fórmulas del Sheet (verificado: reproduce AO al peso).
@@ -3488,20 +3489,12 @@ function renderPrecios() {
   );
   preciosByKey = {};
   for (const m of preciosData.modelos) preciosByKey[_precioKey(m.modelo)] = m;
-  const lblVent = { 3: 'últ. 3 meses', 2: 'últ. 2 meses', 1: 'mes actual' };
-
   let h = '';
   h += '<div class="mes-row" style="margin-bottom:10px;flex-wrap:wrap;gap:10px">';
   h += '  <input type="text" placeholder="🔍 Filtrar modelo…" value="' + escapeHtml(preciosFiltro) + '" oninput="preciosFiltro=this.value;renderPrecios()" '
      + '         style="padding:8px 12px;border:1px solid var(--vw-grey-2);border-radius:8px;min-width:220px;font-size:14px">';
   h += '  <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer">'
      + '    <input type="checkbox" ' + (preciosSoloStock ? 'checked' : '') + ' onchange="preciosSoloStock=this.checked;renderPrecios()"> Stock disponible</label>';
-  h += '  <label style="display:flex;align-items:center;gap:6px;font-size:14px">Ventas: '
-     + '    <select onchange="preciosVentasMeses=parseInt(this.value,10);renderPrecios()" style="padding:6px 8px;border:1px solid var(--vw-grey-2);border-radius:6px">'
-     + '      <option value="3"' + (preciosVentasMeses===3?' selected':'') + '>últimos 3 meses</option>'
-     + '      <option value="2"' + (preciosVentasMeses===2?' selected':'') + '>últimos 2 meses</option>'
-     + '      <option value="1"' + (preciosVentasMeses===1?' selected':'') + '>solo mes actual</option>'
-     + '    </select></label>';
   h += '  <span style="font-size:12px;color:var(--vw-grey-3)">' + rows.length + ' modelos · tocá una fila para ver detalle y precios por color</span>';
   h += '</div>';
 
@@ -3513,7 +3506,7 @@ function renderPrecios() {
      + '<th class="num">Dto TG</th>'
      + '<th class="num">Precio oferta<br><small>(con FYF)</small></th>'
      + '<th class="num">Stock</th>'
-     + '<th class="num">Vend.<br><small>(' + lblVent[preciosVentasMeses] + ')</small></th>'
+     + '<th class="num" title="Ventas de los últimos 4 meses completos (el mes en curso no cuenta) — misma ventana que Meses stock">Vend.<br><small>(4m)</small></th>'
      + '<th class="num">Gcia/lista</th>'
      + '<th></th>'
      + '</tr></thead><tbody>';
@@ -3560,13 +3553,13 @@ function renderPrecios() {
                   + (detSinCat ? ' title="Sin catalogar:\n' + escapeHtml(detSinCat) + '"' : '') + '>(' + gap + ' s/cat.)</span>';
       }
     }
-    // El total de vendidos es SIEMPRE el de TODOS los modelos en la ventana
-    // elegida (no cambia por el tilde de stock disponible ni el filtro de texto).
+    // El total de vendidos es SIEMPRE el de TODOS los modelos en los últimos
+    // 4 meses completos (no cambia por el tilde de stock disponible ni el filtro).
     const totVend = preciosData.modelos.reduce((a, m) => a + _ventasVentana(m), 0);
     h += '<tr style="font-weight:700;background:#eef3fb;border-top:2px solid var(--vw-blue)">'
        + '<td colspan="5" style="text-align:right">TOTAL · ' + rows.length + ' modelos</td>'
        + '<td class="num" data-label="Stock">' + totStock + stockNota + '</td>'
-       + '<td class="num" data-label="Vend." title="Total de TODOS los modelos en la ventana elegida, incluya o no la tabla a cada uno">' + totVend + '</td>'
+       + '<td class="num" data-label="Vend." title="Total de TODOS los modelos en los últimos 4 meses completos, incluya o no la tabla a cada uno">' + totVend + '</td>'
        + '<td colspan="2"></td></tr>';
   }
   h += '</tbody></table></div>';
@@ -3678,7 +3671,7 @@ function _precioDetalle(m, key) {
   h += li('Imp. cheque (0,85%)', fmtPesos(cos.cheque));
   h += li('FYF (flete+form.)', fmtPesos(cos.fyf));
   h += li('Stock', (Number(m.stock)||0));
-  h += li('Ventas (' + ({3:'últ. 3 meses',2:'últ. 2 meses',1:'mes actual'}[preciosVentasMeses]) + ')', _ventasVentana(m));
+  h += li('Ventas (últ. 4 meses completos)', _ventasVentana(m));
   // En Motor el prom viene con n (ventas valuadas con la BT de su mes); en Planilla es la col N de la hoja.
   const pgN = Number(m.promGciaN) || 0;
   const pgNota = pgN ? ' <small style="color:var(--vw-grey-3)">(' + pgN + ' vta' + (pgN !== 1 ? 's' : '') + (Number(m.promGciaSinBt) ? ' · ' + m.promGciaSinBt + ' s/BT' : '') + ')</small>' : '';
@@ -4971,19 +4964,23 @@ function _pctCls(pct) {
 
 let repartoData = { periodo: null, items: [], colores: {} };
 let repartoSel = {};      // vin -> true (selección para comprar)
-let repartoMeses = 3;     // "Vendido" últimos N meses
 let repartoNombres = {};  // edición de nombres de color (codigo -> nombre)
 let repartoCopia = '';    // texto armado para mandar a VW
 let repartoMsg = '';      // mensaje del cargador
 
-function _repMesesVentana(n) {
+// "Vendido" del reparto: ventas del modelo en los MISMOS 4 meses completos que
+// usa la sección Rotación (repartoData.rotacion.meses, los manda el backend).
+// Fallback local por si la rotación todavía no cargó.
+function _repMeses4() {
+  const rot = (repartoData && repartoData.rotacion && repartoData.rotacion.meses) || null;
+  if (rot && rot.length) return rot;
   const out = []; const now = new Date();
-  for (let i = 0; i < n; i++) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); out.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')); }
+  for (let i = 1; i <= 4; i++) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); out.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')); }
   return out;
 }
-function _repVendido(v, n) { if (!v) return null; return _repMesesVentana(n).reduce((a, mk) => a + (Number(v[mk]) || 0), 0); }
+function _repVendido(v) { if (!v) return null; return _repMeses4().reduce((a, mk) => a + (Number(v[mk]) || 0), 0); }
 // Meses de stock (rotación) del modelo de un ítem del reparto: stock actual ÷
-// venta mensual promedio, sobre los MISMOS 3 meses que usa la sección Rotación
+// venta mensual promedio, sobre los MISMOS 4 meses que usa la sección Rotación
 // (repartoData.rotacion.meses). Mismo número que verías en esa tabla para el
 // modelo. null = sin ventas en la ventana (no rota) o sin datos de stock.
 function _repMesesStock(it) {
@@ -5268,11 +5265,7 @@ function renderReparto() {
 
   // Toolbar + tabla
   html += '<div class="reparto-toolbar"><input type="search" id="repartoBusqueda" placeholder="Buscar modelo..." oninput="repartoFiltrar()" class="reparto-search">';
-  html += '<label class="reparto-meses">Vendido: <select onchange="repartoMeses=Number(this.value);repartoFiltrar()">'
-    + '<option value="3"' + (repartoMeses === 3 ? ' selected' : '') + '>últ. 3 meses</option>'
-    + '<option value="2"' + (repartoMeses === 2 ? ' selected' : '') + '>últ. 2 meses</option>'
-    + '<option value="1"' + (repartoMeses === 1 ? ' selected' : '') + '>mes actual</option></select></label>'
-    + '<button id="repartoBtnComprar" class="refresh reparto-comprar" disabled onclick="repartoElegir()">Marcar elegidas (' + Object.keys(repartoSel).length + ')</button>'
+  html += '<button id="repartoBtnComprar" class="refresh reparto-comprar" disabled onclick="repartoElegir()">Marcar elegidas (' + Object.keys(repartoSel).length + ')</button>'
     + '<button id="repartoBtnLimpiar" class="reparto-link" style="display:none" onclick="repartoSel={};renderReparto()">Limpiar selección</button></div>';
   html += '<div id="repartoTablaWrap"></div>';
   html += '<p class="reparto-foot">Tildá las unidades que querés comprar y dale "Marcar elegidas" (arriba): pasan a la sección "Elegidas · por comprar". Cuando se las comprás a VW, ahí las marcás como compradas y se arma el texto para mandarles.</p>';
@@ -5419,10 +5412,10 @@ function repartoFiltrar() {
     return;
   }
   let h = '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
-    + '<th></th><th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num">Vendido</th><th class="num" title="Meses de stock = stock ÷ venta mensual promedio (mismos 4 meses que la sección Rotación)">Meses stock</th><th>Estado</th><th class="num">Acción</th></tr></thead><tbody>';
+    + '<th></th><th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num" title="Ventas del modelo en los últimos 4 meses completos (misma ventana que Meses stock y la Rotación)">Vendido (4m)</th><th class="num" title="Meses de stock = stock ÷ venta mensual promedio (mismos 4 meses que la sección Rotación)">Meses stock</th><th>Estado</th><th class="num">Acción</th></tr></thead><tbody>';
   items.forEach(it => {
     const rowCls = it.alerta ? 'reparto-tr-alerta' : (it.enOversoft ? 'reparto-tr-ovs' : '');
-    const vend = _repVendido(it.ventasPorMes, repartoMeses);
+    const vend = _repVendido(it.ventasPorMes);
     h += '<tr class="' + rowCls + '">';
     h += '<td>' + (it.estado_compra === 'pendiente' ? '<input type="checkbox" ' + (repartoSel[it.vin] ? 'checked' : '') + ' onchange="repartoToggleSel(\'' + it.vin + '\')">' : '') + '</td>';
     h += '<td><div class="reparto-modelo">' + escapeHtml((it.descripcion || '').replace(/^VW /, '')) + '</div><div class="reparto-fam">' + escapeHtml(it.familia || '') + '</div></td>';
