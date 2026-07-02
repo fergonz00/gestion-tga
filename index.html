@@ -4582,9 +4582,9 @@ function setStockSubtab(name) {
 // ANÁLISIS DE STOCK — stock por modelo y, dentro, por color + rotación de los
 // últimos 4 meses completos y "meses de stock". Data del backend
 // (tipo=analisisstock, todo Oversoft).  Meses de stock = stock ÷ (ventas4m÷4).
-// Además "días en venderse" (rotación REAL): promedio de días que tardó cada
-// unidad en venderse cuando efectivamente estuvo en stock; las vendidas a
-// pedido (asignadas antes de recibirse) se cuentan aparte como "a pedido".
+// Además "días en venderse" (rotación REAL): promedio de días entre que cada
+// unidad entró al sistema (disponible en Oversoft) y se vendió; la vendida
+// al toque (incluso antes de llegar física) cuenta como 0 días.
 // =======================================================================
 let analisisStockData = null;
 let analisisOrden = 'catalogo';        // catalogo | sobrestock | rotacion | stock
@@ -4622,28 +4622,18 @@ function _mesesBadge(meses, stock) {
   else                 { bg='#fae0d4'; fg='#c0657a'; txt=fmtNumLite(meses)+' m · sobrestock'; }
   return '<span style="background:'+bg+';color:'+fg+';font-weight:700;padding:3px 9px;border-radius:5px;white-space:nowrap;font-size:12px">'+txt+'</span>';
 }
-// Badge de rotación REAL: días promedio en venderse cuando estuvo en stock.
-// n = unidades del promedio; nPre = pre-vendidas (a pedido, no entran al promedio).
-function _diasBadge(dias, n, nPre) {
-  n = n || 0; nPre = nPre || 0;
-  if (!n && !nPre) return '<span style="color:var(--vw-grey-3)">—</span>';
-  let h = '';
-  if (n) {
-    let bg, fg;
-    if (dias <= 30)      { bg='#d4edda'; fg='#2d6a4f'; }
-    else if (dias <= 60) { bg='#fff3cd'; fg='#a07000'; }
-    else                 { bg='#fae0d4'; fg='#c0657a'; }
-    h += '<span style="background:'+bg+';color:'+fg+';font-weight:700;padding:3px 9px;border-radius:5px;white-space:nowrap;font-size:12px" '
-       + 'title="Promedio sobre '+n+' unidad'+(n===1?'':'es')+' que estuvieron físicamente en stock antes de venderse (últimos 12 meses)">'
+// Badge de rotación REAL: días promedio entre que la unidad entró al sistema
+// (disponible en Oversoft) y se vendió. n = unidades vendidas del promedio.
+function _diasBadge(dias, n) {
+  n = n || 0;
+  if (!n) return '<span style="color:var(--vw-grey-3)">—</span>';
+  let bg, fg;
+  if (dias <= 30)      { bg='#d4edda'; fg='#2d6a4f'; }
+  else if (dias <= 60) { bg='#fff3cd'; fg='#a07000'; }
+  else                 { bg='#fae0d4'; fg='#c0657a'; }
+  return '<span style="background:'+bg+';color:'+fg+';font-weight:700;padding:3px 9px;border-radius:5px;white-space:nowrap;font-size:12px" '
+       + 'title="Promedio sobre '+n+' unidad'+(n===1?'':'es')+' vendida'+(n===1?'':'s')+' en los últimos 12 meses, desde que entró al sistema hasta que se vendió (vendida al toque = 0 días)">'
        + dias+' d <span style="font-weight:400;opacity:.75">· '+n+' u.</span></span>';
-  }
-  if (nPre) {
-    const pct = Math.round(100 * nPre / (n + nPre));
-    h += (h ? ' ' : '') + '<span style="color:var(--vw-grey-3);font-size:11px;white-space:nowrap" '
-       + 'title="'+nPre+' unidad'+(nPre===1?'':'es')+' vendida'+(nPre===1?'':'s')+' a pedido (asignadas antes de llegar al stock): no entran al promedio">'
-       + pct+'% a pedido</span>';
-  }
-  return h;
 }
 // Mini-barras de ventas por mes (de más viejo a más nuevo).
 function _sparkline(vpm, meses) {
@@ -4712,7 +4702,7 @@ function renderAnalisisStock() {
   h += '<div style="font-size:12px;color:var(--vw-grey-4);margin-bottom:10px">'
      + 'Rotación calculada sobre <strong>'+ (meses.length ? (_mesAbr(meses[0])+' → '+_mesAbr(meses[meses.length-1])) : '—') +'</strong> '
      + '(4 meses completos; el mes en curso no cuenta). <em>Meses de stock = stock ÷ (ventas 4m ÷ 4)</em>. '
-     + '<em>Días en venderse</em> = promedio real de días entre que la unidad llegó al stock y se vendió, sobre los últimos 12 meses (las vendidas a pedido no cuentan y se muestran como "% a pedido"). Tocá un modelo para ver el desglose por color.'
+     + '<em>Días en venderse</em> = promedio real de días entre que la unidad entró al sistema y se vendió, sobre los últimos 12 meses (vendida al toque = 0 días). Tocá un modelo para ver el desglose por color.'
      + '</div>';
   h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">';
   h += '<div style="display:flex;gap:14px;align-items:center;font-size:12px;color:var(--vw-grey-4);flex-wrap:wrap">'
@@ -4725,7 +4715,7 @@ function renderAnalisisStock() {
   h += '</div>';
 
   h += '<div class="evol-tbl-card"><table class="evol-tbl">';
-  h += '<thead><tr><th style="width:20px"></th><th>Modelo</th><th class="num">Stock</th><th class="num">Vta 4m</th><th class="num">Vta/mes</th><th class="num">Meses stock</th><th class="num" title="Rotación real: días promedio en venderse cuando estuvo en stock (últimos 12 meses)">Días en venderse</th><th style="text-align:center">Tendencia</th></tr></thead><tbody>';
+  h += '<thead><tr><th style="width:20px"></th><th>Modelo</th><th class="num">Stock</th><th class="num">Vta 4m</th><th class="num">Vta/mes</th><th class="num">Meses stock</th><th class="num" title="Rotación real: días promedio entre que la unidad entró al sistema (disponible en Oversoft) y se vendió (últimos 12 meses)">Días en venderse</th><th style="text-align:center">Tendencia</th></tr></thead><tbody>';
   items.forEach((it, idx) => {
     const abierto = analisisAbiertos.has(it.nombreCorto);
     h += '<tr style="cursor:pointer" onclick="toggleAnalisisModelo('+idx+')">';
@@ -4736,7 +4726,7 @@ function renderAnalisisStock() {
     h += '<td class="num">'+it.venta4m+'</td>';
     h += '<td class="num">'+fmtNumLite(it.ventaMes)+'</td>';
     h += '<td class="num">'+_mesesBadge(it.mesesStock, it.stock)+'</td>';
-    h += '<td class="num">'+_diasBadge(it.diasVenta, it.diasVentaN, it.prevendidas)+'</td>';
+    h += '<td class="num">'+_diasBadge(it.diasVenta, it.diasVentaN)+'</td>';
     h += '<td style="text-align:center">'+_sparkline(it.ventasPorMes, meses)+'</td>';
     h += '</tr>';
     if (abierto) {
@@ -4760,7 +4750,7 @@ function renderAnalisisStock() {
           h += '<td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums">'+c.venta4m+'</td>';
           h += '<td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums">'+fmtNumLite(c.ventaMes)+'</td>';
           h += '<td style="padding:6px 8px;text-align:right">'+_mesesBadge(c.mesesStock, c.stock)+'</td>';
-          h += '<td style="padding:6px 8px;text-align:right">'+_diasBadge(c.diasVenta, c.diasVentaN, c.prevendidas)+'</td>';
+          h += '<td style="padding:6px 8px;text-align:right">'+_diasBadge(c.diasVenta, c.diasVentaN)+'</td>';
           h += '<td style="padding:6px 8px;text-align:center">'+_sparkline(c.ventasPorMes, meses)+'</td>';
           h += '</tr>';
         });
@@ -5533,14 +5523,14 @@ function repartoRotFiltrar() {
     || (m.modelo || '').toLowerCase().includes(q) || (m.familia || '').toLowerCase().includes(q));
   if (!items.length) { wrap.innerHTML = '<div class="empty">Sin datos de rotación' + (q ? ' para la búsqueda.' : '.') + '</div>'; return; }
   let h = '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla rot-tabla"><thead><tr>'
-    + '<th>Modelo</th><th class="num">Stock</th><th class="num">Vta/mes</th><th class="num">Meses stock</th><th class="num" title="Rotación real: días promedio en venderse cuando estuvo en stock (últimos 12 meses); las vendidas a pedido no cuentan">Días en venderse</th></tr></thead><tbody>';
+    + '<th>Modelo</th><th class="num">Stock</th><th class="num">Vta/mes</th><th class="num">Meses stock</th><th class="num" title="Rotación real: días promedio entre que la unidad entró al sistema y se vendió (últimos 12 meses)">Días en venderse</th></tr></thead><tbody>';
   items.forEach((m, idx) => {
     h += '<tr class="rot-row" onclick="repartoRotToggle(' + idx + ')">';
     h += '<td><span class="reparto-chev" id="rotchev-' + idx + '">▸</span> <span class="reparto-modelo">' + escapeHtml((m.modelo || '').replace(/^VW /, '')) + '</span><div class="reparto-fam">' + escapeHtml(m.familia || '') + '</div></td>';
     h += '<td class="num">' + m.stock + '</td>';
     h += '<td class="num">' + _rotFmt(m.ventaMes) + '</td>';
     h += '<td class="num">' + _rotMesesCell(m.mesesStock, m.stock) + '</td>';
-    h += '<td class="num">' + _diasBadge(m.diasVenta, m.diasVentaN, m.prevendidas) + '</td></tr>';
+    h += '<td class="num">' + _diasBadge(m.diasVenta, m.diasVentaN) + '</td></tr>';
     h += '<tr id="rotdet-' + idx + '" class="reparto-detalle hidden"><td colspan="5">' + _rotColoresHtml(m) + '</td></tr>';
   });
   h += '</tbody></table></div></div>';
@@ -5558,7 +5548,7 @@ function _rotColoresHtml(m) {
       + '<td class="num">' + _rotFmt(c.ventaMes) + '/mes</td>'
       + '<td class="num">stock ' + c.stock + '</td>'
       + '<td class="num">' + _rotMesesCell(c.mesesStock, c.stock) + '</td>'
-      + '<td class="num">' + _diasBadge(c.diasVenta, c.diasVentaN, c.prevendidas) + '</td>'
+      + '<td class="num">' + _diasBadge(c.diasVenta, c.diasVentaN) + '</td>'
       + '<td>' + (agotado ? '<span class="rot-agotado-lbl">⚠ se vendió todo · reponé este color</span>' : '') + '</td></tr>';
   });
   h += '</tbody></table>';

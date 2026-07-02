@@ -424,38 +424,38 @@ function _oversoftMotorData(catByNorm) {
 }
 
 // =======================================================================
-// ROTACIÓN REAL — "cuando efectivamente tuve esta unidad en stock, ¿cuántos
-// días tardó en venderse?". Por unidad física: fechaasignacion (quedó
-// comprometida a un cliente) − fechaderecepcion (entró al stock físico).
+// ROTACIÓN REAL — "¿cuántos días tarda en venderse este modelo/color desde
+// que está disponible?". Por unidad: fechaasignacion (quedó comprometida a un
+// cliente) − fechadepedido (cuando entró al SISTEMA y el vendedor la ve
+// disponible en Oversoft — el mismo campo que usa la antigüedad ⏳; fallback
+// fechaderecepcion si no hay pedido). TODAS las vendidas cuentan: la que se
+// vendió apenas entró (o antes de llegar física) entra con 0 días — no es
+// venta "contra pedido", es que se vendió al toque, y eso ES rotación rápida.
 // Ventana = fechaasignacion en los ÚLTIMOS 12 MESES completos (más larga que
 // los 4 meses de "meses de stock" a propósito: acá se busca muestra histórica
-// —quería Fer mirar el año— y allá la mirada cortoplacista del ritmo actual).
-// Las PRE-VENDIDAS (asignadas antes/el mismo día de recibirse, o sin
-// recepción: venta a pedido) nunca rotaron en stock → NO entran al promedio y
-// se cuentan aparte (nPre). A diferencia de "meses de stock", esta métrica
-// responde incluso para modelos/colores que hoy no hay: mide la velocidad
-// real cuando los hubo.
+// y allá la mirada cortoplacista del ritmo actual). A diferencia de "meses de
+// stock", esta métrica responde incluso para modelos/colores que hoy no hay:
+// mide la velocidad real cuando los hubo.
 // =======================================================================
 function _diasEnVenta(ncDe, colorDe, h) {
   const hoy = new Date();
   const fin = new Date(hoy.getFullYear(), hoy.getMonth(), 1);       // 1° del mes actual (excluido)
   const ini = new Date(hoy.getFullYear(), hoy.getMonth() - 12, 1);  // 1° de 12 meses atrás
   const iso = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-01';
-  const res = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo,color,fechaderecepcion,fechaasignacion&fechaasignacion=gte.' + iso(ini) + '&fechaasignacion=lt.' + iso(fin) + '&limit=5000', h);
+  const res = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo,color,fechadepedido,fechaderecepcion,fechaasignacion&fechaasignacion=gte.' + iso(ini) + '&fechaasignacion=lt.' + iso(fin) + '&limit=5000', h);
   const us = (res.getResponseCode() < 300) ? JSON.parse(res.getContentText()) : [];
-  const acc = {};   // nc → { sum, n, nPre, colores: { col → {sum,n,nPre} } }
+  const acc = {};   // nc → { sum, n, colores: { col → {sum,n} } }
   for (const u of us) {
     const nc = ncDe(u.modelo);
     if (!nc) continue;
+    const desde = u.fechadepedido || u.fechaderecepcion;
+    if (!desde || !u.fechaasignacion) continue;   // sin fecha de alta: no se puede medir
+    // clamp a 0: asignada antes de entrar al sistema = se vendió al instante
+    const dias = Math.max(0, Math.round((new Date(String(u.fechaasignacion).slice(0, 10)) - new Date(String(desde).slice(0, 10))) / 86400000));
     const col = colorDe[String(u.color)] || ('color ' + u.color);
-    if (!acc[nc]) acc[nc] = { sum: 0, n: 0, nPre: 0, colores: {} };
+    if (!acc[nc]) acc[nc] = { sum: 0, n: 0, colores: {} };
     const t = acc[nc];
-    if (!t.colores[col]) t.colores[col] = { sum: 0, n: 0, nPre: 0 };
-    let dias = null;
-    if (u.fechaderecepcion && u.fechaasignacion) {
-      dias = Math.round((new Date(String(u.fechaasignacion).slice(0, 10)) - new Date(String(u.fechaderecepcion).slice(0, 10))) / 86400000);
-    }
-    if (dias === null || dias <= 0) { t.nPre++; t.colores[col].nPre++; continue; }
+    if (!t.colores[col]) t.colores[col] = { sum: 0, n: 0 };
     t.sum += dias; t.n++;
     t.colores[col].sum += dias; t.colores[col].n++;
   }
@@ -465,9 +465,9 @@ function _diasEnVenta(ncDe, colorDe, h) {
     const cols = {};
     Object.keys(t.colores).forEach((c) => {
       const x = t.colores[c];
-      cols[c] = { diasProm: x.n ? Math.round(x.sum / x.n) : null, n: x.n, nPre: x.nPre };
+      cols[c] = { diasProm: Math.round(x.sum / x.n), n: x.n };
     });
-    out[nc] = { diasProm: t.n ? Math.round(t.sum / t.n) : null, n: t.n, nPre: t.nPre, colores: cols };
+    out[nc] = { diasProm: Math.round(t.sum / t.n), n: t.n, colores: cols };
   });
   return out;
 }
@@ -2227,13 +2227,13 @@ function getAnalisisStock() {
       const cvMes = cv4 / N;
       const cdv = (dv && dv.colores && dv.colores[col]) || null;
       return { color: col, stock: cstk, venta4m: cv4, ventaMes: cvMes, mesesStock: cvMes > 0 ? cstk / cvMes : null, ventasPorMes: cvpm,
-               diasVenta: cdv ? cdv.diasProm : null, diasVentaN: cdv ? cdv.n : 0, prevendidas: cdv ? cdv.nPre : 0 };
+               diasVenta: cdv ? cdv.diasProm : null, diasVentaN: cdv ? cdv.n : 0 };
     }).sort((a, b) => b.stock - a.stock || b.venta4m - a.venta4m || a.color.localeCompare(b.color));
     items.push({
       nombreCorto: nc, modelo: btByNc[nc] || nc, familia: famByNc[nc] || '',
       stock: stock, venta4m: v4, ventaMes: vMes, mesesStock: vMes > 0 ? stock / vMes : null,
       ventasPorMes: vpm, colores: colores,
-      diasVenta: dv ? dv.diasProm : null, diasVentaN: dv ? dv.n : 0, prevendidas: dv ? dv.nPre : 0,
+      diasVenta: dv ? dv.diasProm : null, diasVentaN: dv ? dv.n : 0,
       orden: ordenNc.indexOf(nc),
     });
   }
@@ -2383,8 +2383,8 @@ function getBaratitoMotor() {
       ventasPorMes:  ventasNc[c.nombre_corto] || {},
       // ventas por color y por mes (rotación por color en el Reparto)
       ventasColorPorMes: ventasColorPorTrim[c.nombre_corto] || {},
-      // rotación REAL: días promedio en venderse cuando estuvo en stock (últimos
-      // 12 meses) + pre-vendidas (asignadas antes de recibirse). Ver _diasEnVenta.
+      // rotación REAL: días promedio en venderse desde que la unidad entra al
+      // sistema (últimos 12 meses). Ver _diasEnVenta.
       diasVenta:     diasVentaNc[c.nombre_corto] || null,
       // stock por color (Oversoft) + ajustes de precio por color ('*' = todos)
       colores:       Object.entries(stockColorPorTrim[c.nombre_corto] || {})
@@ -4570,13 +4570,13 @@ function _repartoRotacion(motor, virt) {
       var cstk = stkCol[col] || 0;
       var cdv = (dv && dv.colores && dv.colores[col]) || null;
       return { color: col, stock: cstk, venta4m: cv4, ventaMes: cv4 / nMes, mesesStock: cv4 > 0 ? cstk / (cv4 / nMes) : null,
-               diasVenta: cdv ? cdv.diasProm : null, diasVentaN: cdv ? cdv.n : 0, prevendidas: cdv ? cdv.nPre : 0 };
+               diasVenta: cdv ? cdv.diasProm : null, diasVentaN: cdv ? cdv.n : 0 };
     }).sort(function (a, b) { return b.venta4m - a.venta4m || b.stock - a.stock; });
     out.push({
       modelo: m.modelo, nombreCorto: m.nombreCorto, familia: m.familia,
       stock: stock, venta4m: v4, ventaMes: v4 / nMes,
       mesesStock: v4 > 0 ? stock / (v4 / nMes) : null,
-      diasVenta: dv ? dv.diasProm : null, diasVentaN: dv ? dv.n : 0, prevendidas: dv ? dv.nPre : 0,
+      diasVenta: dv ? dv.diasProm : null, diasVentaN: dv ? dv.n : 0,
       colores: colores
     });
   });
