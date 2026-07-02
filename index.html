@@ -4624,24 +4624,18 @@ function _mesesBadge(meses, stock) {
 }
 // Badge de rotación REAL: días promedio entre que la unidad entró al sistema
 // (disponible en Oversoft) y se vendió. n = unidades vendidas del promedio.
-// lentoN/lentoMax = unidades HOY en stock que llevan MÁS días que ese promedio
-// (para que el promedio de lo vendido no engañe: lo que no se vende no entra).
-function _diasBadge(dias, n, lentoN, lentoMax) {
-  n = n || 0; lentoN = lentoN || 0;
+// (El backend también manda diasLentoN/diasLentoMax — stock hoy más viejo que
+//  el promedio — pero Fer pidió NO mostrar ese cartel; queda el dato por si acaso.)
+function _diasBadge(dias, n) {
+  n = n || 0;
   if (!n) return '<span style="color:var(--vw-grey-3)">—</span>';
   let bg, fg;
   if (dias <= 30)      { bg='#d4edda'; fg='#2d6a4f'; }
   else if (dias <= 60) { bg='#fff3cd'; fg='#a07000'; }
   else                 { bg='#fae0d4'; fg='#c0657a'; }
-  let h = '<span style="background:'+bg+';color:'+fg+';font-weight:700;padding:3px 9px;border-radius:5px;white-space:nowrap;font-size:12px" '
+  return '<span style="background:'+bg+';color:'+fg+';font-weight:700;padding:3px 9px;border-radius:5px;white-space:nowrap;font-size:12px" '
        + 'title="Promedio sobre '+n+' unidad'+(n===1?'':'es')+' vendida'+(n===1?'':'s')+' en los últimos 12 meses, desde que entró al sistema hasta que se vendió (vendida al toque = 0 días)">'
        + dias+' d <span style="font-weight:400;opacity:.75">· '+n+' u.</span></span>';
-  if (lentoN) {
-    h += ' <span style="color:#c0657a;font-size:11px;font-weight:600;white-space:nowrap" '
-       + 'title="Unidades hoy en stock que ya llevan MÁS días disponibles que el promedio de rotación — el promedio solo cuenta lo vendido, esto es lo que quedó parado">'
-       + '⚠ '+lentoN+' sin vender '+(lentoN===1 ? 'hace '+lentoMax+' d' : '· la más vieja '+lentoMax+' d')+'</span>';
-  }
-  return h;
 }
 // Mini-barras de ventas por mes (de más viejo a más nuevo).
 function _sparkline(vpm, meses) {
@@ -4734,7 +4728,7 @@ function renderAnalisisStock() {
     h += '<td class="num">'+it.venta4m+'</td>';
     h += '<td class="num">'+fmtNumLite(it.ventaMes)+'</td>';
     h += '<td class="num">'+_mesesBadge(it.mesesStock, it.stock)+'</td>';
-    h += '<td class="num">'+_diasBadge(it.diasVenta, it.diasVentaN, it.diasLentoN, it.diasLentoMax)+'</td>';
+    h += '<td class="num">'+_diasBadge(it.diasVenta, it.diasVentaN)+'</td>';
     h += '<td style="text-align:center">'+_sparkline(it.ventasPorMes, meses)+'</td>';
     h += '</tr>';
     if (abierto) {
@@ -4758,7 +4752,7 @@ function renderAnalisisStock() {
           h += '<td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums">'+c.venta4m+'</td>';
           h += '<td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums">'+fmtNumLite(c.ventaMes)+'</td>';
           h += '<td style="padding:6px 8px;text-align:right">'+_mesesBadge(c.mesesStock, c.stock)+'</td>';
-          h += '<td style="padding:6px 8px;text-align:right">'+_diasBadge(c.diasVenta, c.diasVentaN, c.diasLentoN, c.diasLentoMax)+'</td>';
+          h += '<td style="padding:6px 8px;text-align:right">'+_diasBadge(c.diasVenta, c.diasVentaN)+'</td>';
           h += '<td style="padding:6px 8px;text-align:center">'+_sparkline(c.ventasPorMes, meses)+'</td>';
           h += '</tr>';
         });
@@ -5538,7 +5532,7 @@ function repartoRotFiltrar() {
     h += '<td class="num">' + m.stock + '</td>';
     h += '<td class="num">' + _rotFmt(m.ventaMes) + '</td>';
     h += '<td class="num">' + _rotMesesCell(m.mesesStock, m.stock) + '</td>';
-    h += '<td class="num">' + _diasBadge(m.diasVenta, m.diasVentaN, m.diasLentoN, m.diasLentoMax) + '</td></tr>';
+    h += '<td class="num">' + _diasBadge(m.diasVenta, m.diasVentaN) + '</td></tr>';
     h += '<tr id="rotdet-' + idx + '" class="reparto-detalle hidden"><td colspan="5">' + _rotColoresHtml(m) + '</td></tr>';
   });
   h += '</tbody></table></div></div>';
@@ -5556,7 +5550,7 @@ function _rotColoresHtml(m) {
       + '<td class="num">' + _rotFmt(c.ventaMes) + '/mes</td>'
       + '<td class="num">stock ' + c.stock + '</td>'
       + '<td class="num">' + _rotMesesCell(c.mesesStock, c.stock) + '</td>'
-      + '<td class="num">' + _diasBadge(c.diasVenta, c.diasVentaN, c.diasLentoN, c.diasLentoMax) + '</td>'
+      + '<td class="num">' + _diasBadge(c.diasVenta, c.diasVentaN) + '</td>'
       + '<td>' + (agotado ? '<span class="rot-agotado-lbl">⚠ se vendió todo · reponé este color</span>' : '') + '</td></tr>';
   });
   h += '</tbody></table>';
