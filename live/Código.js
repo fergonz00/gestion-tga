@@ -1616,18 +1616,39 @@ function saveVentaManual(body) {
   return { ok: true, preventa: pv };
 }
 
+// Tras guardar un campo manual, en vez de TIRAR el cache de admventas (~45s de
+// recálculo que pagaba el próximo que abría la solapa — con la adm guardando
+// campos todo el día, Adm. ventas vivía fría y "estaba todo lento"), se PARCHEA
+// la venta adentro del JSON cacheado: el único dato que cambió es ese campo
+// manual, así que el resto del payload sigue válido. Si la PV no está en el
+// cache (carpeta nueva), recién ahí se invalida para que recalcule.
+function _admCachePatch(pv, campos) {
+  try {
+    const s = _cacheBigGet('admventas');
+    if (!s) return;                                     // cache frío: nada que parchear
+    const data = JSON.parse(s);
+    const v = (data.ventas || []).find((x) => x.preventa === pv);
+    if (!v) { _cacheDrop('admventas'); return; }        // PV nueva → recalcular
+    v.manual = v.manual || {};
+    Object.keys(campos).forEach((k) => { v.manual[k] = (campos[k] == null) ? '' : campos[k]; });
+    _cacheBigPut('admventas', JSON.stringify(data), CACHE_TTL_WARM);
+  } catch (e) { try { _cacheDrop('admventas'); } catch (e2) {} }
+}
+
 function saveAdmVenta(body) {
   const pv = String(body.preventa || '').trim();
   if (!pv) return { error: 'falta preventa' };
   const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'credito_liquidado', 'credito_liquidado_ts', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'notas'];
   const row = { preventa: pv, updated_at: new Date().toISOString(), updated_by: String(body.usuario || '') };
   const campos = body.campos || {};
-  for (const k of permitidos) if (campos[k] !== undefined) row[k] = (campos[k] === '' ? null : campos[k]);
+  const guardados = {};
+  for (const k of permitidos) if (campos[k] !== undefined) { row[k] = (campos[k] === '' ? null : campos[k]); guardados[k] = campos[k]; }
   const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
   const res = UrlFetchApp.fetch(SUPA_URL + '/adm_ventas?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(row), muteHttpExceptions: true });
   if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200) };
-  // patentamientos se arma desde adm_ventas → invalidar ambos caches
-  try { _cacheDrop('admventas'); CacheService.getScriptCache().remove('patentamientos'); } catch (e) {}
+  // admventas: parche in-place (el cache queda caliente); patentamientos se
+  // deriva de adm_ventas y es barato → ese sí se invalida y recalcula solo.
+  try { _admCachePatch(pv, guardados); CacheService.getScriptCache().remove('patentamientos'); } catch (e) {}
   return { ok: true, preventa: pv };
 }
 
@@ -2630,7 +2651,7 @@ function precalentarCache() {
   // Endpoints chicos cacheados con _cached → los reescribimos con TTL WARM para
   // que sobrevivan al ciclo (sino vencerian a los 10 min de CACHE_TTL_SEC).
   const small = [['saldoscompras', getSaldosCompras], ['stockhist', getStockHist],
-                 ['patentamientos', getPatentamientos]];
+                 ['patentamientos', getPatentamientos], ['gastosmap', getGastosMap]];
   small.forEach(function (j) {
     try { _cached(j[0], CACHE_TTL_WARM, true, j[1]); }
     catch (e) { Logger.log('precalentar ' + j[0] + ': ' + e); }
