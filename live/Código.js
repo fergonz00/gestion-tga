@@ -301,7 +301,9 @@ function _ntrim(s) {
   s = s.replace(/bi[\s-]*tono/g, 'bitono');
   s = s.replace(/\b(vw|nuevo)\b/g, '');
   s = s.replace(/\bmtg([123])\b/g, 'mt');   // Oversoft a veces pega la generación al cambio: "MTG3" = "MT G3"
-  s = s.replace(/\bmy2[0-9]\b/g, '').replace(/\b20[0-9][0-9]\b/g, '').replace(/\bg[123]\b/g, '');
+  // "my26" y también "my 26" (con espacio, ej "Amarok ... MY 25"): el
+  // model-year no distingue producto — afuera
+  s = s.replace(/\bmy\s*2[0-9]\b/g, '').replace(/\b20[0-9][0-9]\b/g, '').replace(/\bg[123]\b/g, '');
   // OJO: NO borrar pack/safe/i/ii — "Tera Trend MSI MT" y "... + Pack Safe I"
   // son productos DISTINTOS (precio/dto distintos) y Oversoft describe sin pack.
   // "se" sí se borra: los nombres "SE G2" de Amarok son el mismo producto.
@@ -425,17 +427,19 @@ function _oversoftMotorData(catByNorm) {
 // ROTACIÓN REAL — "cuando efectivamente tuve esta unidad en stock, ¿cuántos
 // días tardó en venderse?". Por unidad física: fechaasignacion (quedó
 // comprometida a un cliente) − fechaderecepcion (entró al stock físico).
-// Ventana = fechaasignacion en los 4 meses calendario COMPLETOS anteriores
-// (la misma ventana que la rotación clásica). Las PRE-VENDIDAS (asignadas
-// antes/el mismo día de recibirse, o sin recepción: venta a pedido) nunca
-// rotaron en stock → NO entran al promedio y se cuentan aparte (nPre).
-// A diferencia de "meses de stock", esta métrica responde incluso para
-// modelos/colores que hoy no hay: mide la velocidad real cuando los hubo.
+// Ventana = fechaasignacion en los ÚLTIMOS 12 MESES completos (más larga que
+// los 4 meses de "meses de stock" a propósito: acá se busca muestra histórica
+// —quería Fer mirar el año— y allá la mirada cortoplacista del ritmo actual).
+// Las PRE-VENDIDAS (asignadas antes/el mismo día de recibirse, o sin
+// recepción: venta a pedido) nunca rotaron en stock → NO entran al promedio y
+// se cuentan aparte (nPre). A diferencia de "meses de stock", esta métrica
+// responde incluso para modelos/colores que hoy no hay: mide la velocidad
+// real cuando los hubo.
 // =======================================================================
 function _diasEnVenta(ncDe, colorDe, h) {
   const hoy = new Date();
-  const fin = new Date(hoy.getFullYear(), hoy.getMonth(), 1);      // 1° del mes actual (excluido)
-  const ini = new Date(hoy.getFullYear(), hoy.getMonth() - 4, 1);  // 1° de 4 meses atrás
+  const fin = new Date(hoy.getFullYear(), hoy.getMonth(), 1);       // 1° del mes actual (excluido)
+  const ini = new Date(hoy.getFullYear(), hoy.getMonth() - 12, 1);  // 1° de 12 meses atrás
   const iso = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-01';
   const res = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo,color,fechaderecepcion,fechaasignacion&fechaasignacion=gte.' + iso(ini) + '&fechaasignacion=lt.' + iso(fin) + '&limit=5000', h);
   const us = (res.getResponseCode() < 300) ? JSON.parse(res.getContentText()) : [];
@@ -2179,7 +2183,7 @@ function getAnalisisStock() {
   const N = refMeses.length;   // 4
   const sumMes = (vpm) => { let s = 0; for (const m of refMeses) s += Number((vpm || {})[m]) || 0; return s; };
 
-  // ROTACIÓN REAL: días en venderse por modelo/color (misma ventana de 4 meses)
+  // ROTACIÓN REAL: días en venderse por modelo/color (ventana propia: 12 meses)
   let diasVentaNc = {};
   try { diasVentaNc = _diasEnVenta(ncDe, colorDe, h); } catch (e) {}
 
@@ -2379,8 +2383,8 @@ function getBaratitoMotor() {
       ventasPorMes:  ventasNc[c.nombre_corto] || {},
       // ventas por color y por mes (rotación por color en el Reparto)
       ventasColorPorMes: ventasColorPorTrim[c.nombre_corto] || {},
-      // rotación REAL: días promedio en venderse cuando estuvo en stock (4 meses
-      // completos) + pre-vendidas (asignadas antes de recibirse). Ver _diasEnVenta.
+      // rotación REAL: días promedio en venderse cuando estuvo en stock (últimos
+      // 12 meses) + pre-vendidas (asignadas antes de recibirse). Ver _diasEnVenta.
       diasVenta:     diasVentaNc[c.nombre_corto] || null,
       // stock por color (Oversoft) + ajustes de precio por color ('*' = todos)
       colores:       Object.entries(stockColorPorTrim[c.nombre_corto] || {})
@@ -3870,7 +3874,7 @@ function _baseCod(c) {
 function _repartoNtrim(s) {
   s = String(s || '').toLowerCase();
   s = s.replace(/bi[\s-]*tono/g, 'bitono').replace(/\b(vw|nuevo)\b/g, '').replace(/\bmtg([123])\b/g, 'mt');
-  s = s.replace(/\bmy2[0-9]\b/g, '').replace(/\b20[0-9][0-9]\b/g, '').replace(/\bg[123]\b/g, '');
+  s = s.replace(/\bmy\s*2[0-9]\b/g, '').replace(/\b20[0-9][0-9]\b/g, '').replace(/\bg[123]\b/g, '');
   s = s.replace(/\bph[ag]\b/g, '').replace(/\b(se|cd|l)\b/g, '');
   return s.replace(/[^a-z0-9]/g, '');
 }

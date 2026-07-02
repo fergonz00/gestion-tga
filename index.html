@@ -4634,7 +4634,7 @@ function _diasBadge(dias, n, nPre) {
     else if (dias <= 60) { bg='#fff3cd'; fg='#a07000'; }
     else                 { bg='#fae0d4'; fg='#c0657a'; }
     h += '<span style="background:'+bg+';color:'+fg+';font-weight:700;padding:3px 9px;border-radius:5px;white-space:nowrap;font-size:12px" '
-       + 'title="Promedio sobre '+n+' unidad'+(n===1?'':'es')+' que estuvieron físicamente en stock antes de venderse (últimos 4 meses completos)">'
+       + 'title="Promedio sobre '+n+' unidad'+(n===1?'':'es')+' que estuvieron físicamente en stock antes de venderse (últimos 12 meses)">'
        + dias+' d <span style="font-weight:400;opacity:.75">· '+n+' u.</span></span>';
   }
   if (nPre) {
@@ -4712,7 +4712,7 @@ function renderAnalisisStock() {
   h += '<div style="font-size:12px;color:var(--vw-grey-4);margin-bottom:10px">'
      + 'Rotación calculada sobre <strong>'+ (meses.length ? (_mesAbr(meses[0])+' → '+_mesAbr(meses[meses.length-1])) : '—') +'</strong> '
      + '(4 meses completos; el mes en curso no cuenta). <em>Meses de stock = stock ÷ (ventas 4m ÷ 4)</em>. '
-     + '<em>Días en venderse</em> = promedio real de días entre que la unidad llegó al stock y se vendió (las vendidas a pedido no cuentan y se muestran como "% a pedido"). Tocá un modelo para ver el desglose por color.'
+     + '<em>Días en venderse</em> = promedio real de días entre que la unidad llegó al stock y se vendió, sobre los últimos 12 meses (las vendidas a pedido no cuentan y se muestran como "% a pedido"). Tocá un modelo para ver el desglose por color.'
      + '</div>';
   h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">';
   h += '<div style="display:flex;gap:14px;align-items:center;font-size:12px;color:var(--vw-grey-4);flex-wrap:wrap">'
@@ -4725,7 +4725,7 @@ function renderAnalisisStock() {
   h += '</div>';
 
   h += '<div class="evol-tbl-card"><table class="evol-tbl">';
-  h += '<thead><tr><th style="width:20px"></th><th>Modelo</th><th class="num">Stock</th><th class="num">Vta 4m</th><th class="num">Vta/mes</th><th class="num">Meses stock</th><th class="num" title="Rotación real: días promedio en venderse cuando estuvo en stock (4 meses completos)">Días en venderse</th><th style="text-align:center">Tendencia</th></tr></thead><tbody>';
+  h += '<thead><tr><th style="width:20px"></th><th>Modelo</th><th class="num">Stock</th><th class="num">Vta 4m</th><th class="num">Vta/mes</th><th class="num">Meses stock</th><th class="num" title="Rotación real: días promedio en venderse cuando estuvo en stock (últimos 12 meses)">Días en venderse</th><th style="text-align:center">Tendencia</th></tr></thead><tbody>';
   items.forEach((it, idx) => {
     const abierto = analisisAbiertos.has(it.nombreCorto);
     h += '<tr style="cursor:pointer" onclick="toggleAnalisisModelo('+idx+')">';
@@ -5533,7 +5533,7 @@ function repartoRotFiltrar() {
     || (m.modelo || '').toLowerCase().includes(q) || (m.familia || '').toLowerCase().includes(q));
   if (!items.length) { wrap.innerHTML = '<div class="empty">Sin datos de rotación' + (q ? ' para la búsqueda.' : '.') + '</div>'; return; }
   let h = '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla rot-tabla"><thead><tr>'
-    + '<th>Modelo</th><th class="num">Stock</th><th class="num">Vta/mes</th><th class="num">Meses stock</th><th class="num" title="Rotación real: días promedio en venderse cuando estuvo en stock (4 meses completos); las vendidas a pedido no cuentan">Días en venderse</th></tr></thead><tbody>';
+    + '<th>Modelo</th><th class="num">Stock</th><th class="num">Vta/mes</th><th class="num">Meses stock</th><th class="num" title="Rotación real: días promedio en venderse cuando estuvo en stock (últimos 12 meses); las vendidas a pedido no cuentan">Días en venderse</th></tr></thead><tbody>';
   items.forEach((m, idx) => {
     h += '<tr class="rot-row" onclick="repartoRotToggle(' + idx + ')">';
     h += '<td><span class="reparto-chev" id="rotchev-' + idx + '">▸</span> <span class="reparto-modelo">' + escapeHtml((m.modelo || '').replace(/^VW /, '')) + '</span><div class="reparto-fam">' + escapeHtml(m.familia || '') + '</div></td>';
