@@ -2129,7 +2129,13 @@ function _finTabla(items, pendiente, total) {
       + '<td style="text-align:right;padding:4px 8px;font-weight:700;color:' + (pendiente ? col : '#0a7a30') + '">' + fmtPesos(pendiente ? fl.saldo : _finCobradoEff(x)) + '</td>'
       + '<td style="text-align:center;padding:4px 8px;white-space:nowrap">' + (pendiente ? (fl.vto ? _fechaDMA(fl.vto) : '—') : cobradoEl) + '</td>'
       + '<td style="padding:4px 8px;color:' + (pendiente ? col : 'var(--vw-grey-3)') + '">' + (pendiente ? estado : (fl.recibos && fl.recibos.length ? '#' + fl.recibos.join(' #') : '—')) + '</td>'
-      + '<td style="padding:4px 8px;white-space:nowrap">' + _finLiqSelector(v.preventa, (v.manual && v.manual.credito_liquidado) || '') + _finLiqBadge(x.liq) + '</td>'
+      + '<td style="padding:4px 8px;white-space:nowrap">' + _finLiqSelector(v.preventa, (v.manual && v.manual.credito_liquidado) || '') + _finLiqBadge(x.liq)
+      // Cobrada SOLO por la marca de la adm (sin recibo real): botón para deshacer
+      // el SI de un toque — la financiación vuelve a Pendientes de cobro.
+      + (!pendiente && x.liq.liq && !x.liq.conRecibo
+          ? ' <button onclick="finSetLiquidado(\'' + v.preventa + '\', \'\')" title="Deshacer la marca de cobrado: vuelve a Pendientes de cobro" style="border:1px solid var(--vw-grey-2);background:#fff;border-radius:5px;padding:2px 7px;font-size:11px;cursor:pointer;color:#cc6600">↩ deshacer</button>'
+          : '')
+      + '</td>'
       + '</tr>';
   }
   if (pendiente) {
