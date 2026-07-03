@@ -1217,6 +1217,31 @@ function getVentasV2(targetMes) {
   }
   const ncDe = (codFull) => { const d = desc[String(codFull || '').trim()]; return d ? (catByNorm[_ntrim(d)] || null) : null; };
 
+  // ── Ajuste automático al tramo 100% del Performance Bonus (pedido 3-jul) ──
+  // Durante el mes la ganancia se estima con el tramo 90% (fila `performance`).
+  // Cuando un mes CIERRA con alcance >= 100% del objetivo de patentamientos, las
+  // ventas cuyas CC son de ese mes pasan SOLAS al tramo 100 (fila `performance100`
+  // de la circular; solo difiere en algunos modelos, ej. Amarok). Cada venta
+  // ajustada expone además `gcia90Pesos` (la ganancia que hubiera sido al 90%)
+  // para mostrar el premio por llegar al 100%. Medida de alcance = misma que el
+  // panel Patentamientos/Trimestre: unidades vendidas (sin especiales) con fecha
+  // de patentamiento en el mes, contra objetivos_pat.
+  const patPorMes = {};
+  for (const p of pvs) {
+    if (_esEspecial(p.numero)) continue;
+    const fp = String((unis[p.unidadid] || {}).fechapatentamiento || '').slice(0, 7);
+    if (fp) patPorMes[fp] = (patPorMes[fp] || 0) + 1;
+  }
+  let objPat = {};
+  try { objPat = getObjetivosPat().objetivos || {}; } catch (e) {}
+  const _cc100Cache = {};
+  const alcanzo100 = (m) => {
+    if (_cc100Cache[m] === undefined) {
+      _cc100Cache[m] = m < mesActualV0 && Number(objPat[m]) > 0 && (patPorMes[m] || 0) >= Number(objPat[m]);
+    }
+    return _cc100Cache[m];
+  };
+
   // Campos manuales (tabla ventas_manual, key = preventa normalizada): accesorios
   // y sin_comision (true = venta TG de gerencia confirmada sin comisión; null =
   // todavía no se respondió la pregunta → se toma comisión como siempre).
@@ -1282,13 +1307,18 @@ function getVentasV2(targetMes) {
     let mesInc = (patentado && fpat) ? fpat : (mesActualV > mesKey ? mesActualV : mesKey);
     if (mesInc < mesKey) mesInc = mesKey;      // dato raro: patentada "antes" de la venta
     if (!incPorMes[mesInc]) mesInc = mesKey;   // ese mes aún sin condiciones cargadas
-    let gciaPct = null, gciaPesos = null, listaM = 0, breakdown = null;
+    let gciaPct = null, gciaPesos = null, gcia90Pesos = null, listaM = 0, breakdown = null;
     if (btMes && monto > 0) {
       listaM = Number(btMes.precio_lista) || 0;
       const costoC = Number(btMes.costo_concesionario) || 0;
       const im  = (incPorMes[mesInc] || {})[nc.nombre_corto] || {};
       const imV = (incPorMes[mesKey] || {})[nc.nombre_corto] || {};
-      const ccM = noInc ? 0 : (Number(im.performance) || 0);
+      // Performance: tramo 90% mientras el mes corre; tramo 100% AUTOMÁTICO si el
+      // mes de las CC ya cerró con el objetivo cumplido (alcanzo100 arriba).
+      const cc90M  = noInc ? 0 : (Number(im.performance) || 0);
+      const cc100M = noInc ? 0 : (Number(im.performance100) || 0);
+      const usa100 = !noInc && cc100M > 0 && cc100M !== cc90M && alcanzo100(mesInc);
+      const ccM = usa100 ? cc100M : cc90M;
       const tacM = noInc ? 0 : (Number(im.tactico) || 0);
       const whoM = noInc ? 0 : (Number(imV.whosale) || 0);
       const a1M  = noInc ? 0 : (Number(im.adicional1) || 0);
@@ -1304,6 +1334,7 @@ function getVentasV2(targetMes) {
         especial: especial,
         sinComision: sinComision,
         mesCC: mesInc,   // mes de las condiciones aplicadas (patentamiento; venta si no hay)
+        cc100Aplicado: usa100,   // el mes cerró al 100% → performance al tramo 100
         costos: { comision: Math.round(comV), iibb: Math.round(iibbV), costoRep: Math.round(costoC) },
         incentivos: { cc: Math.round(ccM), tactico: Math.round(tacM), whosale: Math.round(whoM), adic1: Math.round(a1M), adic2: Math.round(a2M), cupo: Math.round(cupM), total: Math.round(ccM + otrosM) },
       };
@@ -1312,9 +1343,16 @@ function getVentasV2(targetMes) {
       // la hoja) es gcia = pct · lista · (1−IVA). (Antes faltaba el (1−IVA) → las
       // pérdidas/ganancias salían infladas ~27%.)
       if (gciaPct !== null) gciaPesos = Math.round(gciaPct * listaM * (1 - ivaFrac));
+      // Referencia al 90%: solo cuando el ajuste al 100% cambió el número, para
+      // poder mostrar "resultado final vs lo que hubiera sido al 90%".
+      if (usa100 && gciaPesos !== null) {
+        const p90 = _gciaVentaPct(monto, ivaFrac, listaM, costoC, cc90M, otrosM, sinComision);
+        if (p90 !== null) gcia90Pesos = Math.round(p90 * listaM * (1 - ivaFrac));
+      }
     }
     const acc = manV[_normPv(p.numero)] || 0;   // accesorios manuales: la fórmula los SUMA
     if (gciaPesos !== null) {
+      if (gcia90Pesos !== null) gcia90Pesos += acc;
       gciaPesos += acc;
       // % gcia neta (= col Y) = ganancia / (lista · (1−IVA)), ya con accesorios.
       if (listaM > 0) gciaPct = gciaPesos / (listaM * (1 - ivaFrac));
@@ -1336,6 +1374,7 @@ function getVentasV2(targetMes) {
       modelo: desc[String(p.modelo || '').trim()] || String(p.modelo || ''),
       color: colorDe[String(u.color)] || '',
       gciaVtaPesos: gciaPesos,
+      gcia90Pesos: gcia90Pesos,   // ganancia que hubiera sido al 90% (solo si aplicó tramo 100)
       gciaVtaPct: gciaPct,
       gciaNetaAcum: gciaPesos !== null ? acumPorMes[mesKey] : null,
       vendedor: _matchVendedor(vendNombre) || vendNombre,
@@ -1369,6 +1408,7 @@ function getVentasV2(targetMes) {
         mesKey: h.mes, preventaNum: h.preventa, montoFc: Number(h.monto) || 0, iva: null,
         serie: h.serie || '', modelo: h.modelo || '', color: h.color || '',
         gciaVtaPesos: h.gcia_pesos != null ? Number(h.gcia_pesos) : null,
+        gcia90Pesos: h.gcia90_pesos != null ? Number(h.gcia90_pesos) : null,
         gciaVtaPct: h.gcia_pct != null ? Number(h.gcia_pct) : null,
         gciaNetaAcum: null, vendedor: h.vendedor || '', vendedorRaw: h.vendedor || '',
         accesorios: 0, comentario: '', mencionaAcc: false, sinBt: false, hist: true,
@@ -1408,6 +1448,7 @@ function congelarMes(mes) {
       preventa: pv, mes: mes, fecha: v.fechaPvIso || null,
       modelo: v.modelo || '', color: v.color || '', serie: v.serie || '',
       vendedor: v.vendedor || '', monto: monto, gcia_pesos: Math.round(v.gciaVtaPesos),
+      gcia90_pesos: (typeof v.gcia90Pesos === 'number') ? Math.round(v.gcia90Pesos) : null,
       gcia_pct: monto > 0 ? v.gciaVtaPesos / monto : null, updated_at: new Date().toISOString(),
     });
   }

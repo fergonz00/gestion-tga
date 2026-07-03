@@ -2818,8 +2818,14 @@ function renderVentasOv() {
   sel += '<option value="__todos__"' + (!filtra ? ' selected' : '') + '>Todos los meses</option>';
   for (const m of meses) sel += '<option value="' + m.mesKey + '"' + (m.mesKey === ventasOvMes ? ' selected' : '') + '>' + escapeHtml(m.label) + ' (' + m.cuenta + ')</option>';
   sel += '</select>';
-  let totG = 0;
-  for (const v of rows) if (typeof v.gciaVtaPesos === 'number') totG += v.gciaVtaPesos;
+  let totG = 0, tot90 = 0, hayAjuste100 = false;
+  for (const v of rows) if (typeof v.gciaVtaPesos === 'number') {
+    totG += v.gciaVtaPesos;
+    // gcia90Pesos viene solo en ventas cuyo mes de CC cerró al 100% (el backend
+    // pasó el performance al tramo 100 automáticamente): guarda la referencia 90%.
+    if (typeof v.gcia90Pesos === 'number') { hayAjuste100 = true; tot90 += v.gcia90Pesos; }
+    else tot90 += v.gciaVtaPesos;
+  }
   let h = _ovsSyncBanner(ventasOvData.syncOversoft);
   const _revBtn = '<button onclick="toggleVentasOvSoloRev()" title="Ver solo las ventas con acc/FyF de TODOS los meses, para chequear pendientes sin ir mes a mes" style="padding:5px 10px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid ' + (ventasOvSoloRev ? '#0a66c2' : 'var(--vw-grey-2)') + ';background:' + (ventasOvSoloRev ? '#0a66c2' : '#fff') + ';color:' + (ventasOvSoloRev ? '#fff' : '#333') + '">' + (ventasOvSoloRev ? '✓ ' : '') + 'Solo acc/FyF</button>';
   let _cntTxt;
@@ -2828,6 +2834,9 @@ function renderVentasOv() {
     _cntTxt = rows.length + ' con acc/FyF (todos los meses) · <b style="color:#cc3300">' + _pend + ' sin resolver</b>';
   } else {
     _cntTxt = rows.length + ' ventas · ganancia total <b style="color:#0a7a30">' + fmtPesos(totG) + '</b>';
+    if (hayAjuste100) {
+      _cntTxt += ' · <span title="El mes cerró con el 100% del objetivo de patentamientos: el Performance Bonus pasó automáticamente del tramo 90% al 100%. Al 90% la ganancia hubiera sido ' + fmtPesos(tot90) + '." style="background:#0a7a30;color:#fff;border-radius:8px;padding:2px 8px;font-size:12px;font-weight:700">🎯 100% alcanzado: ' + (totG - tot90 >= 0 ? '+' : '') + fmtPesos(totG - tot90) + ' vs 90%</span>';
+    }
   }
   h += '<div style="margin:6px 0 12px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">' + sel + _revBtn
     + '<span style="font-size:13px;color:var(--vw-grey-3)">' + _cntTxt + '</span></div>';
