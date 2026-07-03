@@ -1271,14 +1271,26 @@ function getVentasV2(targetMes) {
     const comisionResp = manSinCom.hasOwnProperty(_normPv(p.numero));
     const sinComision = esTG && manSinCom[_normPv(p.numero)] === true;
 
+    // ── Mes de las CONDICIONES COMERCIALES (regla acordada 1-jul): los
+    // incentivos de fábrica siguen el mes de PATENTAMIENTO, no el de la venta.
+    // Patentada → su mes real de patentamiento; pendiente → mes actual (mejor
+    // estimación hasta que patente). El whosale NO: es por compra/facturación,
+    // queda con el mes de la venta. Fallback: si el mes objetivo todavía no
+    // tiene condiciones cargadas (circular no llegó), se usan las del mes de
+    // venta. Los PRECIOS (lista/costo) siempre van por mes de venta (btMes).
+    const fpat = String(u.fechapatentamiento || '').slice(0, 7);
+    let mesInc = (patentado && fpat) ? fpat : (mesActualV > mesKey ? mesActualV : mesKey);
+    if (mesInc < mesKey) mesInc = mesKey;      // dato raro: patentada "antes" de la venta
+    if (!incPorMes[mesInc]) mesInc = mesKey;   // ese mes aún sin condiciones cargadas
     let gciaPct = null, gciaPesos = null, listaM = 0, breakdown = null;
     if (btMes && monto > 0) {
       listaM = Number(btMes.precio_lista) || 0;
       const costoC = Number(btMes.costo_concesionario) || 0;
-      const im = (incPorMes[mesKey] || {})[nc.nombre_corto] || {};
+      const im  = (incPorMes[mesInc] || {})[nc.nombre_corto] || {};
+      const imV = (incPorMes[mesKey] || {})[nc.nombre_corto] || {};
       const ccM = noInc ? 0 : (Number(im.performance) || 0);
       const tacM = noInc ? 0 : (Number(im.tactico) || 0);
-      const whoM = noInc ? 0 : (Number(im.whosale) || 0);
+      const whoM = noInc ? 0 : (Number(imV.whosale) || 0);
       const a1M  = noInc ? 0 : (Number(im.adicional1) || 0);
       const a2M  = noInc ? 0 : (Number(im.adicional2) || 0);
       const cupM = noInc ? 0 : (Number(im.cupo) || 0);
@@ -1291,6 +1303,7 @@ function getVentasV2(targetMes) {
         esAA: esAA,
         especial: especial,
         sinComision: sinComision,
+        mesCC: mesInc,   // mes de las condiciones aplicadas (patentamiento; venta si no hay)
         costos: { comision: Math.round(comV), iibb: Math.round(iibbV), costoRep: Math.round(costoC) },
         incentivos: { cc: Math.round(ccM), tactico: Math.round(tacM), whosale: Math.round(whoM), adic1: Math.round(a1M), adic2: Math.round(a2M), cupo: Math.round(cupM), total: Math.round(ccM + otrosM) },
       };
