@@ -322,7 +322,7 @@ function _ntrim(s) {
 // Devuelve { stockPorTrim:{nc:n}, stockTotal, ventasPorTrim:{nc:{mes:n}},
 //            ventasDet:{nc:[{mes,monto,iva}]} (para gcia real por venta),
 //            sinCatalogo:[{desc,stock,ventas}] } (lo que no matcheó el catálogo).
-function _oversoftMotorData(catByNorm) {
+function _oversoftMotorData(catByNorm, catByBaseUnico) {
   const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
   // 1) descripción por código completo (paginado)
   const desc = {};
@@ -335,7 +335,18 @@ function _oversoftMotorData(catByNorm) {
     if (ch.length < 1000) break;
     off += 1000;
   }
-  const ncDe = (codFull) => { const d = desc[String(codFull || '').trim()]; return d ? (catByNorm[_ntrim(d)] || null) : null; };
+  // 1º por descripción operativa (distingue trims que comparten código). Si el
+  // MY es tan nuevo que Oversoft todavía no lo catalogó (desc vacía), fallback
+  // por código base ("5URTT4 MY27" → "5URTT4") — SOLO si ese código identifica
+  // UN producto del catálogo (los ambiguos High/Outfit, Highline/Bitono,
+  // Extreme/Hero/Black Style comparten código y sin descripción no se pueden
+  // distinguir → siguen cayendo a sinCatalogo).
+  const ncDe = (codFull) => {
+    const cod = String(codFull || '').trim();
+    const d = desc[cod];
+    const porDesc = d ? (catByNorm[_ntrim(d)] || null) : null;
+    return porDesc || (catByBaseUnico && catByBaseUnico[_baseCod(cod)]) || null;
+  };
   // Registro de lo que NO matchea, para que el front pueda mostrar cuáles son.
   const sinCat = {};
   const anotarSinCat = (codFull, campo) => {
@@ -2352,14 +2363,22 @@ function getBaratitoMotor() {
   // 5) stock desde Oversoft POR TRIM EXACTO (vía descripción, distingue High/Outfit,
   //    Highline/Bitono, Extreme/Hero/Black Style aunque compartan código).
   const catByNorm = {};
+  // código base → nombre_corto, SOLO códigos que identifican un único producto
+  // (fallback para MY nuevos que Oversoft todavía no catalogó, ej "5URTT4 MY27").
+  const catByBaseUnico = {};
   for (const c of cat) {
     if (c.nombre_corto) catByNorm[_ntrim(c.nombre_corto)] = c.nombre_corto;
     if (c.nombre_bt)    catByNorm[_ntrim(c.nombre_bt)]    = c.nombre_corto;
+    if (c.codigo && c.nombre_corto) {
+      const b = _baseCod(c.codigo);
+      if (!(b in catByBaseUnico)) catByBaseUnico[b] = c.nombre_corto;
+      else if (catByBaseUnico[b] !== c.nombre_corto) catByBaseUnico[b] = null;  // ambiguo
+    }
   }
   // Stock Y ventas, ambos genuinos desde Oversoft (por trim exacto).
   let stockPorTrim = {}, stockColorPorTrim = {}, chasisPorTrim = {}, stockTotalOversoft = 0, ventasNc = {}, ventasDet = {}, ventasColorPorTrim = {}, diasVentaNc = {}, sinCatalogo = [];
   try {
-    const od = _oversoftMotorData(catByNorm);
+    const od = _oversoftMotorData(catByNorm, catByBaseUnico);
     stockPorTrim = od.stockPorTrim;
     stockColorPorTrim = od.stockColorPorTrim || {};
     chasisPorTrim = od.chasisPorTrim || {};
@@ -3615,13 +3634,24 @@ function _readComprasDelMes(ss, mesKey) {
 }
 
 // Normaliza el nombre del modelo para matching difuso entre BT/patent/stock.
-// Quita acentos, espacios múltiples, lo lleva a UPPER. Si Fer escribe "Taos
-// Comfortline" en BT y "TAOS comfortline" en patent, igual matchea.
+// Quita acentos y lo lleva a UPPER, y además (3-jul-26) descarta los tokens que
+// vienen desprolijos en los nombres de Oversoft y hacían caer unidades a "sin CC"
+// aunque el modelo tuviera incentivo cargado: prefijo VW, año-modelo (MY25,
+// MY25/26), generación (G1/G2/G3), la marca SE de serie especial (mismo precio e
+// incentivo que la común) y TODO espacio/guión ("170 TSI"≡"170TSI",
+// "Bi-Tono"≡"Bitono"≡"Bi Tono"). Se conserva el "+" para que las variantes
+// "+ Pack Safe" sigan siendo claves distintas. Los mapas que usan esta clave se
+// arman y se leen siempre en la misma ejecución, así que el cambio no rompe
+// nada persistido; solo mejora el matcheo (aplica también a meses pasados).
 function _normModeloKey(s) {
   return String(s || '').trim().toUpperCase()
     .replace(/[ÁÄÀÂ]/g,'A').replace(/[ÉËÈÊ]/g,'E').replace(/[ÍÏÌÎ]/g,'I')
     .replace(/[ÓÖÒÔ]/g,'O').replace(/[ÚÜÙÛ]/g,'U')
-    .replace(/\s+/g, ' ');
+    .replace(/\bVW\b/g, '')
+    .replace(/\bMY\s*\d{2}(\/\d{2})?\b/g, '')
+    .replace(/\bG\d\b/g, '')
+    .replace(/\bSE\b/g, '')
+    .replace(/[^A-Z0-9+]/g, '');
 }
 
 // =======================================================================
