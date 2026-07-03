@@ -13,6 +13,12 @@ Nota: la lista vigente también vive en la planilla madre, pestaña **"listas de
 precios"** y en **"Actual BT"** (col C = lista, costoRep = costo). Esta última se
 lee viva vía el endpoint `tipo=precios`.
 
+> 🔁 **Circuito mensual COMPLETO** (analizar → comparar → cargar precios+incentivos →
+> verificar gestion → portal → consulta0km): skill **`circular-vw`** en
+> `C:\proyectos\.claude\skills\circular-vw\SKILL.md`. Scripts de acá:
+> `cargar_precios_lista.py` (precios), `cargar_incentivos.py` (condiciones),
+> `portal_listas.py <mes>` (lista al portal manteniendo dtos de Fer).
+
 ## Cómo se saca (procedimiento asentado)
 
 La solapa **Precios** de gestion.titogonzalez.online = tabla `precios_lista`
