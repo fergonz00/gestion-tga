@@ -1551,17 +1551,10 @@ const USUARIOS_PATENTAMIENTOS = [];
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby13NRmtve2ojB0IMZgFPnKh3HsLSBLDca4kOduRenO97KLH3W3ILbiJfDzGYVLAUpwpQ/exec';
 const APPS_SCRIPT_TOKEN = 'tga-gestion-R7nQ4xK8jL';
 
-// MOTOR NUEVO (gestion-next en Vercel + Supabase, sin Apps Script ni cuota de
-// urlfetch). Toggle de transición: con ?motornext=1 la solapa Adm. ventas lee
-// y guarda contra gestion-next (port validado 0-diff contra el Apps Script);
-// sin el parámetro sigue todo por Apps Script. Cuando Fer valide, pasa a default.
-const MOTOR_NEXT = new URLSearchParams(location.search).get('motornext') === '1';
-const GESTION_NEXT_URL = 'https://gestion-next-fergonz00s-projects.vercel.app';
-const GESTION_NEXT_TOKEN = 'gtok_IE740qxp4uBANagjGH6MheFw';
-
-// Motor nuevo (gestion-next, Next+Supabase en Vercel) que reemplaza al Apps Script
-// para la solapa Ventas. Es el DEFAULT desde 1-jul (validado). Escape hatch:
-// ?motorviejo=1 vuelve al Apps Script si hiciera falta.
+// Motor nuevo (gestion-next, Next+Supabase en Vercel) que reemplaza al Apps Script.
+// Cubre las solapas Ventas (default desde 1-jul, validado) y Adm. ventas (default
+// desde 6-jul, port validado 0-diff: lee /api/admventas y guarda por POST JSON).
+// Escape hatch: ?motorviejo=1 vuelve TODO al Apps Script si hiciera falta.
 const GESTION_NEXT_URL   = 'https://gestion-next-fergonz00s-projects.vercel.app';
 const GESTION_NEXT_TOKEN = 'gtok_IE740qxp4uBANagjGH6MheFw';
 const MOTOR_NEXT = !new URLSearchParams(location.search).has('motorviejo');
