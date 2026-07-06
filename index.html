@@ -1551,6 +1551,14 @@ const USUARIOS_PATENTAMIENTOS = [];
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby13NRmtve2ojB0IMZgFPnKh3HsLSBLDca4kOduRenO97KLH3W3ILbiJfDzGYVLAUpwpQ/exec';
 const APPS_SCRIPT_TOKEN = 'tga-gestion-R7nQ4xK8jL';
 
+// MOTOR NUEVO (gestion-next en Vercel + Supabase, sin Apps Script ni cuota de
+// urlfetch). Toggle de transición: con ?motornext=1 la solapa Adm. ventas lee
+// y guarda contra gestion-next (port validado 0-diff contra el Apps Script);
+// sin el parámetro sigue todo por Apps Script. Cuando Fer valide, pasa a default.
+const MOTOR_NEXT = new URLSearchParams(location.search).get('motornext') === '1';
+const GESTION_NEXT_URL = 'https://gestion-next-fergonz00s-projects.vercel.app';
+const GESTION_NEXT_TOKEN = 'gtok_IE740qxp4uBANagjGH6MheFw';
+
 // Motor nuevo (gestion-next, Next+Supabase en Vercel) que reemplaza al Apps Script
 // para la solapa Ventas. Es el DEFAULT desde 1-jul (validado). Escape hatch:
 // ?motorviejo=1 vuelve al Apps Script si hiciera falta.
@@ -2277,7 +2285,9 @@ async function loadAdmVentas(forzar) {
   const cont = document.getElementById('admVentasContent');
   if (cont && !admVentasData) cont.innerHTML = '<div class="empty">Cargando carpetas (Oversoft)…</div>';
   try {
-    const url = APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=admventas' + (forzar ? '&fresh=1' : '');
+    const url = MOTOR_NEXT
+      ? GESTION_NEXT_URL + '/api/admventas?token=' + encodeURIComponent(GESTION_NEXT_TOKEN) + (forzar ? '&fresh=1' : '')
+      : APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=admventas' + (forzar ? '&fresh=1' : '');
     const res = await fetch(url);
     if (!res.ok) return;
     const data = await res.json();
@@ -2671,12 +2681,20 @@ async function guardarAdmVenta(preventa) {
   const btn = document.getElementById('admsave_' + key);
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
   try {
-    const body = new URLSearchParams();
-    body.set('payload', JSON.stringify({
-      token: APPS_SCRIPT_TOKEN, accion: 'setadmventa',
-      preventa: preventa, campos: campos, usuario: window._tgaUser || '',
-    }));
-    const res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+    let res;
+    if (MOTOR_NEXT) {
+      res = await fetch(GESTION_NEXT_URL + '/api/admventas?token=' + encodeURIComponent(GESTION_NEXT_TOKEN), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preventa: preventa, campos: campos, usuario: window._tgaUser || '' }),
+      });
+    } else {
+      const body = new URLSearchParams();
+      body.set('payload', JSON.stringify({
+        token: APPS_SCRIPT_TOKEN, accion: 'setadmventa',
+        preventa: preventa, campos: campos, usuario: window._tgaUser || '',
+      }));
+      res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+    }
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     if (data && data.error) throw new Error(data.error);
