@@ -893,7 +893,10 @@ const GASTO_NOMBRES = {
 // `preFact` = true cuando es "a facturar" (antes de emitir): saltea el informe
 // inhibido, que nunca viaja en gastoxprevta (no es una línea que cargue el
 // vendedor), así no daría "falta" en el 100% de las financiadas por ruido.
-function _conciliarPV(rawLineas, m, qbRates, ovs, pv, preFact) {
+// `dcFin` = filas de detcash FIN de ESTA pv, ya prefetcheadas en lote por el
+// caller (_dcFinLotes). Antes cada PV hacía su propio UrlFetch acá adentro →
+// cientos de fetches por corrida → cuota diaria de urlfetch agotada (30-jun, 5-jul).
+function _conciliarPV(rawLineas, m, qbRates, dcFin, pv, preFact) {
   let base = 0, patent = 0, prenda = 0, financ = 0;
   let arMonto = 0, arRate = null, seMonto = 0, q21Neto = 0, tieneInsPrenda = false, tieneSelloPrenda = false, tieneInhib = false;
   const lineas = [];
@@ -936,7 +939,7 @@ function _conciliarPV(rawLineas, m, qbRates, ovs, pv, preFact) {
   let fin = null;
   if (financ > 0) {
     let montoFin = 0, financiador = '';
-    const dc = ovs('/detcash?referencia=eq.' + encodeURIComponent('PV ' + pv) + '&motivo=ilike.FIN*&select=importe,motivo');
+    const dc = dcFin || [];
     dc.forEach((r) => { const imp = Number(r.importe) || 0; if (imp > 0) { montoFin += imp; const fi = _finInfo(r.motivo); if (fi) financiador = fi.nombre; } });
     const impliedQb = montoFin > 0 ? q21Neto / montoFin : 0;
     const planOk = qbRates.some((q) => Math.abs(q / 100 - impliedQb) < 0.003);
@@ -963,6 +966,22 @@ function _conciliarPV(rawLineas, m, qbRates, ovs, pv, preFact) {
     fin: fin, lineas: lineas, alertas: alertas, difFavor: Math.round(difFavor),
     estado: alertas.length ? 'alerta' : 'ok', deMas: deMas, faltan: faltan,
   };
+}
+
+// detcash FIN (monto financiado real) para MUCHAS PVs en lotes de 50, una sola
+// pasada. pvNums = ['08035/1', ...] SIN el prefijo 'PV ' (con ceros, como viene
+// de referencia). Devuelve { '08035/1': [filas] }. Lotes chicos: la réplica capea
+// ~1000 filas/respuesta, y FIN son 1-2 filas por PV, así que sobra margen.
+function _dcFinLotes(ovs, pvNums) {
+  const map = {};
+  for (let i = 0; i < pvNums.length; i += 50) {
+    const lote = pvNums.slice(i, i + 50).map((n) => '"PV ' + n + '"').join(',');
+    for (const r of ovs('/detcash?select=referencia,importe,motivo&motivo=ilike.FIN*&referencia=in.(' + encodeURIComponent(lote) + ')&limit=1000')) {
+      const pv = String(r.referencia || '').replace(/^PV\s+/i, '');
+      (map[pv] = map[pv] || []).push(r);
+    }
+  }
+  return map;
 }
 
 function getConciliacionGastos(params) {
@@ -1004,13 +1023,30 @@ function getConciliacionGastos(params) {
     }
   } catch (e) {}
 
+  // Detalles de gastos en LOTES de 50 comprobantes (antes: 1 fetch por PV, que
+  // multiplicado por meses × 144 precalentados/día reventaba la cuota de urlfetch).
+  const detByComp = {};
+  const compIds = Object.keys(gComp).map((pv) => gComp[pv].id);
+  for (let i = 0; i < compIds.length; i += 50) {
+    for (const d of ovs('/comprobantesdetallesgastos?select=comprobanteid,concepto,montogravado,montoexento&comprobanteid=in.(' + compIds.slice(i, i + 50).join(',') + ')&limit=1000')) {
+      (detByComp[d.comprobanteid] = detByComp[d.comprobanteid] || []).push(d);
+    }
+  }
+  // Líneas normalizadas por PV; con eso sé qué PVs financian (cod 21 con monto)
+  // y traigo su detcash FIN también en lotes, antes de conciliar.
+  const lineasByPv = {};
+  Object.keys(gComp).forEach((pv) => {
+    const det = detByComp[gComp[pv].id] || [];
+    lineasByPv[pv] = det.map((l) => ({ cod: _gCod(l.concepto), concepto: String(l.concepto || ''), iva: _gIva(l), neto: _gNeto(l), rate: _gRate(l.concepto) }));
+  });
+  const pvsFin = Object.keys(lineasByPv).filter((pv) => lineasByPv[pv].reduce((a, l) => a + (l.cod === 21 ? (Number(l.iva) || 0) : 0), 0) > 0);
+  const dcFin = _dcFinLotes(ovs, pvsFin);
+
   const filas = [];
   let totDeMas = 0, totFaltan = 0;
   Object.keys(gComp).forEach((pv) => {
     const m = meta[pv] || { prov: '', fecha: '', lista: 0 };
-    const det = ovs('/comprobantesdetallesgastos?comprobanteid=eq.' + gComp[pv].id + '&select=concepto,montogravado,montoexento');
-    const rawLineas = det.map((l) => ({ cod: _gCod(l.concepto), concepto: String(l.concepto || ''), iva: _gIva(l), neto: _gNeto(l), rate: _gRate(l.concepto) }));
-    const c = _conciliarPV(rawLineas, m, qbRates, ovs, pv);
+    const c = _conciliarPV(lineasByPv[pv], m, qbRates, dcFin[pv] || [], pv);
     totDeMas += c.deMas; totFaltan += c.faltan;
     filas.push({
       pv: pv, prov: m.prov, fecha: m.fecha, patenta: c.patenta,
@@ -1102,6 +1138,7 @@ function getGastosMap() {
     // 8720/3). Cada carga es una corrida de gastosxprevtaid consecutivos; me quedo
     // con la última corrida (la actual) cortando en el último salto grande de id.
     const af = {};
+    const prep = {};   // normPv -> { cur, rawLineas, m } (1ra pasada, sin fetches)
     Object.keys(raw).forEach((pv) => {
       const rows = raw[pv].sort((a, b) => a.gxid - b.gxid);
       let cut = 0;
@@ -1125,8 +1162,18 @@ function getGastosMap() {
         else if (cur.some((r) => r.gastoid === 442)) prov = 'BUENOS AIRES';
       }
       const m = { prov: prov, fecha: (metaAf[pv] || {}).fecha || '' };
-      const c = _conciliarPV(rawLineas, m, qbRates, ovs, origPv[pv] || pv, true);
-      af[pv] = { total: cur.reduce((s, r) => s + r.importe, 0), c: c, prov: prov };
+      prep[pv] = { cur: cur, rawLineas: rawLineas, m: m };
+    });
+    // 2da pasada: detcash FIN de las PVs que financian, en LOTES (antes 1 fetch
+    // por PV dentro de _conciliarPV → cuota urlfetch), y recién ahí concilio.
+    const pvsFinAf = Object.keys(prep)
+      .filter((pv) => prep[pv].rawLineas.reduce((a, l) => a + (l.cod === 21 ? (Number(l.iva) || 0) : 0), 0) > 0)
+      .map((pv) => origPv[pv] || pv);
+    const dcFinAf = _dcFinLotes(ovs, pvsFinAf);
+    Object.keys(prep).forEach((pv) => {
+      const p = prep[pv], num = origPv[pv] || pv;
+      const c = _conciliarPV(p.rawLineas, p.m, qbRates, dcFinAf[num] || [], num, true);
+      af[pv] = { total: p.cur.reduce((s, r) => s + r.importe, 0), c: c, prov: p.m.prov };
     });
     Object.keys(af).forEach((pv) => {
       if (map[pv]) return;   // ya tiene gasto emitido/conciliado: ese manda
@@ -1780,9 +1827,14 @@ function getComprasVW() {
   if (series.length) for (const c of get('/colores?select=colorid,descripcion&limit=2000')) col[c.colorid] = String(c.descripcion || '').trim();
 
   // Datos de la venta (Adm. ventas) por preventa: cliente, localidad, mes a
-  // patentar y el cuadro financiero (qué se cobró / qué falta). Reusa getAdmVentas.
+  // patentar y el cuadro financiero (qué se cobró / qué falta). Reusa getAdmVentas
+  // VÍA CACHE ('admventas' se precalienta cada 10' en su propio trigger): llamarlo
+  // directo eran otros ~40 urlfetch por corrida de comprasvw → cuota diaria.
   const admByPv = {};
-  try { const adm = getAdmVentas(); for (const v of (adm.ventas || [])) admByPv[v.preventa] = v; } catch (e) {}
+  try {
+    const adm = _cachedBig('admventas', CACHE_TTL_WARM, false, getAdmVentas);
+    for (const v of (adm.ventas || [])) admByPv[v.preventa] = v;
+  } catch (e) {}
 
   const out = rows.map(r => {
     const u = uni[String(r.serie || '').trim()];
