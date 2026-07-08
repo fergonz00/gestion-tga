@@ -2092,9 +2092,17 @@ async function finSetLiquidado(pv, value) {
     campos.credito_liquidado_ts = '';
   }
   try {
-    const body = new URLSearchParams();
-    body.set('payload', JSON.stringify({ token: APPS_SCRIPT_TOKEN, accion: 'setadmventa', preventa: pv, campos: campos, usuario: window._tgaUser || '' }));
-    const res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+    let res;
+    if (MOTOR_NEXT) {
+      res = await fetch(GESTION_NEXT_URL + '/api/admventas?token=' + encodeURIComponent(GESTION_NEXT_TOKEN), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preventa: pv, campos: campos, usuario: window._tgaUser || '' }),
+      });
+    } else {
+      const body = new URLSearchParams();
+      body.set('payload', JSON.stringify({ token: APPS_SCRIPT_TOKEN, accion: 'setadmventa', preventa: pv, campos: campos, usuario: window._tgaUser || '' }));
+      res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+    }
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     if (data && data.error) throw new Error(data.error);
@@ -3617,7 +3625,7 @@ function renderPrecios() {
        + '<td colspan="2"></td></tr>';
   }
   h += '</tbody></table></div>';
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Precio = lista (Supabase) − dto + FYF, más el ajuste a mano si lo hay (✎); ganancia con incentivos, IIBB (1,35%), comisión (1,40%) e imp. cheque (0,85%). Stock y colores en vivo de Oversoft.'
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Precio = lista (Supabase) − dto + FYF, más el ajuste a mano si lo hay (✎); ganancia con incentivos, IIBB (1,35%), comisión (1,40%) e imp. cheque (0,6%). Stock y colores en vivo de Oversoft.'
      + ' Competencia: 0km publica c/FYF, a Espasa se le suma FYF para comparar; verde = estás más barato.'
      + (preciosData.competenciaActualizado ? ' Competencia actualizada: ' + escapeHtml(String(preciosData.competenciaActualizado)) + '.' : '')
      + '</div>';
@@ -3722,7 +3730,7 @@ function _precioDetalle(m, key) {
   h += li('Costo reposición', fmtPesos(m.costoRep));
   h += li('IIBB (1,35%)', fmtPesos(cos.iibb));
   h += li('Comisión (1,40%)', fmtPesos(cos.comision));
-  h += li('Imp. cheque (0,85%)', fmtPesos(cos.cheque));
+  h += li('Imp. cheque (0,6%)', fmtPesos(cos.cheque));
   h += li('FYF (flete+form.)', fmtPesos(cos.fyf));
   h += li('Stock', (Number(m.stock)||0));
   h += li('Ventas (últ. 4 meses completos)', _ventasVentana(m));
