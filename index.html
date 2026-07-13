@@ -6758,7 +6758,103 @@ function _urlIncentivos(mesKey, fresh) {
   return url;
 }
 
+// ============ Panel Incentivos NUEVO (gestion-next /api/incentivos) ============
+var incNextMes = '';       // '' = mes actual · 'todos' · 'YYYY-MM'
+var incNextFiltro = '';    // filtro por estado
+var incNextData = null;
+var _INC_EST = {
+  ok:        { label:'OK',        dot:'#10b981', bg:'#ecfdf5', bar:'#10b981' },
+  pendiente: { label:'Pendiente', dot:'#f59e0b', bg:'#fffbeb', bar:'#f59e0b' },
+  reclamo:   { label:'Reclamar',  dot:'#ef4444', bg:'#fef2f2', bar:'#ef4444' },
+  aFavor:    { label:'A favor',   dot:'#0ea5e9', bg:'#f0f9ff', bar:'#0ea5e9' },
+  sinInc:    { label:'Sin inc.',  dot:'#d1d5db', bg:'#fafafa', bar:'#e5e5e5' }
+};
+var _INC_ORDEN = ['reclamo','pendiente','aFavor','ok','sinInc'];
+function _pesosInc(n){ return (n==null)?'—':new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0}).format(n); }
+function _urlIncNext(forzar){
+  var qs = 'token=' + encodeURIComponent(GESTION_NEXT_TOKEN);
+  if (incNextMes) qs += '&mes=' + encodeURIComponent(incNextMes);
+  else if (forzar) qs += '&fresh=1';
+  return GESTION_NEXT_URL + '/api/incentivos?' + qs;
+}
+async function loadIncentivosNext(forzar){
+  var wrap = document.getElementById('incentivosContent');
+  var btn  = document.getElementById('btnRefreshIncentivos');
+  if (incNextData && !forzar) { renderIncentivosNext(); return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Cargando...'; }
+  if (wrap) wrap.innerHTML = '<div class="loading"><div class="spinner"></div><div>Cargando incentivos...</div></div>';
+  try {
+    var res = await fetch(_urlIncNext(!!forzar));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    var data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    incNextData = data;
+    incNextMes = data.mesSel || incNextMes;
+    renderIncentivosNext();
+    var upd = document.getElementById('updatedAtIncentivos');
+    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+  } catch (e) {
+    console.error(e);
+    if (wrap) wrap.innerHTML = '<div class="errbox"><div class="ttl">⚠️ No se pudieron cargar los incentivos</div><div>' + escapeHtml(e.message || String(e)) + '</div></div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Actualizar'; }
+  }
+}
+function setMesIncNext(mes){ incNextMes = mes || ''; incNextData = null; incNextFiltro = ''; loadIncentivosNext(true); }
+function setFiltroIncNext(est){ incNextFiltro = (incNextFiltro === est) ? '' : est; renderIncentivosNext(); }
+function renderIncentivosNext(){
+  var wrap = document.getElementById('incentivosContent'); var d = incNextData;
+  if (!wrap || !d) return;
+  var filas = (d.filas || []).filter(function(f){ return !incNextFiltro || f.estado === incNextFiltro; });
+  var dif = d.totalPresu - d.totalCobrado;
+  var h = '';
+  h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:10px">';
+  h += '<select onchange="setMesIncNext(this.value)" style="padding:4px 8px;border:1px solid #d4d4d4;border-radius:6px;font-size:13px">';
+  (d.meses || []).forEach(function(m){ h += '<option value="' + m.mesKey + '"' + (m.mesKey === d.mesSel ? ' selected' : '') + '>' + escapeHtml(m.label) + '</option>'; });
+  h += '</select>';
+  h += '<span style="font-size:13px;color:#555">' + filas.length + ' unidades · presupuesto <b>' + _pesosInc(d.totalPresu) + '</b> · cobrado <b>' + _pesosInc(d.totalCobrado) + '</b> · dif <b style="color:' + (dif > 0 ? '#dc2626' : dif < 0 ? '#0284c7' : '#059669') + '">' + _pesosInc(dif) + '</b></span>';
+  h += '</div>';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">';
+  _INC_ORDEN.forEach(function(e){
+    var r = (d.resumen || {})[e]; if (!r) return;
+    var cfg = _INC_EST[e], on = (incNextFiltro === e);
+    h += '<button onclick="setFiltroIncNext(\'' + e + '\')" style="display:inline-flex;align-items:center;gap:6px;border-radius:999px;border:1px solid ' + (on ? '#111' : '#e5e5e5') + ';background:' + (on ? '#111' : '#fff') + ';color:' + (on ? '#fff' : '#333') + ';padding:3px 10px;font-size:12px;cursor:pointer">';
+    h += '<span style="width:8px;height:8px;border-radius:999px;background:' + cfg.dot + '"></span>' + cfg.label + ' <b>' + r.n + '</b></button>';
+  });
+  if (incNextFiltro) h += '<button onclick="setFiltroIncNext(\'\')" style="font-size:12px;color:#666;text-decoration:underline;background:none;border:none;cursor:pointer">ver todas</button>';
+  h += '</div>';
+  h += '<div class="table-wrap"><div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:900px">';
+  h += '<thead><tr style="text-align:left;background:#fafafa;color:#666;font-size:11px;text-transform:uppercase">'
+     + '<th style="padding:6px 10px">PV</th><th style="padding:6px 10px">Modelo</th><th style="padding:6px 10px">Serie</th><th style="padding:6px 10px">Vendedor</th>'
+     + '<th style="padding:6px 10px;text-align:right">Presup. (mío)</th><th style="padding:6px 10px;text-align:right">Mónica</th><th style="padding:6px 10px;text-align:right">Cobrado (VW)</th><th style="padding:6px 10px;text-align:right">Diferencia</th><th style="padding:6px 10px">Estado</th></tr></thead><tbody>';
+  var esTodos = (d.mesSel === 'todos');
+  filas.forEach(function(f){
+    var cfg = _INC_EST[f.estado] || _INC_EST.sinInc;
+    var difColor = f.estado === 'reclamo' ? '#dc2626' : (f.estado === 'aFavor' ? '#0284c7' : '#666');
+    var monVal = (f.monica && f.monica.presu != null) ? _pesosInc(f.monica.presu) : '—';
+    var monStyle = f.discrepMonica ? 'color:#b45309;font-weight:500' : 'color:#888';
+    h += '<tr style="border-top:1px solid #f0f0f0;background:' + cfg.bg + ';border-left:3px solid ' + cfg.bar + '">';
+    h += '<td style="padding:6px 10px;font-family:monospace;font-size:11px">' + escapeHtml(f.preventaNum) + (esTodos ? '<div style="color:#aaa">' + f.mesKey + '</div>' : '') + '</td>';
+    h += '<td style="padding:6px 10px">' + escapeHtml(f.modelo) + '<div style="font-size:11px;color:#aaa">' + (f.patentado ? ('patentada ' + (f.mesPatentamiento || '')) : 'sin patentar') + '</div></td>';
+    h += '<td style="padding:6px 10px;font-family:monospace;font-size:11px;color:#888">' + escapeHtml(f.serie || '—') + '</td>';
+    h += '<td style="padding:6px 10px;white-space:nowrap">' + escapeHtml(f.vendedor || '') + '</td>';
+    h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap">' + (f.noInc ? '—' : _pesosInc(f.presupuesto.total)) + '</td>';
+    h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap;' + monStyle + '" title="' + (f.discrepMonica ? 'Mónica difiere de mi cálculo — se usa el de Mónica' : '') + '">' + monVal + '</td>';
+    h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap">' + _pesosInc(f.cobrado.total) + '</td>';
+    h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap;color:' + difColor + ';font-weight:' + (f.estado === 'reclamo' ? '600' : '400') + '">' + (f.noInc ? '—' : _pesosInc(f.dif)) + '</td>';
+    h += '<td style="padding:6px 10px;white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:5px;border-radius:999px;background:#fff;border:1px solid ' + cfg.bar + ';padding:2px 8px;font-size:11px"><span style="width:6px;height:6px;border-radius:999px;background:' + cfg.dot + '"></span>' + cfg.label + '</span></td>';
+    h += '</tr>';
+  });
+  h += '</tbody></table></div></div>';
+  h += '<p style="margin-top:10px;font-size:11px;color:#999">Presupuesto = incentivo que VW debería pagar (referencia: planilla de Mónica cuando está, si no el cálculo Oversoft). Cobrado = cta cte VW (detcash). Mónica en ámbar = difiere de mi cálculo.</p>';
+  wrap.innerHTML = h;
+}
+
 async function loadIncentivos(forzar) {
+  // MOTOR_NEXT: la solapa Incentivos usa el panel nuevo (gestion-next: presupuesto
+  // vs cobrado por detcash + referencia planilla de Mónica). El viejo (Apps Script,
+  // BT × NCs) queda accesible con ?motorviejo=1.
+  if (MOTOR_NEXT) { return loadIncentivosNext(forzar); }
   // El matching cc/condiciones se hace server-side desde Supabase (tabla
   // incentivos). Patentamientos + ventas (Oversoft) se usan para el cruce
   // serie/PV → modelo canónico en _findModeloPorSerie (subida de PDFs de NC).
