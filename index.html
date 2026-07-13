@@ -2872,7 +2872,9 @@ function renderVentasOv() {
     // comentario, o el "Costo Unidad" del gasto difiere del estándar $1.110.000.
     const gasto = _gastoDe(v.preventaNum);
     const mencionaAcc = v.mencionaAcc || _gastoMencionaAcc(gasto);
-    const accFlag = mencionaAcc ? ' <span title="Menciona accesorios en el comentario, o el Costo Unidad del gasto difiere de $1.110.000 — cargá el monto" style="background:#cc6600;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">acc</span>' : '';
+    // El nag "acc" solo si menciona accesorios y NO hay monto cargado todavía (si
+    // el acc del gasto 468 ya se autodetectó y sumó, no hace falta avisar).
+    const accFlag = (mencionaAcc && !(v.accesorios > 0)) ? ' <span title="Menciona accesorios en el comentario, o el Costo Unidad del gasto difiere de $1.110.000 — cargá el monto" style="background:#cc6600;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">acc</span>' : '';
     // Badge del circuito reventas/FyF/costo unidad. Ámbar = pendiente que Valeria
     // confirme cobrado; verde OK = Valeria confirmó → hay que moverlo en Oversoft.
     const _rv = reventasMap[_normPvKey(v.preventaNum)];
@@ -2912,7 +2914,7 @@ function renderVentasOv() {
       + '<td style="text-align:right;white-space:nowrap">' + gastoCell + '</td>'
       + '<td style="text-align:right">' + gciaCell + '</td>'
       + '<td style="text-align:right;color:' + gColor + '">' + (v.gciaVtaPct != null ? (v.gciaVtaPct * 100).toFixed(1) + '%' : '—') + '</td>'
-      + '<td style="text-align:right"><input type="number" value="' + (v.accesorios || 0) + '" onchange="guardarAccesorios(\'' + pvArg + '\', this.value)" style="width:108px;text-align:right;padding:3px 5px;border:1px solid ' + (v.accesorios ? '#0a66c2' : 'var(--vw-grey-2)') + ';border-radius:5px;font-size:12px"></td>'
+      + '<td style="text-align:right"><input type="number" value="' + (v.accesorios || 0) + '" onchange="guardarAccesorios(\'' + pvArg + '\', this.value)"' + (v.accAuto ? ' title="Detectado del gasto (Costo Unidad ≠ $1.110.000) — se suma solo como ingreso. Editá para fijarlo a mano."' : '') + ' style="width:108px;text-align:right;padding:3px 5px;border:1px solid ' + (v.accAuto ? '#b9770e' : (v.accesorios ? '#0a66c2' : 'var(--vw-grey-2)')) + ';border-radius:5px;font-size:12px' + (v.accAuto ? ';background:#fff6e9' : '') + '"></td>'
       + '</tr>';
     if (v.comentario) {
       h += '<tr id="vovcom_' + key + '"' + (ventasOvComAbiertos.has(key) ? '' : ' style="display:none"') + '>'

@@ -188,12 +188,12 @@ const MADRE_SHEETS_OK = [
 // Fórmulas del Sheet (ventaNeta = lista*(1-dtoTG)):
 //   AH = ventaNeta + FYF(1.110.000)
 //   AM = (ventaNeta - costoRep + cc90Iva + otros*lista) / lista
-//   AN = AM*lista - 0,0135*(ventaNeta/1,21) - 0,014*(ventaNeta/1,21) - 0,0085*ventaNeta
-//   AO = AN / lista        (IIBB 1,35% y comisión 1,40% sobre neto de IVA; cheque 0,85% s/ventaNeta)
+//   AN = AM*lista - 0,0135*(ventaNeta/1,21) - 0,014*(ventaNeta/1,21) - 0,006*ventaNeta
+//   AO = AN / lista        (IIBB 1,35% y comisión 1,40% sobre neto de IVA; cheque 0,6% s/ventaNeta)
 const PRECIOS_FYF      = 1110000;   // flete y formularios, sumado en AH
 const PRECIOS_IIBB     = 0.0135;    // 1,35% sobre ventaNeta/1,21
 const PRECIOS_COMISION = 0.014;     // 1,40% sobre ventaNeta/1,21
-const PRECIOS_CHEQUE   = 0.0085;    // 0,85% sobre ventaNeta (con IVA)
+const PRECIOS_CHEQUE   = 0.006;     // 0,6% sobre ventaNeta (con IVA)  ← bajado de 0,85% el 2026-07-07
 function getPreciosActualBT() {
   const ss = SpreadsheetApp.openById(MADRE_ID);
   const sh = ss.getSheetByName('Actual BT');
@@ -1300,6 +1300,29 @@ function getVentasV2(targetMes) {
     }
   } catch (e) {}
 
+  // Acc "escondido" en el gasto: el accesorio ingresa sin facturar y el vendedor
+  // lo carga como una línea extra de Costo Unidad (gastoid 468) con importe ≠
+  // 1.110.000 (el FyF estándar bonificado). Lo detectamos y lo tomamos como
+  // accesorios EN VIVO — la fórmula lo suma como ingreso PLENO (sin netear IVA:
+  // al no facturarse, el IVA no se paga, y queda a favor). El FyF de 1.110.000 NO
+  // cuenta (es costo bonificado). "Manual manda": solo aplica si NO se cargó
+  // accesorios a mano (>0). Fuente: gastoxprevta sin facturar (factura vacía).
+  const FYF_STD = 1110000;
+  const accDet = {};   // normPv -> suma de líneas 468 ≠ 1.110.000 (sin facturar)
+  try {
+    const idsAcc = pvs.filter(calcPorFormula).map((p) => p.prevtaid).filter((x) => x || x === 0);
+    for (let i = 0; i < idsAcc.length; i += 25) {
+      const rows = get('/gastoxprevta?gastoid=eq.468&prevtaid=in.(' + idsAcc.slice(i, i + 25).join(',') + ')&select=prevtanro,importe,factura&limit=3000');
+      rows.forEach((r) => {
+        if (String(r.factura || '') !== '') return;                 // ya facturado → no aplica
+        const imp = Math.round(Number(r.importe) || 0);
+        if (imp <= 0 || Math.abs(imp - FYF_STD) <= 1) return;       // FyF estándar no cuenta
+        const pv = _normPv(r.prevtanro); if (!pv) return;
+        accDet[pv] = (accDet[pv] || 0) + imp;
+      });
+    }
+  } catch (e) {}
+
   const cuentaPorMes = {}, acumPorMes = {};
   const filas = [];
   // Meses CERRADOS (< mes actual) = resultados congelados de la hoja (ventas_hist).
@@ -1397,7 +1420,12 @@ function getVentasV2(targetMes) {
         if (p90 !== null) gcia90Pesos = Math.round(p90 * listaM * (1 - ivaFrac));
       }
     }
-    const acc = manV[_normPv(p.numero)] || 0;   // accesorios manuales: la fórmula los SUMA
+    // Manual manda: si se cargó accesorios a mano (>0) se usa ese; si no, el acc
+    // detectado en el gasto 468 (≠ FyF). La fórmula lo SUMA como ingreso pleno.
+    const _pvN = _normPv(p.numero);
+    const accManual = manV[_pvN] || 0;
+    const accAuto = accManual <= 0 && (accDet[_pvN] || 0) > 0;   // salió del gasto, no cargado a mano
+    const acc = accManual > 0 ? accManual : (accDet[_pvN] || 0);
     if (gciaPesos !== null) {
       if (gcia90Pesos !== null) gcia90Pesos += acc;
       gciaPesos += acc;
@@ -1427,6 +1455,7 @@ function getVentasV2(targetMes) {
       vendedor: _matchVendedor(vendNombre) || vendNombre,
       vendedorRaw: vendNombre,
       accesorios: acc,
+      accAuto: accAuto,           // el acc salió del gasto 468 (≠ FyF), no cargado a mano
       comentario: comentario,
       mencionaAcc: mencionaAcc,
       esAA: esAA,
