@@ -6831,7 +6831,8 @@ function _urlIncentivos(mesKey, fresh) {
 }
 
 // ============ Panel Incentivos NUEVO (gestion-next /api/incentivos) ============
-var incNextMes = '';       // '' = mes actual · 'todos' · 'YYYY-MM'
+var incNextVista = 'patentamientos'; // 'patentamientos' | 'whosale'
+var incNextMes = '';       // '' → todos · 'YYYY-MM'
 var incNextFiltro = '';    // filtro por estado
 var incNextData = null;
 var _INC_EST = {
@@ -6844,7 +6845,7 @@ var _INC_EST = {
 var _INC_ORDEN = ['reclamo','pendiente','aFavor','ok','sinInc'];
 function _pesosInc(n){ return (n==null)?'—':new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0}).format(n); }
 function _urlIncNext(forzar){
-  var qs = 'token=' + encodeURIComponent(GESTION_NEXT_TOKEN);
+  var qs = 'token=' + encodeURIComponent(GESTION_NEXT_TOKEN) + '&vista=' + incNextVista;
   if (incNextMes) qs += '&mes=' + encodeURIComponent(incNextMes);
   else if (forzar) qs += '&fresh=1';
   return GESTION_NEXT_URL + '/api/incentivos?' + qs;
@@ -6874,18 +6875,30 @@ async function loadIncentivosNext(forzar){
 }
 function setMesIncNext(mes){ incNextMes = mes || ''; incNextData = null; incNextFiltro = ''; loadIncentivosNext(true); }
 function setFiltroIncNext(est){ incNextFiltro = (incNextFiltro === est) ? '' : est; renderIncentivosNext(); }
+function setVistaIncNext(v){ if (incNextVista === v) return; incNextVista = v; incNextMes = ''; incNextData = null; incNextFiltro = ''; loadIncentivosNext(true); }
+function _incChip(txt){ return '<td style="padding:6px 10px;white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:5px;border-radius:999px;background:#fff;border:1px solid '+txt.bar+';padding:2px 8px;font-size:11px"><span style="width:6px;height:6px;border-radius:999px;background:'+txt.dot+'"></span>'+txt.label+'</span></td>'; }
 function renderIncentivosNext(){
   var wrap = document.getElementById('incentivosContent'); var d = incNextData;
   if (!wrap || !d) return;
+  var esWho = (d.vista === 'whosale');
   var filas = (d.filas || []).filter(function(f){ return !incNextFiltro || f.estado === incNextFiltro; });
   var dif = d.totalPresu - d.totalCobrado;
   var h = '';
+  // sub-solapas
+  h += '<div style="display:flex;gap:6px;margin-bottom:12px;border-bottom:1px solid #eee">';
+  [['patentamientos','Patentamientos'],['whosale','Whosale']].forEach(function(t){
+    var on = (incNextVista === t[0]);
+    h += '<button onclick="setVistaIncNext(\''+t[0]+'\')" style="padding:7px 16px;border:none;border-bottom:2px solid '+(on?'#1e3a5f':'transparent')+';background:none;color:'+(on?'#1e3a5f':'#888')+';font-size:13px;font-weight:'+(on?'700':'400')+';cursor:pointer">'+t[1]+'</button>';
+  });
+  h += '</div>';
+  // barra: selector de mes + totales
   h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:10px">';
   h += '<select onchange="setMesIncNext(this.value)" style="padding:4px 8px;border:1px solid #d4d4d4;border-radius:6px;font-size:13px">';
   (d.meses || []).forEach(function(m){ h += '<option value="' + m.mesKey + '"' + (m.mesKey === d.mesSel ? ' selected' : '') + '>' + escapeHtml(m.label) + '</option>'; });
   h += '</select>';
-  h += '<span style="font-size:13px;color:#555">' + filas.length + ' unidades · presupuesto <b>' + _pesosInc(d.totalPresu) + '</b> · cobrado <b>' + _pesosInc(d.totalCobrado) + '</b> · dif <b style="color:' + (dif > 0 ? '#dc2626' : dif < 0 ? '#0284c7' : '#059669') + '">' + _pesosInc(dif) + '</b></span>';
+  h += '<span style="font-size:13px;color:#555">' + filas.length + ' unidades · ' + (esWho ? 'whosale' : 'incentivo') + ' esperado <b>' + _pesosInc(d.totalPresu) + '</b> · cobrado <b>' + _pesosInc(d.totalCobrado) + '</b> · dif <b style="color:' + (dif > 0 ? '#dc2626' : dif < 0 ? '#0284c7' : '#059669') + '">' + _pesosInc(dif) + '</b></span>';
   h += '</div>';
+  // chips filtro por estado
   h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">';
   _INC_ORDEN.forEach(function(e){
     var r = (d.resumen || {})[e]; if (!r) return;
@@ -6895,30 +6908,52 @@ function renderIncentivosNext(){
   });
   if (incNextFiltro) h += '<button onclick="setFiltroIncNext(\'\')" style="font-size:12px;color:#666;text-decoration:underline;background:none;border:none;cursor:pointer">ver todas</button>';
   h += '</div>';
-  h += '<div class="table-wrap"><div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:900px">';
-  h += '<thead><tr style="text-align:left;background:#fafafa;color:#666;font-size:11px;text-transform:uppercase">'
-     + '<th style="padding:6px 10px">PV</th><th style="padding:6px 10px">Modelo</th><th style="padding:6px 10px">Serie</th><th style="padding:6px 10px">Vendedor</th>'
-     + '<th style="padding:6px 10px;text-align:right">Presup. (mío)</th><th style="padding:6px 10px;text-align:right">Mónica</th><th style="padding:6px 10px;text-align:right">Cobrado (VW)</th><th style="padding:6px 10px;text-align:right">Diferencia</th><th style="padding:6px 10px">Estado</th></tr></thead><tbody>';
   var esTodos = (d.mesSel === 'todos');
-  filas.forEach(function(f){
-    var cfg = _INC_EST[f.estado] || _INC_EST.sinInc;
-    var difColor = f.estado === 'reclamo' ? '#dc2626' : (f.estado === 'aFavor' ? '#0284c7' : '#666');
-    var monVal = (f.monica && f.monica.presu != null) ? _pesosInc(f.monica.presu) : '—';
-    var monStyle = f.discrepMonica ? 'color:#b45309;font-weight:500' : 'color:#888';
-    h += '<tr style="border-top:1px solid #f0f0f0;background:' + cfg.bg + ';border-left:3px solid ' + cfg.bar + '">';
-    h += '<td style="padding:6px 10px;font-family:monospace;font-size:11px">' + escapeHtml(f.preventaNum) + (esTodos ? '<div style="color:#aaa">' + f.mesKey + '</div>' : '') + '</td>';
-    h += '<td style="padding:6px 10px">' + escapeHtml(f.modelo) + '<div style="font-size:11px;color:#aaa">' + (f.patentado ? ('patentada ' + (f.mesPatentamiento || '')) : 'sin patentar') + '</div></td>';
-    h += '<td style="padding:6px 10px;font-family:monospace;font-size:11px;color:#888">' + escapeHtml(f.serie || '—') + '</td>';
-    h += '<td style="padding:6px 10px;white-space:nowrap">' + escapeHtml(f.vendedor || '') + '</td>';
-    h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap">' + (f.noInc ? '—' : _pesosInc(f.presupuesto.total)) + '</td>';
-    h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap;' + monStyle + '" title="' + (f.discrepMonica ? 'Mónica difiere de mi cálculo — se usa el de Mónica' : '') + '">' + monVal + '</td>';
-    h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap">' + _pesosInc(f.cobrado.total) + '</td>';
-    h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap;color:' + difColor + ';font-weight:' + (f.estado === 'reclamo' ? '600' : '400') + '">' + (f.noInc ? '—' : _pesosInc(f.dif)) + '</td>';
-    h += '<td style="padding:6px 10px;white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:5px;border-radius:999px;background:#fff;border:1px solid ' + cfg.bar + ';padding:2px 8px;font-size:11px"><span style="width:6px;height:6px;border-radius:999px;background:' + cfg.dot + '"></span>' + cfg.label + '</span></td>';
-    h += '</tr>';
-  });
+  h += '<div class="table-wrap"><div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:'+(esWho?'820':'900')+'px">';
+  if (esWho) {
+    h += '<thead><tr style="text-align:left;background:#fafafa;color:#666;font-size:11px;text-transform:uppercase">'
+       + '<th style="padding:6px 10px">Serie</th><th style="padding:6px 10px">Modelo</th><th style="padding:6px 10px">Compra</th><th style="padding:6px 10px">Patentada</th>'
+       + '<th style="padding:6px 10px;text-align:right">Whosale esperado</th><th style="padding:6px 10px;text-align:right">Cobrado</th><th style="padding:6px 10px;text-align:right">Diferencia</th><th style="padding:6px 10px">Estado</th></tr></thead><tbody>';
+    filas.forEach(function(f){
+      var cfg = _INC_EST[f.estado] || _INC_EST.sinInc;
+      var difColor = f.estado === 'reclamo' ? '#dc2626' : (f.estado === 'aFavor' ? '#0284c7' : '#666');
+      h += '<tr style="border-top:1px solid #f0f0f0;background:' + cfg.bg + ';border-left:3px solid ' + cfg.bar + '">';
+      h += '<td style="padding:6px 10px;font-family:monospace;font-size:11px">' + escapeHtml(f.serie || '—') + '</td>';
+      h += '<td style="padding:6px 10px">' + escapeHtml(f.modelo || '') + '</td>';
+      h += '<td style="padding:6px 10px;white-space:nowrap">' + escapeHtml(f.mes || '') + '</td>';
+      h += '<td style="padding:6px 10px;white-space:nowrap;color:#888">' + (f.patentado ? escapeHtml(f.mesPatentamiento || 'sí') : 'en stock') + '</td>';
+      h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap">' + (f.presupuestoRef ? _pesosInc(f.presupuestoRef) : '—') + '</td>';
+      h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap">' + _pesosInc(f.cobrado) + '</td>';
+      h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap;color:' + difColor + ';font-weight:' + (f.estado === 'reclamo' ? '600' : '400') + '">' + (f.presupuestoRef ? _pesosInc(f.dif) : '—') + '</td>';
+      h += _incChip(cfg);
+      h += '</tr>';
+    });
+  } else {
+    h += '<thead><tr style="text-align:left;background:#fafafa;color:#666;font-size:11px;text-transform:uppercase">'
+       + '<th style="padding:6px 10px">PV</th><th style="padding:6px 10px">Modelo</th><th style="padding:6px 10px">Serie</th><th style="padding:6px 10px">Vendedor</th>'
+       + '<th style="padding:6px 10px;text-align:right">Presup. (mío)</th><th style="padding:6px 10px;text-align:right">Mónica</th><th style="padding:6px 10px;text-align:right">Cobrado (VW)</th><th style="padding:6px 10px;text-align:right">Diferencia</th><th style="padding:6px 10px">Estado</th></tr></thead><tbody>';
+    filas.forEach(function(f){
+      var cfg = _INC_EST[f.estado] || _INC_EST.sinInc;
+      var difColor = f.estado === 'reclamo' ? '#dc2626' : (f.estado === 'aFavor' ? '#0284c7' : '#666');
+      var monVal = (f.monicaPresu != null) ? _pesosInc(f.monicaPresu) : '—';
+      var monStyle = f.discrepMonica ? 'color:#b45309;font-weight:500' : 'color:#888';
+      h += '<tr style="border-top:1px solid #f0f0f0;background:' + cfg.bg + ';border-left:3px solid ' + cfg.bar + '">';
+      h += '<td style="padding:6px 10px;font-family:monospace;font-size:11px">' + escapeHtml(f.preventaNum || '') + (esTodos ? '<div style="color:#aaa">' + (f.mes||'') + '</div>' : '') + '</td>';
+      h += '<td style="padding:6px 10px">' + escapeHtml(f.modelo || '') + '<div style="font-size:11px;color:#aaa">patentada ' + (f.mes || '') + '</div></td>';
+      h += '<td style="padding:6px 10px;font-family:monospace;font-size:11px;color:#888">' + escapeHtml(f.serie || '—') + '</td>';
+      h += '<td style="padding:6px 10px;white-space:nowrap">' + escapeHtml(f.vendedor || '') + '</td>';
+      h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap">' + (f.presupuestoMio != null ? _pesosInc(f.presupuestoMio) : '—') + '</td>';
+      h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap;' + monStyle + '" title="' + (f.discrepMonica ? 'Mónica difiere de mi cálculo — se usa el de Mónica' : '') + '">' + monVal + '</td>';
+      h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap">' + _pesosInc(f.cobrado) + '</td>';
+      h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap;color:' + difColor + ';font-weight:' + (f.estado === 'reclamo' ? '600' : '400') + '">' + (f.noInc ? '—' : _pesosInc(f.dif)) + '</td>';
+      h += _incChip(cfg);
+      h += '</tr>';
+    });
+  }
   h += '</tbody></table></div></div>';
-  h += '<p style="margin-top:10px;font-size:11px;color:#999">Presupuesto = incentivo que VW debería pagar (referencia: planilla de Mónica cuando está, si no el cálculo Oversoft). Cobrado = cta cte VW (detcash). Mónica en ámbar = difiere de mi cálculo.</p>';
+  h += '<p style="margin-top:10px;font-size:11px;color:#999">' + (esWho
+      ? 'Whosale por mes de COMPRA (FC de VW), desde junio. Todas las unidades compradas (vendidas o no). Esperado = condición de compra; cobrado = NC de whosale.'
+      : 'Patentamientos por mes, desde junio. Presupuesto = performance + táctico + adicionales + cupo (sin whosale) que calculó Ventas; referencia planilla de Mónica. Cobrado = NC de esos conceptos. Pendiente = VW aún no liquidó (~1 mes de lag).') + '</p>';
   wrap.innerHTML = h;
 }
 
