@@ -2920,10 +2920,16 @@ function renderVentasOv() {
     // el cuadro. Marca ✓ verde si el contable da 0 (todo cobrado, sale por sistema)
     // o ● rojo si queda saldo por cobrar. Solo con el motor nuevo (trae v.contable).
     const cont = v.contable;
-    const contClickable = !!(cont && cont.cuadro && cont.cuadro.length);
+    const contForzado = !!(cont && cont.forzadoOk);
+    const contClickable = !!(cont && ((cont.cuadro && cont.cuadro.length) || contForzado));
     const contFalta = contClickable ? (Number(cont.falta) || 0) : 0;
+    // Con override manual (forzadoOk) siempre va en verde, aunque el cuadro tenga saldo.
+    const contPend = contClickable && !contForzado && contFalta > 1;
+    const montoTitle = contForzado
+      ? 'Contable marcado cobrado a mano' + (cont.forzadoNota ? ': ' + cont.forzadoNota : '')
+      : (contPend ? 'Contable de la preventa: falta cobrar ' + fmtPesos(contFalta) + ' — no puede salir por sistema' : 'Contable de la preventa: todo lo facturado está cobrado — sale por sistema');
     const montoCell = contClickable
-      ? '<button onclick="toggleVentasOvCont(\'' + key + '\')" title="' + (contFalta > 1 ? 'Contable de la preventa: falta cobrar ' + fmtPesos(contFalta) + ' — no puede salir por sistema' : 'Contable de la preventa: todo lo facturado está cobrado — sale por sistema') + '" style="border:0;background:none;cursor:pointer;color:inherit;font-weight:600;font-size:12px;padding:0">' + fmtPesos(v.montoFc) + (contFalta > 1 ? ' <span style="color:#cc3300">●</span>' : ' <span style="color:#0a7a30">✓</span>') + _ar(contAbierto) + '</button>'
+      ? '<button onclick="toggleVentasOvCont(\'' + key + '\')" title="' + montoTitle.replace(/"/g, '&quot;') + '" style="border:0;background:none;cursor:pointer;color:inherit;font-weight:600;font-size:12px;padding:0">' + fmtPesos(v.montoFc) + (contPend ? ' <span style="color:#cc3300">●</span>' : ' <span style="color:#0a7a30">✓</span>') + _ar(contAbierto) + '</button>'
       : fmtPesos(v.montoFc);
     h += '<tr>'
       + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + revBadge + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + _comisionTGControl(v) + '</td>'
@@ -4517,7 +4523,9 @@ function _ventaContableHtml(v) {
   const fs = _admFinEstado(ct);   // {alerta, lineas} — solo usa cuadro + falta
   const falta = Number(ct.falta) || 0;
   let head;
-  if (falta > 1) {
+  if (ct.forzadoOk) {
+    head = '<div style="background:#eafaf0;border:1px solid #0a7a30;color:#0a7a30;border-radius:6px;padding:7px 10px;font-size:12px;font-weight:700;margin-bottom:8px">✓ Marcado como cobrado a mano' + (ct.forzadoNota ? ' — ' + escapeHtml(ct.forzadoNota) : '') + (falta > 1 ? '.<br><span style="font-weight:400;color:#555">El cuadro de abajo todavía muestra un saldo de ' + fmtPesos(falta) + ' hasta que entre la nota de crédito.</span>' : '') + '</div>';
+  } else if (falta > 1) {
     head = '<div style="background:#fdecea;border:1px solid #cc3300;color:#a5261a;border-radius:6px;padding:7px 10px;font-size:12px;font-weight:700;margin-bottom:8px">⛔ Falta cobrar ' + fmtPesos(falta) + ' — el contable NO da 0: la unidad no puede salir por sistema.</div>';
   } else if (falta < -1) {
     head = '<div style="background:#fff8e6;border:1px solid #cc9a00;color:#7a5b00;border-radius:6px;padding:7px 10px;font-size:12px;font-weight:700;margin-bottom:8px">Saldo a favor del cliente ' + fmtPesos(-falta) + ' — se cobró de más.</div>';
