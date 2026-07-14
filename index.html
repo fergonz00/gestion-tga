@@ -3967,7 +3967,17 @@ setInterval(_renderLastSync, 30 * 1000);  // refrescar el "hace X" cada 30s
 // sincronizador probablemente esté caído). El sello viene en UTC.
 window._ovsSync = null;
 function setOvsSync(sync) {        // lo llaman tanto el fetch propio como los embeds (ventasv2)
-  if (sync && sync.iso) { window._ovsSync = sync; _renderOvsSync(); }
+  if (!sync || !sync.iso) return;
+  // Monótono: nunca retroceder a un sello MÁS VIEJO que el que ya mostramos.
+  // El embed de ventasv2 trae un sello congelado dentro del cache (Next SWR /
+  // Apps Script TTL, hasta ~25 min) o viene de localStorage de una sesión previa;
+  // si ese embed resuelve DESPUÉS del fetch en vivo (refreshOvsSync), no debe
+  // pisar el verde fresco con un rojo viejo. Si la réplica se cae de verdad, el
+  // sello en vivo deja de avanzar y _renderOvsSync (cada 30s) envejece el "hace X".
+  const prev = window._ovsSync;
+  if (prev && prev.iso && new Date(sync.iso).getTime() < new Date(prev.iso).getTime()) return;
+  window._ovsSync = sync;
+  _renderOvsSync();
 }
 function _renderOvsSync() {
   const el = document.getElementById('ovsSync');
