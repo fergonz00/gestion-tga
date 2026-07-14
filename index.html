@@ -6926,10 +6926,12 @@ function renderIncentivosNext(){
   if (esWho) {
     h += '<thead><tr style="text-align:left;background:#fafafa;color:#666;font-size:11px;text-transform:uppercase">'
        + '<th style="padding:6px 10px">Serie</th><th style="padding:6px 10px">Modelo</th><th style="padding:6px 10px">Compra</th><th style="padding:6px 10px">Patentada</th>'
-       + '<th style="padding:6px 10px;text-align:right">Whosale esperado</th><th style="padding:6px 10px;text-align:right">Cobrado</th><th style="padding:6px 10px;text-align:right">Diferencia</th><th style="padding:6px 10px">Estado</th></tr></thead><tbody>';
+       + '<th style="padding:6px 10px;text-align:right">Whosale esperado</th><th style="padding:6px 10px;text-align:right">Cobrado</th><th style="padding:6px 10px;text-align:right">Mónica cobró</th><th style="padding:6px 10px;text-align:right">Diferencia</th><th style="padding:6px 10px">Estado</th></tr></thead><tbody>';
     filas.forEach(function(f){
       var cfg = _INC_EST[f.estado] || _INC_EST.sinInc;
       var difColor = f.estado === 'reclamo' ? '#dc2626' : (f.estado === 'aFavor' ? '#0284c7' : '#666');
+      var monWhoVal = (f.monicaCob > 0) ? _pesosInc(f.monicaCob) : '—';
+      var monWhoStyle = f.discrepWho ? 'color:#b45309;font-weight:500' : 'color:#888';
       h += '<tr style="border-top:1px solid #f0f0f0;background:' + cfg.bg + ';border-left:3px solid ' + cfg.bar + '">';
       h += '<td style="padding:6px 10px;font-family:monospace;font-size:11px">' + escapeHtml(f.serie || '—') + '</td>';
       h += '<td style="padding:6px 10px">' + escapeHtml(f.modelo || '') + '</td>';
@@ -6937,6 +6939,7 @@ function renderIncentivosNext(){
       h += '<td style="padding:6px 10px;white-space:nowrap;color:#888">' + (f.patentado ? escapeHtml(f.mesPatentamiento || 'sí') : 'en stock') + '</td>';
       h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap">' + (f.presupuestoRef ? _pesosInc(f.presupuestoRef) : '—') + '</td>';
       h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap">' + _pesosInc(f.cobrado) + '</td>';
+      h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap;' + monWhoStyle + '" title="' + (f.discrepWho ? 'Mónica y pagos_vw difieren' : '') + '">' + monWhoVal + '</td>';
       h += '<td style="padding:6px 10px;text-align:right;white-space:nowrap;color:' + difColor + ';font-weight:' + (f.estado === 'reclamo' ? '600' : '400') + '">' + (f.presupuestoRef ? _pesosInc(f.dif) : '—') + '</td>';
       h += _incChip(cfg);
       h += '</tr>';
