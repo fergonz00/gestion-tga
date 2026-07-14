@@ -328,6 +328,21 @@ tbody tr.expo:hover { background: linear-gradient(to right, rgba(139,92,246,0.12
 .admv thead th { padding: 7px 4px; font-size: 9.5px; letter-spacing: 0.2px; }
 .admv tbody td { padding: 5px 4px; }
 
+/* --- Legibilidad para Mónica (la completa ella y necesita letra grande y
+   marcada). TODO lo de la solapa "Adm. ventas" va más grande y en negrita.
+   Scope: #panelAdmVentas, para no tocar el resto del sistema. Usamos
+   !important donde el render pinta font-size/weight inline en la grilla. --- */
+#panelAdmVentas { font-weight: 600; }
+#panelAdmVentas .admv { font-size: 13px !important; }
+#panelAdmVentas .admv thead th { font-size: 11px !important; font-weight: 800; }
+#panelAdmVentas .admv tbody td { font-weight: 600; }
+#panelAdmVentas .admv tbody td b,
+#panelAdmVentas .admv tbody td strong { font-weight: 800; }
+#panelAdmVentas .admv input,
+#panelAdmVentas .admv select { font-size: 13px !important; font-weight: 700 !important; }
+#panelAdmVentas .admv small,
+#panelAdmVentas .admv td small { font-size: 11px !important; font-weight: 600; }
+
 /* Adm. ventas — caja con scroll propio: el encabezado queda pegado arriba, la
    barra de scroll horizontal siempre a la vista (no al final de las filas) y la
    columna PV congelada a la izquierda. Resuelve el "bajar–derecha–subir". */
