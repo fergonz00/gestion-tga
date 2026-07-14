@@ -844,6 +844,13 @@ const GASTOS_DESDE     = '2026-06-01';
 const INHIBIDO_DESDE   = '2026-06-19';  // el informe inhibido se exige en PVs nuevas (>= esta fecha)
 const INFORME_INHIBIDO = 65000;
 const SELLO_TOLERANCIA = 100;  // diferencia de sellado tolerada (redondeos): hasta $100 = OK
+// PVs marcadas A MANO como "gastos bonificados / cobrado — no se facturan". El
+// vendedor cargo los gastos en la preventa (aparecen "a facturar"), pero por
+// excepcion NO se le cobran al cliente (van bonificados) y ya esta resuelto. En
+// vez de mostrarlas en ambar "a facturar" con alertas, se pintan en VERDE
+// "bonificado" y se silencian las alertas. Key = PV normalizada (_normPv).
+// Hermano de CONTABLE_FORZADO_OK / FYF_FORZADO_CERRADO de gestion-next.
+const GASTOS_BONIFICADO_OK = { '8728/3': true };
 const SELLO_INSC = {
   'CAPITAL FEDERAL': 0.03, 'BUENOS AIRES': 0.025, 'CATAMARCA': 0.01, 'CHACO': 0.01,
   'CHUBUT': 0.02, 'CORDOBA': 0.015, 'CORRIENTES': 0.01, 'ENTRE RIOS': 0.0225,
@@ -1186,6 +1193,12 @@ function getGastosMap() {
       };
     });
   } catch (e) {}
+
+  // Override manual: gastos bonificados (no se facturan) -> verde en vez de ambar.
+  // Marca la PV como bonificada; el front la pinta en verde y no alarma.
+  Object.keys(GASTOS_BONIFICADO_OK).forEach((pv) => {
+    if (GASTOS_BONIFICADO_OK[pv] && map[pv]) map[pv].bonificado = true;
+  });
 
   return { gastos: map, desde: GASTOS_DESDE, meses: meses, updatedAt: new Date().toISOString() };
 }
@@ -1883,6 +1896,7 @@ function getComprasVW() {
     const av = pvNum ? admByPv[_normPv(pvNum)] : null;
     const pv = av ? {
       numero: pvNum,
+      fechaPv: av.fechaPv || '',   // fecha de creacion de la preventa (Oversoft)
       cliente: av.cliente || '', localidad: av.localidad || '', vendedor: av.vendedor || '',
       mesPat: (av.manual && av.manual.mes_patentamiento) || '', fechaPat: av.fechaPatentamiento || '',
       tipo: av.tipo || '', financia: av.financia || '',
