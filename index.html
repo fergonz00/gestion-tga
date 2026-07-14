@@ -1862,7 +1862,7 @@ async function loadIndustria() {
 // ADM DE VENTAS — Oversoft automático + campos manuales (Supabase adm_ventas)
 // =======================================================================
 let admVentasData = null;
-let admVentasFiltro = 'todas';        // 'pendientes' (sin dominio) | 'todas' | 'patentadas'
+let admVentasFiltro = 'todas';        // 'pendientes' (sin dominio) | 'todas' | 'patentadas' | 'impagasVW' (unidad impaga a VW)
 let admVentasBusca = '';
 let admVentasMes = '';                // 'yyyy-mm' | '__sin__' | '__todos__' (default: mes actual)
 let admAgendaAbierta = false;         // panel "Agenda de entregas" desplegado
@@ -2334,6 +2334,7 @@ function renderAdmVentas() {
     if (admVentasMes !== '__todos__' && _admMesDe(v) !== admVentasMes) return false;
     if (admVentasFiltro === 'pendientes' && v.dominio) return false;
     if (admVentasFiltro === 'patentadas' && !v.dominio) return false;
+    if (admVentasFiltro === 'impagasVW' && !(v.pagoVW && v.pagoVW.impaga)) return false;
     if (q && !(v.preventa + ' ' + v.cliente + ' ' + v.modelo + ' ' + v.serie + ' ' + v.vendedor + ' ' + v.dominio + ' ' + (v.comentario || '')).toLowerCase().includes(q)) return false;
     return true;
   });
@@ -2360,6 +2361,12 @@ function renderAdmVentas() {
   h += chip('pendientes', 'Pendientes de patentar');
   h += chip('patentadas', 'Patentadas');
   h += chip('todas', 'Todas');
+  // Impagas a VW: filtra las unidades que todavía están impagas a fábrica (v.pagoVW.impaga).
+  // Cuenta sobre el mes seleccionado (mismo alcance que muestra la grilla).
+  const _impVW = admVentasData.ventas.filter(v => (admVentasMes === '__todos__' || _admMesDe(v) === admVentasMes) && v.pagoVW && v.pagoVW.impaga).length;
+  h += '<button onclick="admVentasFiltro=\'impagasVW\';renderAdmVentas()" style="padding:6px 12px;border:1px solid ' + (admVentasFiltro === 'impagasVW' ? '#cc3300' : 'var(--vw-grey-2)') + ';border-radius:16px;cursor:pointer;font-size:13px;'
+    + (admVentasFiltro === 'impagasVW' ? 'background:#cc3300;color:#fff;font-weight:700' : 'background:#fff;color:var(--vw-grey-3)') + '">Impagas VW'
+    + (_impVW ? ' <span style="background:' + (admVentasFiltro === 'impagasVW' ? '#fff;color:#cc3300' : '#cc3300;color:#fff') + ';border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700">' + _impVW + '</span>' : '') + '</button>';
   h += '<input type="text" id="admBuscaInput" placeholder="🔍 PV, cliente, serie, dominio…" value="' + escapeHtml(admVentasBusca) + '" oninput="admVentasBusca=this.value;renderAdmVentas()" '
      + ' style="padding:7px 12px;border:1px solid var(--vw-grey-2);border-radius:8px;min-width:220px;font-size:13px">';
   h += '<span style="font-size:12px;color:var(--vw-grey-3)">' + rows.length + ' carpetas</span>';
