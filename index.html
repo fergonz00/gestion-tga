@@ -2716,6 +2716,7 @@ let ventasOvData = null;
 let ventasOvMes = '';                 // 'yyyy-mm' | '__todos__'
 let ventasOvSoloRev = false;          // filtro "solo acc/FyF" (todos los meses)
 let ventasOvComAbiertos = new Set();
+let ventasOvContAbiertos = new Set();   // contable (facturado vs cobrado) por PV
 
 // Banner con la hora de la última sincronización de la réplica Oversoft.
 // El timestamp viene en UTC (timestamptz) → new Date() lo parsea bien y lo
@@ -2769,13 +2770,17 @@ async function loadVentasOv(forzar) {
 }
 function setVentasOvMes(m) { ventasOvMes = m; renderVentasOv(); }
 function toggleVentasOvSoloRev() { ventasOvSoloRev = !ventasOvSoloRev; renderVentasOv(); }
-function toggleVentasOvCom(key) {
-  const tr = document.getElementById('vovcom_' + key);
-  if (!tr) return;
-  const abrir = tr.style.display === 'none';
-  tr.style.display = abrir ? '' : 'none';
-  if (abrir) ventasOvComAbiertos.add(key); else ventasOvComAbiertos.delete(key);
+// Los desplegables por renglón de Ventas (comentario, contable, ganancia, gastos)
+// son MUTUAMENTE EXCLUYENTES: abrir uno cierra los otros del MISMO renglón. Se
+// re-renderiza para que la flecha quede consistente (▸ cerrado · ▾ abierto).
+function _vovToggle(set, key) {
+  const abrir = !set.has(key);
+  for (const s of [ventasOvComAbiertos, ventasOvContAbiertos, ventasOvDetAbiertos, ventasOvGastoAbiertos]) s.delete(key);
+  if (abrir) set.add(key);
+  renderVentasOv();
 }
+function toggleVentasOvCom(key) { _vovToggle(ventasOvComAbiertos, key); }
+function toggleVentasOvCont(key) { _vovToggle(ventasOvContAbiertos, key); }
 async function guardarAccesorios(preventa, valor) {
   try {
     const body = new URLSearchParams();
@@ -2866,7 +2871,13 @@ function renderVentasOv() {
   for (const v of rows) {
     const key = String(v.preventaNum || '').replace(/[^0-9]/g, '');
     const pvArg = String(v.preventaNum || '').replace(/'/g, '');
-    const btnCom = v.comentario ? ' <button onclick="toggleVentasOvCom(\'' + key + '\')" title="Ver comentario de la PV" style="border:0;background:none;cursor:pointer;font-size:13px;padding:0 2px">💬</button>' : '';
+    // Estado de los desplegables del renglón (▸ cerrado · ▾ abierto).
+    const comAbierto = ventasOvComAbiertos.has(key);
+    const contAbierto = ventasOvContAbiertos.has(key);
+    const detAbierto = ventasOvDetAbiertos.has(key);
+    const gastoAbierto = ventasOvGastoAbiertos.has(key);
+    const _ar = ab => ab ? ' ▾' : ' ▸';
+    const btnCom = v.comentario ? ' <button onclick="toggleVentasOvCom(\'' + key + '\')" title="Ver comentario de la PV" style="border:0;background:none;cursor:pointer;font-size:13px;padding:0 2px">💬' + _ar(comAbierto) + '</button>' : '';
     // Gasto real por PV (mapa compartido con Adm. ventas). Se resuelve acá arriba
     // porque también alimenta el cartelito "acc": menciona accesorios en el
     // comentario, o el "Costo Unidad" del gasto difiere del estándar $1.110.000.
@@ -2899,33 +2910,46 @@ function renderVentasOv() {
     // La Ganancia es clickeable: abre el desglose de incentivos y otros costos.
     const gciaTxt = g ? fmtPesos(v.gciaVtaPesos) : 's/BT';
     const gciaCell = puedeDet
-      ? '<button onclick="toggleVentasOvDet(\'' + key + '\')" title="Ver desglose de incentivos y costos" style="border:0;background:none;cursor:pointer;color:' + gColor + ';font-weight:600;font-size:12px;padding:0">' + gciaTxt + ' ▸</button>'
+      ? '<button onclick="toggleVentasOvDet(\'' + key + '\')" title="Ver desglose de incentivos y costos" style="border:0;background:none;cursor:pointer;color:' + gColor + ';font-weight:600;font-size:12px;padding:0">' + gciaTxt + _ar(detAbierto) + '</button>'
       : '<span style="color:' + gColor + ';font-weight:600">' + gciaTxt + '</span>';
     // Gasto real por PV (mismo mapa que Adm. ventas). Clickeable → desglose por concepto.
     const gastoCell = gasto
-      ? '<button onclick="toggleVentasOvGasto(\'' + key + '\')" title="' + (gasto.sinEmitir ? 'Gastos cargados en la preventa — a facturar (sin emitir todavía)' : 'Ver desglose de gastos por concepto') + '" style="border:0;background:none;cursor:pointer;color:' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';font-weight:600;font-size:12px;padding:0">$' + _gMoney(gasto.total) + (gasto.sinEmitir ? ' · a fact.' : '') + (_gastoAdversas(gasto).length ? ' <span title="' + _gastoAdversas(gasto).length + ' a revisar (las diferencias a favor no se cuentan)" style="color:#c0392b">⚠</span>' : '') + ' ▸</button>'
+      ? '<button onclick="toggleVentasOvGasto(\'' + key + '\')" title="' + (gasto.sinEmitir ? 'Gastos cargados en la preventa — a facturar (sin emitir todavía)' : 'Ver desglose de gastos por concepto') + '" style="border:0;background:none;cursor:pointer;color:' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';font-weight:600;font-size:12px;padding:0">$' + _gMoney(gasto.total) + (gasto.sinEmitir ? ' · a fact.' : '') + (_gastoAdversas(gasto).length ? ' <span title="' + _gastoAdversas(gasto).length + ' a revisar (las diferencias a favor no se cuentan)" style="color:#c0392b">⚠</span>' : '') + _ar(gastoAbierto) + '</button>'
       : '<span style="color:var(--vw-grey-3);font-size:11px">s/gastos</span>';
+    // Contable de la PV (facturado vs cobrado): el Monto es clickeable → despliega
+    // el cuadro. Marca ✓ verde si el contable da 0 (todo cobrado, sale por sistema)
+    // o ● rojo si queda saldo por cobrar. Solo con el motor nuevo (trae v.contable).
+    const cont = v.contable;
+    const contClickable = !!(cont && cont.cuadro && cont.cuadro.length);
+    const contFalta = contClickable ? (Number(cont.falta) || 0) : 0;
+    const montoCell = contClickable
+      ? '<button onclick="toggleVentasOvCont(\'' + key + '\')" title="' + (contFalta > 1 ? 'Contable de la preventa: falta cobrar ' + fmtPesos(contFalta) + ' — no puede salir por sistema' : 'Contable de la preventa: todo lo facturado está cobrado — sale por sistema') + '" style="border:0;background:none;cursor:pointer;color:inherit;font-weight:600;font-size:12px;padding:0">' + fmtPesos(v.montoFc) + (contFalta > 1 ? ' <span style="color:#cc3300">●</span>' : ' <span style="color:#0a7a30">✓</span>') + _ar(contAbierto) + '</button>'
+      : fmtPesos(v.montoFc);
     h += '<tr>'
       + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + revBadge + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + _comisionTGControl(v) + '</td>'
       + '<td>' + _fechaDMA(v.fechaPvIso) + '</td>'
       + '<td>' + escapeHtml(v.modelo) + '</td>'
       + '<td>' + escapeHtml(v.vendedor || '') + '</td>'
-      + '<td style="text-align:right">' + fmtPesos(v.montoFc) + '</td>'
+      + '<td style="text-align:right;white-space:nowrap">' + montoCell + '</td>'
       + '<td style="text-align:right;white-space:nowrap">' + gastoCell + '</td>'
       + '<td style="text-align:right">' + gciaCell + '</td>'
       + '<td style="text-align:right;color:' + gColor + '">' + (v.gciaVtaPct != null ? (v.gciaVtaPct * 100).toFixed(1) + '%' : '—') + '</td>'
       + '<td style="text-align:right"><input type="number" value="' + (v.accesorios || 0) + '" onchange="guardarAccesorios(\'' + pvArg + '\', this.value)"' + (v.accAuto ? ' title="Detectado del gasto (Costo Unidad ≠ $1.110.000) — se suma solo como ingreso. Editá para fijarlo a mano."' : '') + ' style="width:108px;text-align:right;padding:3px 5px;border:1px solid ' + (v.accAuto ? '#b9770e' : (v.accesorios ? '#0a66c2' : 'var(--vw-grey-2)')) + ';border-radius:5px;font-size:12px' + (v.accAuto ? ';background:#fff6e9' : '') + '"></td>'
       + '</tr>';
     if (v.comentario) {
-      h += '<tr id="vovcom_' + key + '"' + (ventasOvComAbiertos.has(key) ? '' : ' style="display:none"') + '>'
+      h += '<tr id="vovcom_' + key + '"' + (comAbierto ? '' : ' style="display:none"') + '>'
         + '<td colspan="9" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">💬 ' + escapeHtml(v.comentario) + '</td></tr>';
     }
+    if (contClickable) {
+      h += '<tr id="vovcont_' + key + '"' + (contAbierto ? '' : ' style="display:none"') + '>'
+        + '<td colspan="9" style="background:#f0f6ff;border-left:3px solid #001e50;padding:10px 14px;text-align:left">' + _ventaContableHtml(v) + '</td></tr>';
+    }
     if (puedeDet) {
-      h += '<tr id="vovdet_' + key + '"' + (ventasOvDetAbiertos.has(key) ? '' : ' style="display:none"') + '>'
+      h += '<tr id="vovdet_' + key + '"' + (detAbierto ? '' : ' style="display:none"') + '>'
         + '<td colspan="9" style="background:#f7f9fc;border-left:3px solid #0a66c2;padding:10px 14px;text-align:left">' + _ventaDetHtml(v) + '</td></tr>';
     }
     if (gasto) {
-      h += '<tr id="vovgasto_' + key + '"' + (ventasOvGastoAbiertos.has(key) ? '' : ' style="display:none"') + '>'
+      h += '<tr id="vovgasto_' + key + '"' + (gastoAbierto ? '' : ' style="display:none"') + '>'
         + '<td colspan="9" style="background:#fafbfc;border-left:3px solid ' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';padding:8px 14px 12px 30px;text-align:left">'
         + '<div style="font-weight:700;font-size:12px;margin-bottom:4px">Gastos ' + (gasto.sinEmitir ? 'cargados en la preventa' : 'cobrados al cliente') + ' · PV ' + escapeHtml(v.preventaNum) + ' · total $' + _gMoney(gasto.total) + '</div>'
         + (gasto.sinEmitir ? _gastoAFacturarHtml(gasto) : _gastoDetalleHtml(gasto)) + '</td></tr>';
@@ -4483,26 +4507,66 @@ function _gKv(label, val) {
   return '<tr><td style="padding:2px 14px 2px 0;color:#555">' + label + '</td><td style="text-align:right">$' + _gMoney(val) + '</td></tr>';
 }
 
+// Contable de la preventa (facturado vs cobrado, desde detcash) en la solapa
+// Ventas. Reusa _admFinEstado (mismo cuadro que Adm. ventas). El titular responde
+// la pregunta de Fer: ¿queda saldo por cobrar? El contable tiene que dar 0 para
+// que la unidad pueda salir por sistema.
+function _ventaContableHtml(v) {
+  const ct = v.contable;
+  if (!ct || !ct.cuadro || !ct.cuadro.length) return '<div style="color:#888;font-size:12px">Sin movimientos de caja para esta PV.</div>';
+  const fs = _admFinEstado(ct);   // {alerta, lineas} — solo usa cuadro + falta
+  const falta = Number(ct.falta) || 0;
+  let head;
+  if (falta > 1) {
+    head = '<div style="background:#fdecea;border:1px solid #cc3300;color:#a5261a;border-radius:6px;padding:7px 10px;font-size:12px;font-weight:700;margin-bottom:8px">⛔ Falta cobrar ' + fmtPesos(falta) + ' — el contable NO da 0: la unidad no puede salir por sistema.</div>';
+  } else if (falta < -1) {
+    head = '<div style="background:#fff8e6;border:1px solid #cc9a00;color:#7a5b00;border-radius:6px;padding:7px 10px;font-size:12px;font-weight:700;margin-bottom:8px">Saldo a favor del cliente ' + fmtPesos(-falta) + ' — se cobró de más.</div>';
+  } else {
+    head = '<div style="background:#eafaf0;border:1px solid #0a7a30;color:#0a7a30;border-radius:6px;padding:7px 10px;font-size:12px;font-weight:700;margin-bottom:8px">✓ Todo lo facturado está cobrado — el contable da $0: la unidad puede salir por sistema.</div>';
+  }
+  let t = '<div style="font-weight:700;font-size:12px;margin-bottom:6px">🧾 Contable de la preventa · PV ' + escapeHtml(v.preventaNum)
+    + (ct.financia ? ' · <span style="color:#001e50">Financia ' + escapeHtml(ct.financia) + '</span>' : ' · Contado')
+    + (ct.totalNc > 0 ? ' · <span style="color:#0a7a30">📝 NC ' + fmtPesos(ct.totalNc) + ' (anula deuda)</span>' : '')
+    + (ct.totalNd > 0 ? ' · <span style="color:#cc6600">📝 ND ' + fmtPesos(ct.totalNd) + ' (a pagar)</span>' : '')
+    + '</div>' + head
+    + '<table style="width:100%;border-collapse:collapse;font-size:12px">'
+    + '<tr style="color:var(--vw-grey-3)"><th style="text-align:left;padding:2px 6px">Concepto</th><th style="text-align:right;padding:2px 6px">Facturado</th><th style="text-align:right;padding:2px 6px">Cobrado</th><th style="text-align:right;padding:2px 6px">Saldo</th><th style="padding:2px 6px">Vto</th><th style="padding:2px 6px">Recibo</th><th style="text-align:left;padding:2px 6px">Estado</th></tr>';
+  for (const c of fs.lineas) {
+    let est = 'pendiente', col = 'var(--vw-grey-3)';
+    if (c.estado === 'ok') { est = '✓ cobrado'; col = '#0a7a30'; }
+    else if (c.estado === 'tarde') { est = '✓ <span style="color:var(--vw-grey-3)">(recibo +' + c.diasTarde + 'd)</span>'; col = '#0a7a30'; }
+    else if (c.estado === 'compensado') { est = '✓ saldado <span style="color:var(--vw-grey-3)">(la cuenta cierra)</span>'; col = '#0a7a30'; }
+    else if (c.estado === 'destiempo') { est = '🔴 SIN RECIBO · chequear pago'; col = '#cc3300'; }
+    const ncTag = (c.nc > 0) ? ' <span style="color:#0a7a30;font-size:10px;background:#e8f5ec;border-radius:8px;padding:1px 5px;white-space:nowrap">NC ' + fmtPesosCompact(c.nc) + '</span>' : '';
+    const ndTag = (c.nd > 0) ? ' <span style="color:#cc6600;font-size:10px;background:#fff3e0;border-radius:8px;padding:1px 5px;white-space:nowrap">ND ' + fmtPesosCompact(c.nd) + '</span>' : '';
+    const saldo = Math.round((c.plan || 0) - (c.cobrado || 0));
+    t += '<tr style="border-top:1px solid #dbe7f5">'
+      + '<td style="padding:3px 6px">' + escapeHtml(c.concepto) + ncTag + ndTag + '</td>'
+      + '<td style="text-align:right;padding:3px 6px">' + fmtPesos(c.plan) + '</td>'
+      + '<td style="text-align:right;padding:3px 6px">' + (c.cobrado ? fmtPesos(c.cobrado) : '—') + '</td>'
+      + '<td style="text-align:right;padding:3px 6px;color:' + (saldo > 1 ? '#cc3300' : '#0a7a30') + '">' + (saldo > 1 ? fmtPesos(saldo) : '0') + '</td>'
+      + '<td style="text-align:center;padding:3px 6px">' + (c.vto ? _fechaDMA(c.vto) : '—') + '</td>'
+      + '<td style="text-align:center;padding:3px 6px">' + (c.recibos && c.recibos.length ? '#' + c.recibos.join(' #') + (c.fechaCobro ? '<br><small style="color:var(--vw-grey-3)">' + _fechaDMA(c.fechaCobro) + '</small>' : '') : '—') + '</td>'
+      + '<td style="padding:3px 6px;color:' + col + '">' + est + '</td>'
+      + '</tr>';
+  }
+  t += '<tr style="border-top:2px solid #001e50;font-weight:700">'
+    + '<td style="padding:4px 6px">TOTAL</td>'
+    + '<td style="text-align:right;padding:4px 6px">' + fmtPesos(ct.totalPlan) + '</td>'
+    + '<td style="text-align:right;padding:4px 6px">' + fmtPesos(ct.totalCobrado) + '</td>'
+    + '<td colspan="4" style="padding:4px 6px;color:' + (falta > 1 ? '#cc3300' : '#0a7a30') + '">' + (falta > 1 ? 'Saldo por cobrar ' + fmtPesos(falta) : (falta < -1 ? 'Saldo a favor del cliente ' + fmtPesos(-falta) : 'Contable en $0 · todo cobrado ✓')) + '</td>'
+    + '</tr></table>';
+  return t;
+}
+
 // Detalle desplegable de una venta (solapa Ventas): incentivos tomados + otros
 // costos (los que usa el cálculo de ganancia).
 let ventasOvDetAbiertos = new Set();
-function toggleVentasOvDet(key) {
-  const tr = document.getElementById('vovdet_' + key);
-  if (!tr) return;
-  const abrir = tr.style.display === 'none';
-  tr.style.display = abrir ? '' : 'none';
-  if (abrir) ventasOvDetAbiertos.add(key); else ventasOvDetAbiertos.delete(key);
-}
+function toggleVentasOvDet(key) { _vovToggle(ventasOvDetAbiertos, key); }
 // Desglose de GASTOS por PV en la solapa Ventas (mismo dato que Adm. ventas:
 // gastosmap → _gastoDetalleHtml / _gastoAFacturarHtml).
 let ventasOvGastoAbiertos = new Set();
-function toggleVentasOvGasto(key) {
-  const tr = document.getElementById('vovgasto_' + key);
-  if (!tr) return;
-  const abrir = tr.style.display === 'none';
-  tr.style.display = abrir ? '' : 'none';
-  if (abrir) ventasOvGastoAbiertos.add(key); else ventasOvGastoAbiertos.delete(key);
-}
+function toggleVentasOvGasto(key) { _vovToggle(ventasOvGastoAbiertos, key); }
 function _ventaDetHtml(v) {
   const b = v.breakdown;
   let h = '<div style="display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start">';
