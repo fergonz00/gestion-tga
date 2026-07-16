@@ -2702,17 +2702,21 @@ async function guardarAdmVenta(preventa) {
 // +72h no cambia.
 function _liqInputs(v) {
   const m = v.manual || {};
+  const flag = String(m.credito_liquidado || '');
   const fecha = String(m.fecha_liquidacion || '');
-  const esNo = String(m.credito_liquidado || '') === 'NO';
-  let h = '<input type="date" value="' + escapeHtml(fecha) + '"'
-     + ' onchange="saveLiq(\'' + v.preventa + '\', this.value ? \'SI\' : \'\', this.value)"'
-     + (esNo ? ' disabled' : '') + ' title="Fecha exacta en que se liquidó el crédito"'
-     + ' style="width:130px;padding:2px 4px;border:1px solid ' + (fecha ? '#0a7a30' : 'var(--vw-grey-2)') + ';border-radius:5px;font-size:11px">';
-  h += ' <button onclick="saveLiq(\'' + v.preventa + '\', ' + (esNo ? '\'\'' : '\'NO\'') + ', \'\')"'
-     + ' title="' + (esNo ? 'Quitar NO LIQUIDADO (volver a pendiente)' : 'Marcar NO LIQUIDADO') + '"'
-     + ' style="border:1px solid ' + (esNo ? '#cc3300' : 'var(--vw-grey-2)') + ';background:' + (esNo ? '#cc3300' : '#fff')
-     + ';color:' + (esNo ? '#fff' : 'var(--vw-grey-3)') + ';border-radius:5px;padding:2px 6px;font-size:10px;cursor:pointer;white-space:nowrap">'
-     + (esNo ? 'NO LIQ. ✓' : 'NO liq.') + '</button>';
+  const borde = flag === 'NO' ? '#cc3300' : (flag === 'SI' ? '#0a7a30' : 'var(--vw-grey-2)');
+  const opt = (o, lbl) => '<option value="' + o + '"' + (flag === o ? ' selected' : '') + '>' + lbl + '</option>';
+  // Un solo desplegable: pendiente / Liquidado / NO liquidado. Al elegir
+  // "Liquidado" se limpia la fecha para que la adm ponga la exacta en el campo
+  // que aparece al lado (los otros estados no llevan fecha).
+  let h = '<select onchange="saveLiq(\'' + v.preventa + '\', this.value, \'\')" title="Estado del crédito"'
+     + ' style="padding:2px 16px 2px 4px;border:1px solid ' + borde + ';border-radius:5px;font-size:11px">'
+     + opt('', '—') + opt('SI', 'Liquidado') + opt('NO', 'NO liquidado') + '</select>';
+  if (flag === 'SI') {
+    h += ' <input type="date" value="' + escapeHtml(fecha) + '"'
+       + ' onchange="saveLiq(\'' + v.preventa + '\', \'SI\', this.value)" title="Fecha en que se liquidó el crédito"'
+       + ' style="width:130px;padding:2px 4px;border:1px solid ' + (fecha ? '#0a7a30' : '#cc6600') + ';border-radius:5px;font-size:11px">';
+  }
   return h;
 }
 
@@ -2721,12 +2725,10 @@ function _admLiqCell(v, key) {
   const m = v.manual || {};
   const flag = String(m.credito_liquidado || '');
   const fecha = String(m.fecha_liquidacion || '');
-  const esNo = flag === 'NO';
-  const liqSinFecha = flag === 'SI' && !fecha;   // liquidado sin fecha (legado o marcado desde Financiaciones)
   let h = _liqInputs(v);
-  if (liqSinFecha) h += '<br><small style="color:#0a7a30">✔ liquidado (poné la fecha)</small>';
+  if (flag === 'SI' && !fecha) h += '<br><small style="color:#cc6600">poné la fecha</small>';
   if (v.creditoCobrado && v.creditoCobrado.fecha) h += '<br><small style="color:var(--vw-grey-3)">recibo ' + _fechaDMA(v.creditoCobrado.fecha) + '</small>';
-  else if (!esNo && !fecha && !liqSinFecha && v.tipo && v.tipo.indexOf('FINANCIA') === 0) h += '<br><small style="color:var(--vw-grey-3)">s/recibo</small>';
+  else if (flag !== 'NO' && !fecha && v.tipo && v.tipo.indexOf('FINANCIA') === 0) h += '<br><small style="color:var(--vw-grey-3)">s/recibo</small>';
   return h;
 }
 
