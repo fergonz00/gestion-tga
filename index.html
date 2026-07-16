@@ -2093,39 +2093,13 @@ function _admFinMeses() {
 
 function finSetMes(m) { finMesSel = m; renderAdmFinanciaciones(); }
 
-// Mónica marca "crédito liquidado" SI/NO en una financiación. SI = cobrado aunque
-// el recibo todavía no esté (sale de pendientes y cuenta como cobrado). Al marcar
-// SI se sella la hora (credito_liquidado_ts) para la alerta de +72h sin recibo;
-// al sacar SI se limpia. Guarda en adm_ventas (mismo endpoint que la grilla).
-async function finSetLiquidado(pv, value) {
+// Deshacer la marca de cobrado (botón "↩ deshacer"): delega en saveLiq, que
+// guarda y repinta grilla + Financiaciones juntas. Si alguna vez se llama con
+// 'SI', conserva la fecha de liquidación ya cargada.
+function finSetLiquidado(pv, value) {
   const v = ((admVentasData && admVentasData.ventas) || []).find(x => x.preventa === pv);
-  const campos = { credito_liquidado: value };
-  if (value === 'SI') {
-    const prev = (v && v.manual && v.manual.credito_liquidado_ts) || '';
-    campos.credito_liquidado_ts = prev || new Date().toISOString();   // no reinicia el reloj si ya estaba en SI
-  } else {
-    campos.credito_liquidado_ts = '';
-  }
-  try {
-    let res;
-    if (MOTOR_NEXT) {
-      res = await fetch(GESTION_NEXT_URL + '/api/admventas?token=' + encodeURIComponent(GESTION_NEXT_TOKEN), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ preventa: pv, campos: campos, usuario: window._tgaUser || '' }),
-      });
-    } else {
-      const body = new URLSearchParams();
-      body.set('payload', JSON.stringify({ token: APPS_SCRIPT_TOKEN, accion: 'setadmventa', preventa: pv, campos: campos, usuario: window._tgaUser || '' }));
-      res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
-    }
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    if (data && data.error) throw new Error(data.error);
-    if (v) v.manual = Object.assign({}, v.manual, campos);   // refresca copia local
-    renderAdmFinanciaciones();
-  } catch (e) {
-    alert('No se pudo guardar el crédito liquidado de ' + pv + ': ' + e.message);
-  }
+  const fecha = value === 'SI' ? ((v && v.manual && v.manual.fecha_liquidacion) || '') : '';
+  return saveLiq(pv, value, fecha);
 }
 
 function loadAdmFinanciaciones(forzar) {
@@ -2135,14 +2109,9 @@ function loadAdmFinanciaciones(forzar) {
   renderAdmFinanciaciones();
 }
 
-// Selector SI/NO de "crédito liquidado" (lo pone Mónica). SI = cobrado aunque el
-// recibo aún no esté. Guarda por PV y sella la hora para la alerta de +72h.
-function _finLiqSelector(pv, val) {
-  const opt = (o, lbl) => '<option value="' + o + '"' + (val === o ? ' selected' : '') + '>' + lbl + '</option>';
-  return '<select onchange="finSetLiquidado(\'' + pv + '\', this.value)" title="Crédito liquidado (cobrado aunque falte el recibo)" style="padding:2px 16px 2px 4px;border:1px solid var(--vw-grey-2);border-radius:5px;font-size:11px">'
-    + opt('', '—') + opt('SI', 'SI') + opt('NO', 'NO') + '</select>';
-}
-// Estadito al lado del selector: con recibo ✓, esperando recibo (Nh) o 🔴 +72h.
+// (El control de "crédito liquidado" es el compartido _liqInputs — fecha exacta
+//  + toggle NO LIQUIDADO — el mismo de la grilla Adm. ventas.)
+// Estadito al lado del control: con recibo ✓, esperando recibo (Nh) o 🔴 +72h.
 function _finLiqBadge(liq) {
   if (liq.liq && liq.conRecibo) return ' <span style="color:#0a7a30;font-size:11px">✓ con recibo</span>';
   if (liq.alerta) return ' <span style="color:#cc3300;font-weight:700;font-size:11px" title="Marcado cobrado hace +72h y todavía sin recibo — chequear que se haya hecho el recibo">🔴 +72h sin recibo</span>';
@@ -2171,8 +2140,13 @@ function _finTabla(items, pendiente, total) {
     const chip = TIPO_CHIP[v.tipo] || { txt: v.financia, bg: '#64748b' };
     let estado = '⏳ pendiente', col = '#cc6600';
     if (pendiente && fl.vto) { const d = _diasEntre(fl.vto, hoy); if (d !== null && d > 2) { estado = '🔴 vencida (' + d + 'd)'; col = '#cc3300'; } }
-    // fecha de cobro: recibo real, o (si Moni lo dio por cobrado sin recibo) la fecha de la marca
-    const cobradoEl = fl.fechaCobro ? _fechaDMA(fl.fechaCobro) : (x.liq.ts ? _fechaDMA(x.liq.ts) + ' <small style="color:var(--vw-grey-3)">(marca)</small>' : '—');
+    // fecha de cobro: recibo real; si no, la fecha exacta de liquidación que
+    // cargó la adm; si tampoco, la hora en que se marcó cobrado.
+    const fechaLiq = (v.manual && v.manual.fecha_liquidacion) || '';
+    const cobradoEl = fl.fechaCobro
+      ? _fechaDMA(fl.fechaCobro)
+      : (fechaLiq ? _fechaDMA(fechaLiq) + ' <small style="color:var(--vw-grey-3)">(liq.)</small>'
+        : (x.liq.ts ? _fechaDMA(x.liq.ts) + ' <small style="color:var(--vw-grey-3)">(marca)</small>' : '—'));
     h += '<tr style="border-top:1px solid #eef1f6' + (x.liq.alerta ? ';background:#fdecea' : '') + '">'
       + '<td style="padding:4px 8px;white-space:nowrap"><b>' + escapeHtml(v.preventa) + '</b></td>'
       + '<td style="padding:4px 8px">' + escapeHtml(v.cliente || '—') + '</td>'
@@ -2181,7 +2155,7 @@ function _finTabla(items, pendiente, total) {
       + '<td style="text-align:right;padding:4px 8px;font-weight:700;color:' + (pendiente ? col : '#0a7a30') + '">' + fmtPesos(pendiente ? fl.saldo : _finCobradoEff(x)) + '</td>'
       + '<td style="text-align:center;padding:4px 8px;white-space:nowrap">' + (pendiente ? (fl.vto ? _fechaDMA(fl.vto) : '—') : cobradoEl) + '</td>'
       + '<td style="padding:4px 8px;color:' + (pendiente ? col : 'var(--vw-grey-3)') + '">' + (pendiente ? estado : (fl.recibos && fl.recibos.length ? '#' + fl.recibos.join(' #') : '—')) + '</td>'
-      + '<td style="padding:4px 8px;white-space:nowrap">' + _finLiqSelector(v.preventa, (v.manual && v.manual.credito_liquidado) || '') + _finLiqBadge(x.liq)
+      + '<td style="padding:4px 8px;white-space:nowrap">' + _liqInputs(v) + _finLiqBadge(x.liq)
       // Cobrada SOLO por la marca de la adm (sin recibo real): botón para deshacer
       // el SI de un toque — la financiación vuelve a Pendientes de cobro.
       + (!pendiente && x.liq.liq && !x.liq.conRecibo
@@ -2683,20 +2657,11 @@ function renderAgendaEntregas() {
 async function guardarAdmVenta(preventa) {
   const key = _admKey(preventa);
   const campos = {};
-  for (const c of ['patenta', 'admin', 'tipo_carpeta', 'mes_patentamiento', 'credito_liquidado', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'notas']) {
+  // OJO: credito_liquidado / fecha_liquidacion NO se guardan acá — los maneja
+  // saveLiq() (control compartido con la solapa Financiaciones).
+  for (const c of ['patenta', 'admin', 'tipo_carpeta', 'mes_patentamiento', 'reventa_particular', 'fecha_pago_vw', 'notas']) {
     const el = document.getElementById('adm_' + c + '_' + key);
     if (el) campos[c] = el.value.trim();
-  }
-  // crédito liquidado: al ponerlo en SI se sella la hora (alerta de +72h sin
-  // recibo, misma lógica que la solapa Financiaciones); al sacarlo se limpia.
-  if (campos.credito_liquidado !== undefined) {
-    if (campos.credito_liquidado === 'SI') {
-      const vv = (admVentasData.ventas || []).find(x => x.preventa === preventa);
-      const prev = (vv && vv.manual && vv.manual.credito_liquidado_ts) || '';
-      campos.credito_liquidado_ts = prev || new Date().toISOString();
-    } else {
-      campos.credito_liquidado_ts = '';
-    }
   }
   const btn = document.getElementById('admsave_' + key);
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
@@ -2728,50 +2693,78 @@ async function guardarAdmVenta(preventa) {
   }
 }
 
-// Celda "Créd. liquidado" de la grilla: la adm anota la FECHA exacta en que se
-// liquidó el crédito, o marca NO LIQUIDADO. La fecha se guarda en
-// `fecha_liquidacion`; `credito_liquidado` sigue siendo la bandera de siempre
-// (SI = cobrado aunque falte el recibo / NO / '' pendiente), así la alerta de
-// +72h y la solapa Financiaciones no cambian: fecha cargada ⇒ SI.
+// Control COMPARTIDO de "crédito liquidado" (grilla Adm. ventas + solapa
+// Financiaciones): un date picker con la FECHA exacta en que se liquidó el
+// crédito + un toggle NO LIQUIDADO. Ambos escriben con saveLiq(), que guarda y
+// repinta las dos vistas juntas, así un cambio en una se copia al toque en la
+// otra. La fecha va a `fecha_liquidacion`; `credito_liquidado` sigue siendo la
+// bandera de siempre (fecha cargada ⇒ SI / NO / '' pendiente), así la alerta de
+// +72h no cambia.
+function _liqInputs(v) {
+  const m = v.manual || {};
+  const fecha = String(m.fecha_liquidacion || '');
+  const esNo = String(m.credito_liquidado || '') === 'NO';
+  let h = '<input type="date" value="' + escapeHtml(fecha) + '"'
+     + ' onchange="saveLiq(\'' + v.preventa + '\', this.value ? \'SI\' : \'\', this.value)"'
+     + (esNo ? ' disabled' : '') + ' title="Fecha exacta en que se liquidó el crédito"'
+     + ' style="width:130px;padding:2px 4px;border:1px solid ' + (fecha ? '#0a7a30' : 'var(--vw-grey-2)') + ';border-radius:5px;font-size:11px">';
+  h += ' <button onclick="saveLiq(\'' + v.preventa + '\', ' + (esNo ? '\'\'' : '\'NO\'') + ', \'\')"'
+     + ' title="' + (esNo ? 'Quitar NO LIQUIDADO (volver a pendiente)' : 'Marcar NO LIQUIDADO') + '"'
+     + ' style="border:1px solid ' + (esNo ? '#cc3300' : 'var(--vw-grey-2)') + ';background:' + (esNo ? '#cc3300' : '#fff')
+     + ';color:' + (esNo ? '#fff' : 'var(--vw-grey-3)') + ';border-radius:5px;padding:2px 6px;font-size:10px;cursor:pointer;white-space:nowrap">'
+     + (esNo ? 'NO LIQ. ✓' : 'NO liq.') + '</button>';
+  return h;
+}
+
+// Celda "Créd. liquidado" de la grilla: control compartido + notas al pie.
 function _admLiqCell(v, key) {
   const m = v.manual || {};
   const flag = String(m.credito_liquidado || '');
   const fecha = String(m.fecha_liquidacion || '');
   const esNo = flag === 'NO';
-  const liqSinFecha = flag === 'SI' && !fecha;   // marcado cobrado sin fecha (legado o desde Financiaciones)
-  let h = '<input type="hidden" id="adm_credito_liquidado_' + key + '" value="' + escapeHtml(flag) + '">';
-  h += '<input type="date" id="adm_fecha_liquidacion_' + key + '" value="' + escapeHtml(fecha) + '"'
-     + ' onchange="admLiqFecha(\'' + v.preventa + '\', \'' + key + '\')" title="Fecha exacta en que se liquidó el crédito"'
-     + ' style="width:130px;padding:2px 4px;border:1px solid ' + (fecha ? '#0a7a30' : 'var(--vw-grey-2)') + ';border-radius:5px;font-size:11px"'
-     + (esNo ? ' disabled' : '') + '>';
-  h += ' <button onclick="admLiqNo(\'' + v.preventa + '\', \'' + key + '\')" title="Marcar NO LIQUIDADO"'
-     + ' style="border:1px solid ' + (esNo ? '#cc3300' : 'var(--vw-grey-2)') + ';background:' + (esNo ? '#cc3300' : '#fff')
-     + ';color:' + (esNo ? '#fff' : 'var(--vw-grey-3)') + ';border-radius:5px;padding:2px 6px;font-size:10px;cursor:pointer;white-space:nowrap">'
-     + (esNo ? 'NO LIQ. ✓' : 'NO liq.') + '</button>';
+  const liqSinFecha = flag === 'SI' && !fecha;   // liquidado sin fecha (legado o marcado desde Financiaciones)
+  let h = _liqInputs(v);
   if (liqSinFecha) h += '<br><small style="color:#0a7a30">✔ liquidado (poné la fecha)</small>';
   if (v.creditoCobrado && v.creditoCobrado.fecha) h += '<br><small style="color:var(--vw-grey-3)">recibo ' + _fechaDMA(v.creditoCobrado.fecha) + '</small>';
   else if (!esNo && !fecha && !liqSinFecha && v.tipo && v.tipo.indexOf('FINANCIA') === 0) h += '<br><small style="color:var(--vw-grey-3)">s/recibo</small>';
   return h;
 }
 
-// La adm cargó la fecha de liquidación → crédito liquidado (SI). Sin fecha y sin
-// NO → vuelve a pendiente (''). Guarda la fila y repinta para reflejar el estado.
-function admLiqFecha(pv, key) {
-  const d = document.getElementById('adm_fecha_liquidacion_' + key);
-  const hid = document.getElementById('adm_credito_liquidado_' + key);
-  const fecha = (d && d.value || '').trim();
-  if (fecha) hid.value = 'SI';
-  else if (hid.value !== 'NO') hid.value = '';
-  guardarAdmVenta(pv).then(renderAdmVentas);
-}
-
-// Toggle NO LIQUIDADO: al marcarlo limpia la fecha; al destildarlo vuelve a pendiente.
-function admLiqNo(pv, key) {
-  const hid = document.getElementById('adm_credito_liquidado_' + key);
-  const d = document.getElementById('adm_fecha_liquidacion_' + key);
-  if (hid.value === 'NO') { hid.value = ''; }
-  else { hid.value = 'NO'; if (d) d.value = ''; }
-  guardarAdmVenta(pv).then(renderAdmVentas);
+// Guarda el estado de "crédito liquidado" de una PV y repinta AMBAS vistas
+// (grilla Adm. ventas + solapa Financiaciones), así un cambio en una se refleja
+// al instante en la otra. flag = 'SI' | 'NO' | '' ; fecha = 'YYYY-MM-DD' | ''.
+async function saveLiq(pv, flag, fecha) {
+  const v = ((admVentasData && admVentasData.ventas) || []).find(x => x.preventa === pv);
+  const campos = { credito_liquidado: flag, fecha_liquidacion: fecha };
+  // al quedar liquidado se sella la hora para la alerta de +72h sin recibo
+  // (sin reiniciar el reloj si ya estaba liquidado); al sacarlo se limpia.
+  if (flag === 'SI') {
+    const prev = (v && v.manual && v.manual.credito_liquidado_ts) || '';
+    campos.credito_liquidado_ts = prev || new Date().toISOString();
+  } else {
+    campos.credito_liquidado_ts = '';
+  }
+  try {
+    let res;
+    if (MOTOR_NEXT) {
+      res = await fetch(GESTION_NEXT_URL + '/api/admventas?token=' + encodeURIComponent(GESTION_NEXT_TOKEN), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preventa: pv, campos: campos, usuario: window._tgaUser || '' }),
+      });
+    } else {
+      const body = new URLSearchParams();
+      body.set('payload', JSON.stringify({ token: APPS_SCRIPT_TOKEN, accion: 'setadmventa', preventa: pv, campos: campos, usuario: window._tgaUser || '' }));
+      res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+    }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    if (v) v.manual = Object.assign({}, v.manual, campos);   // fuente única: refresca copia local
+    renderAdmVentas();            // repinta grilla (no-op si no está montada)
+    renderAdmFinanciaciones();    // repinta Financiaciones (no-op si no está montada)
+  } catch (e) {
+    alert('No se pudo guardar el crédito liquidado de ' + pv + ': ' + e.message);
+  }
 }
 
 // =================== VENTAS (OVERSOFT) ===================
