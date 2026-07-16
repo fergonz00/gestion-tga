@@ -2406,7 +2406,7 @@ function renderAdmVentas() {
      + '<th title="Pago de la unidad a VW (de Compras y Saldos, por serie): fecha o impaga">Pago VW</th>'
      + '<th style="text-align:left">Dominio</th><th style="text-align:left">F. patent.</th>'
      + '<th>Patenta</th><th>Admin</th><th title="La adm confirma el mes una vez pagado el patentamiento (aunque Oversoft ya tenga la fecha)">Mes pat. ✔adm</th>'
-     + '<th title="Forma de pago según Oversoft (formas de pago + recibos). 💵 abre el detalle">Tipo</th><th title="¿El crédito fue liquidado? lo marca la adm; la fecha sale sola del recibo">Créd. liq.</th><th>Rev/Part</th><th>Notas</th>'
+     + '<th title="Forma de pago según Oversoft (formas de pago + recibos). 💵 abre el detalle">Tipo</th><th title="La adm anota la fecha exacta en que se liquidó el crédito, o marca NO LIQUIDADO">Créd. liq.</th><th>Rev/Part</th><th>Notas</th>'
      + '<th title="Día y hora programada en Oversoft para que el cliente retire la unidad">📅 Entrega</th>'
      + '<th title="✓ cuando la unidad figura como entregada en Oversoft">Retiró</th>'
      + '<th></th>'
@@ -2485,10 +2485,7 @@ function renderAdmVentas() {
          + ((v.cuadro && v.cuadro.length) ? ' <button onclick="toggleAdmFinanciero(\'' + key + '\')" title="Ver cuadro financiero" style="border:0;background:none;cursor:pointer;font-size:13px;padding:0;vertical-align:middle">💵</button>' : '')
          + alertaIco
        + '</td>'
-       + '<td data-label="Créd. liq.">'
-         + sel(v.preventa, key, 'credito_liquidado', m.credito_liquidado, ['SI', 'NO'], 58)
-         + (v.creditoCobrado && v.creditoCobrado.fecha ? '<br><small style="color:#0a7a30">' + _fechaDMA(v.creditoCobrado.fecha) + '</small>' : ((v.tipo && v.tipo.indexOf('FINANCIA') === 0) ? '<br><small style="color:var(--vw-grey-3)">s/recibo</small>' : ''))
-       + '</td>'
+       + '<td data-label="Créd. liq.">' + _admLiqCell(v, key) + '</td>'
        + '<td data-label="Rev/Part">' + sel(v.preventa, key, 'reventa_particular', m.reventa_particular, ['PARTICULAR', 'REVENTA'], 90) + '</td>'
        + '<td data-label="Notas">' + inp(v.preventa, key, 'notas', m.notas, 92) + '</td>'
        + '<td data-label="📅 Entrega" style="white-space:nowrap">'
@@ -2729,6 +2726,52 @@ async function guardarAdmVenta(preventa) {
     if (btn) { btn.disabled = false; btn.textContent = '✓'; }
     alert('No se pudo guardar la carpeta ' + preventa + ': ' + e.message);
   }
+}
+
+// Celda "Créd. liquidado" de la grilla: la adm anota la FECHA exacta en que se
+// liquidó el crédito, o marca NO LIQUIDADO. La fecha se guarda en
+// `fecha_liquidacion`; `credito_liquidado` sigue siendo la bandera de siempre
+// (SI = cobrado aunque falte el recibo / NO / '' pendiente), así la alerta de
+// +72h y la solapa Financiaciones no cambian: fecha cargada ⇒ SI.
+function _admLiqCell(v, key) {
+  const m = v.manual || {};
+  const flag = String(m.credito_liquidado || '');
+  const fecha = String(m.fecha_liquidacion || '');
+  const esNo = flag === 'NO';
+  const liqSinFecha = flag === 'SI' && !fecha;   // marcado cobrado sin fecha (legado o desde Financiaciones)
+  let h = '<input type="hidden" id="adm_credito_liquidado_' + key + '" value="' + escapeHtml(flag) + '">';
+  h += '<input type="date" id="adm_fecha_liquidacion_' + key + '" value="' + escapeHtml(fecha) + '"'
+     + ' onchange="admLiqFecha(\'' + v.preventa + '\', \'' + key + '\')" title="Fecha exacta en que se liquidó el crédito"'
+     + ' style="width:130px;padding:2px 4px;border:1px solid ' + (fecha ? '#0a7a30' : 'var(--vw-grey-2)') + ';border-radius:5px;font-size:11px"'
+     + (esNo ? ' disabled' : '') + '>';
+  h += ' <button onclick="admLiqNo(\'' + v.preventa + '\', \'' + key + '\')" title="Marcar NO LIQUIDADO"'
+     + ' style="border:1px solid ' + (esNo ? '#cc3300' : 'var(--vw-grey-2)') + ';background:' + (esNo ? '#cc3300' : '#fff')
+     + ';color:' + (esNo ? '#fff' : 'var(--vw-grey-3)') + ';border-radius:5px;padding:2px 6px;font-size:10px;cursor:pointer;white-space:nowrap">'
+     + (esNo ? 'NO LIQ. ✓' : 'NO liq.') + '</button>';
+  if (liqSinFecha) h += '<br><small style="color:#0a7a30">✔ liquidado (poné la fecha)</small>';
+  if (v.creditoCobrado && v.creditoCobrado.fecha) h += '<br><small style="color:var(--vw-grey-3)">recibo ' + _fechaDMA(v.creditoCobrado.fecha) + '</small>';
+  else if (!esNo && !fecha && !liqSinFecha && v.tipo && v.tipo.indexOf('FINANCIA') === 0) h += '<br><small style="color:var(--vw-grey-3)">s/recibo</small>';
+  return h;
+}
+
+// La adm cargó la fecha de liquidación → crédito liquidado (SI). Sin fecha y sin
+// NO → vuelve a pendiente (''). Guarda la fila y repinta para reflejar el estado.
+function admLiqFecha(pv, key) {
+  const d = document.getElementById('adm_fecha_liquidacion_' + key);
+  const hid = document.getElementById('adm_credito_liquidado_' + key);
+  const fecha = (d && d.value || '').trim();
+  if (fecha) hid.value = 'SI';
+  else if (hid.value !== 'NO') hid.value = '';
+  guardarAdmVenta(pv).then(renderAdmVentas);
+}
+
+// Toggle NO LIQUIDADO: al marcarlo limpia la fecha; al destildarlo vuelve a pendiente.
+function admLiqNo(pv, key) {
+  const hid = document.getElementById('adm_credito_liquidado_' + key);
+  const d = document.getElementById('adm_fecha_liquidacion_' + key);
+  if (hid.value === 'NO') { hid.value = ''; }
+  else { hid.value = 'NO'; if (d) d.value = ''; }
+  guardarAdmVenta(pv).then(renderAdmVentas);
 }
 
 // =================== VENTAS (OVERSOFT) ===================
