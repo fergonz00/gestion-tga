@@ -1142,14 +1142,20 @@ function getGastosMap() {
     }
     // Dedup "última carga": si se editó/recargó el paquete de gastos, Oversoft borra
     // las filas viejas pero la réplica las conserva unos días (filas duplicadas, ej.
-    // 8720/3). Cada carga es una corrida de gastosxprevtaid consecutivos; me quedo
-    // con la última corrida (la actual) cortando en el último salto grande de id.
+    // 8720/3). Cada carga es una corrida de gastosxprevtaid ESTRICTAMENTE consecutivos
+    // (paso 1); me quedo con la última corrida (la actual) cortando en el último salto
+    // de id. Umbral > 3 (antes > 10): verificado sobre las PVs "a facturar" vivas, los
+    // saltos ENTRE cargas son siempre ≥ 4 (4, 9, 13, 19, 36…) y NUNCA hay saltos
+    // internos de 2-3 dentro de un paquete. Con > 10 se colaba la PV 08074/1 (salto de
+    // 9 entre el bloque viejo y el nuevo) → sumaba las dos cargas y duplicaba el
+    // desglose (Costo Unidad ×2, Patent/Sellado/Arancel repetidos). > 3 corta ese caso
+    // y deja intacto el punto de corte del resto (ej. 08069/1 sigue cortando en su 36).
     const af = {};
     const prep = {};   // normPv -> { cur, rawLineas, m } (1ra pasada, sin fetches)
     Object.keys(raw).forEach((pv) => {
       const rows = raw[pv].sort((a, b) => a.gxid - b.gxid);
       let cut = 0;
-      for (let i = 1; i < rows.length; i++) if (rows[i].gxid - rows[i - 1].gxid > 10) cut = i;
+      for (let i = 1; i < rows.length; i++) if (rows[i].gxid - rows[i - 1].gxid > 3) cut = i;
       const cur = rows.slice(cut);
       // Auditoría PRELIMINAR (antes de facturar): mismo núcleo que lo emitido.
       // gastoxprevta.importe es CON iva en los gravados; neto=importe/1,21 solo en
