@@ -2775,6 +2775,7 @@ async function saveLiq(pv, flag, fecha) {
 let ventasOvData = null;
 let ventasOvMes = '';                 // 'yyyy-mm' | '__todos__'
 let ventasOvSoloRev = false;          // filtro "solo acc/FyF" (todos los meses)
+let ventasOvAnalisis = false;         // vista "Análisis de fechas" (quincenas / día / DOW)
 let ventasOvComAbiertos = new Set();
 let ventasOvContAbiertos = new Set();   // contable (facturado vs cobrado) por PV
 
@@ -2885,6 +2886,7 @@ async function guardarComision(preventa, valor) {
 function renderVentasOv() {
   const cont = document.getElementById('ventasOvContent');
   if (!cont || !ventasOvData) return;
+  if (ventasOvAnalisis) { renderVentasOvAnalisis(cont); return; }
   const todas = ventasOvData.ventas || [];
   const meses = ventasOvData.meses || [];
   const filtra = ventasOvMes && ventasOvMes !== '__todos__';
@@ -2922,7 +2924,8 @@ function renderVentasOv() {
       _cntTxt += ' · <span title="El mes cerró con el 100% del objetivo de patentamientos: el Performance Bonus pasó automáticamente del tramo 90% al 100%. Al 90% la ganancia hubiera sido ' + fmtPesos(tot90) + '." style="background:#0a7a30;color:#fff;border-radius:8px;padding:2px 8px;font-size:12px;font-weight:700">🎯 100% alcanzado: ' + (totG - tot90 >= 0 ? '+' : '') + fmtPesos(totG - tot90) + ' vs 90%</span>';
     }
   }
-  h += '<div style="margin:6px 0 12px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">' + sel + _revBtn
+  const _anBtn = '<button onclick="toggleVentasOvAnalisis()" title="Análisis de fechas: volumen mensual, 1ra vs 2da quincena, día del mes y día de la semana (por fecha de preventa)" style="padding:5px 10px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--vw-grey-2);background:#fff;color:#333">📊 Análisis de fechas</button>';
+  h += '<div style="margin:6px 0 12px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">' + sel + _revBtn + _anBtn
     + '<span style="font-size:13px;color:var(--vw-grey-3)">' + _cntTxt + '</span></div>';
   h += '<div style="overflow-x:auto"><table class="ventas-tbl"><thead><tr style="text-align:left">'
     + '<th>PV</th><th>Fecha</th><th>Modelo</th><th>Vend.</th><th style="text-align:right">Monto</th>'
@@ -3024,6 +3027,167 @@ function renderVentasOv() {
   if (!rows.length) h += '<tr><td colspan="9" class="empty">Sin ventas.</td></tr>';
   h += '</tbody></table></div>';
   h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Ganancia = venta − costo de reposición (con incentivos) − comisión − IIBB + accesorios. Los badges <span style="background:#cc3300;color:#fff;border-radius:8px;padding:0 5px">FyF</span>/<span style="background:#cc3300;color:#fff;border-radius:8px;padding:0 5px">acc$</span> son el costo unidad del circuito que se concilia con saldos: rojo = pendiente de cobro · ámbar OK = Valeria confirmó (mover en Oversoft) · verde ✓ = completo · magenta ⚠ = reventa sin costo unidad. "s/BT" = mes sin BT cargada. <b>Gastos</b>: tocá el monto para ver el desglose por concepto (mismo dato que Adm. ventas); en ámbar "a fact." = cargado en la preventa, sin emitir todavía. (Versión nueva: sale de Oversoft, sin Sheet.)</div>';
+  cont.innerHTML = h;
+  const u = document.getElementById('updatedAtVentasOv');
+  if (u && ventasOvData.updatedAt) u.textContent = 'Actualizado: ' + new Date(ventasOvData.updatedAt).toLocaleString('es-AR');
+}
+
+function toggleVentasOvAnalisis() { ventasOvAnalisis = !ventasOvAnalisis; renderVentasOv(); }
+
+// =======================================================================
+// ANÁLISIS DE FECHAS — volumen mensual, 1ra vs 2da quincena, día del mes y
+// día de la semana, tomando la FECHA DE PREVENTA (fechaPvIso) como referencia.
+// Todo client-side sobre ventasOvData.ventas (sin tocar el backend). El objetivo
+// es detectar en qué parte del mes se concentran las ventas para armar
+// estrategias comerciales (campañas, guardias, incentivos internos).
+// =======================================================================
+function renderVentasOvAnalisis(cont) {
+  const DOW = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+  const C1 = '#0a66c2', C2 = '#e08a00';                    // azul = 1ra quincena · naranja = 2da
+  const labelDe = {};
+  for (const m of (ventasOvData.meses || [])) labelDe[m.mesKey] = m.label;
+  const mesCorto = mk => (_mesLabelCorto(mk) + ' ' + String(mk).slice(2, 4));
+
+  // ---- stats por mes desde la fecha de preventa ----
+  const porMes = {};
+  let sinFecha = 0;
+  for (const v of (ventasOvData.ventas || [])) {
+    const iso = String(v.fechaPvIso || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) { sinFecha++; continue; }
+    const parts = iso.split('-').map(Number);
+    const y = parts[0], mo = parts[1], d = parts[2];
+    const mk = iso.slice(0, 7);
+    const s = porMes[mk] || (porMes[mk] = { q1: 0, q2: 0, total: 0, dias: {}, dow: [0, 0, 0, 0, 0, 0, 0], monto: 0 });
+    s.total++;
+    if (d <= 15) s.q1++; else s.q2++;
+    s.dias[d] = (s.dias[d] || 0) + 1;
+    s.dow[new Date(y, mo - 1, d).getDay()]++;
+    if (typeof v.montoFc === 'number') s.monto += v.montoFc;
+  }
+  const mesesData = Object.keys(porMes).sort();          // ascendente (cronológico)
+
+  const filtra = ventasOvMes && ventasOvMes !== '__todos__' && porMes[ventasOvMes];
+  const scope = filtra ? [ventasOvMes] : mesesData;
+
+  // ---- agregado sobre el scope (para día del mes, DOW y métricas) ----
+  const agg = { q1: 0, q2: 0, total: 0, dias: {}, dow: [0, 0, 0, 0, 0, 0, 0], dias1ra: 0, dias2da: 0, monto: 0 };
+  for (const mk of scope) {
+    const s = porMes[mk]; if (!s) continue;
+    agg.q1 += s.q1; agg.q2 += s.q2; agg.total += s.total; agg.monto += s.monto;
+    for (const dd in s.dias) agg.dias[dd] = (agg.dias[dd] || 0) + s.dias[dd];
+    for (let i = 0; i < 7; i++) agg.dow[i] += s.dow[i];
+    const yp = mk.split('-').map(Number);
+    const dim = new Date(yp[0], yp[1], 0).getDate();     // días del mes
+    agg.dias1ra += 15;
+    agg.dias2da += (dim - 15);
+  }
+
+  // ---- helper: gráfico de columnas vertical ----
+  const colChart = (items, opt) => {
+    opt = opt || {};
+    const H = opt.h || 140;
+    let max = 1; for (const it of items) if (it.value > max) max = it.value;
+    let x = '<div style="display:flex;align-items:flex-end;gap:6px;height:' + (H + 40) + 'px;overflow-x:auto;padding-top:18px">';
+    for (const it of items) {
+      const hpx = Math.round((it.value / max) * H);
+      x += '<div style="flex:1 0 auto;min-width:' + (opt.minw || 34) + 'px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%">'
+        + '<div style="font-size:11px;font-weight:700;color:#333;margin-bottom:2px">' + (it.value || '') + '</div>'
+        + '<div title="' + (it.title || '') + '" style="width:72%;max-width:46px;height:' + hpx + 'px;background:' + (it.color || C1) + ';border-radius:4px 4px 0 0;' + (it.value ? 'min-height:3px' : '') + '"></div>'
+        + '<div style="font-size:10px;color:var(--vw-grey-3);margin-top:5px;text-align:center;white-space:nowrap">' + escapeHtml(it.label) + '</div>'
+        + (it.sub ? '<div style="font-size:9px;color:var(--vw-grey-3)">' + escapeHtml(it.sub) + '</div>' : '')
+        + '</div>';
+    }
+    return x + '</div>';
+  };
+  const card = (titulo, cuerpo, nota) =>
+    '<div style="border:1px solid var(--vw-grey-2);border-radius:10px;padding:14px 16px;background:#fff;margin-bottom:14px">'
+    + '<div style="font-size:13px;font-weight:700;color:#001e50;margin-bottom:10px">' + titulo + '</div>'
+    + cuerpo + (nota ? '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">' + nota + '</div>' : '') + '</div>';
+  const legendQ =
+    '<div style="display:flex;gap:16px;font-size:11px;color:var(--vw-grey-3);margin-bottom:8px">'
+    + '<span><span style="display:inline-block;width:10px;height:10px;background:' + C1 + ';border-radius:2px;margin-right:4px"></span>1ra quincena (días 1–15)</span>'
+    + '<span><span style="display:inline-block;width:10px;height:10px;background:' + C2 + ';border-radius:2px;margin-right:4px"></span>2da quincena (día 16 al fin)</span></div>';
+
+  // ---- toolbar ----
+  let sel = '<select onchange="setVentasOvMes(this.value)" style="padding:5px 8px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px">';
+  sel += '<option value="__todos__"' + (!filtra ? ' selected' : '') + '>Todos los meses</option>';
+  for (let i = mesesData.length - 1; i >= 0; i--) { const mk = mesesData[i]; sel += '<option value="' + mk + '"' + (mk === ventasOvMes ? ' selected' : '') + '>' + escapeHtml(labelDe[mk] || mk) + ' (' + porMes[mk].total + ')</option>'; }
+  sel += '</select>';
+  const volver = '<button onclick="toggleVentasOvAnalisis()" style="padding:5px 10px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--vw-grey-2);background:#fff;color:#333">← Volver a la tabla</button>';
+  const scopeLabel = filtra ? (labelDe[ventasOvMes] || ventasOvMes) : ('Todos los meses (' + scope.length + ')');
+
+  let h = _ovsSyncBanner(ventasOvData.syncOversoft);
+  h += '<div style="margin:6px 0 14px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">' + volver + sel
+    + '<span style="font-size:13px;color:var(--vw-grey-3)">Análisis por <b>fecha de preventa</b> · ' + escapeHtml(scopeLabel) + '</span></div>';
+
+  if (!mesesData.length) {
+    h += '<div class="empty">Sin datos de fecha para analizar.</div>';
+    cont.innerHTML = h; return;
+  }
+
+  // ---- métricas clave (scope) ----
+  const pct2 = agg.total ? Math.round(agg.q2 / agg.total * 100) : 0;
+  const pct1 = 100 - pct2;
+  const prom1 = agg.dias1ra ? (agg.q1 / agg.dias1ra) : 0;
+  const prom2 = agg.dias2da ? (agg.q2 / agg.dias2da) : 0;
+  let diaPico = 0, diaPicoN = 0;
+  for (const dd in agg.dias) if (agg.dias[dd] > diaPicoN) { diaPicoN = agg.dias[dd]; diaPico = Number(dd); }
+  let dowTop = 0, dowTopN = -1;
+  for (let i = 0; i < 7; i++) if (agg.dow[i] > dowTopN) { dowTopN = agg.dow[i]; dowTop = i; }
+  const ratio = prom1 > 0 ? (prom2 / prom1) : 0;
+  const tile = (val, lbl, color) =>
+    '<div style="flex:1 1 150px;min-width:140px;border:1px solid var(--vw-grey-2);border-radius:10px;padding:12px 14px;background:#fff">'
+    + '<div style="font-size:20px;font-weight:800;color:' + (color || '#001e50') + ';line-height:1.1">' + val + '</div>'
+    + '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:4px">' + lbl + '</div></div>';
+  let tiles = '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">';
+  tiles += tile(agg.total, 'unidades vendidas', '#0a7a30');
+  tiles += tile(pct1 + '% / ' + pct2 + '%', '1ra vs 2da quincena', pct2 >= pct1 ? C2 : C1);
+  tiles += tile(_rotFmt(prom1) + ' / ' + _rotFmt(prom2), 'ventas por día (1ra / 2da)', C2);
+  tiles += tile(ratio ? ('×' + _rotFmt(ratio)) : '—', 'ritmo 2da vs 1ra quincena', ratio >= 1 ? C2 : C1);
+  tiles += tile('Día ' + (diaPico || '—'), 'día del mes más fuerte', '#001e50');
+  tiles += tile(DOW[dowTop], 'día de semana más fuerte', '#001e50');
+  tiles += '</div>';
+  h += tiles;
+
+  // ---- 1. Volumen mensual (siempre todos los meses) ----
+  const volItems = mesesData.map(mk => ({ label: mesCorto(mk), value: porMes[mk].total, color: mk === ventasOvMes ? '#001e50' : C1, title: (labelDe[mk] || mk) + ': ' + porMes[mk].total + ' ventas' }));
+  h += card('Cantidad vendida mes a mes', colChart(volItems, { minw: 44 }),
+    'Unidades por mes (fecha de preventa). ' + (filtra ? 'El mes seleccionado va en azul oscuro.' : 'Tocá un mes en el selector para enfocar el resto del análisis en ese mes.'));
+
+  // ---- 2. 1ra vs 2da quincena por mes ----
+  let q = legendQ;
+  for (const mk of mesesData) {
+    const s = porMes[mk];
+    const p1 = s.total ? Math.round(s.q1 / s.total * 100) : 0;
+    const p2 = 100 - p1;
+    const win = s.q1 > s.q2 ? '1ra' : (s.q2 > s.q1 ? '2da' : '=');
+    q += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px' + (mk === ventasOvMes ? ';background:#eef4ff;border-radius:6px;padding:2px 4px' : '') + '">'
+      + '<div style="width:74px;font-size:12px;color:#333;font-weight:' + (mk === ventasOvMes ? '700' : '500') + '">' + escapeHtml(mesCorto(mk)) + '</div>'
+      + '<div style="flex:1;display:flex;height:22px;border-radius:5px;overflow:hidden;background:#eee">'
+      + '<div title="1ra quincena (1–15): ' + s.q1 + '" style="width:' + p1 + '%;background:' + C1 + ';color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden">' + (p1 >= 12 ? s.q1 + ' · ' + p1 + '%' : '') + '</div>'
+      + '<div title="2da quincena (16–fin): ' + s.q2 + '" style="width:' + p2 + '%;background:' + C2 + ';color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden">' + (p2 >= 12 ? s.q2 + ' · ' + p2 + '%' : '') + '</div>'
+      + '</div>'
+      + '<div style="width:66px;font-size:11px;text-align:right;color:' + (win === '2da' ? '#b26a00' : (win === '1ra' ? C1 : '#777')) + ';font-weight:700">' + (win === '=' ? 'empate' : win + ' ▲') + '</div>'
+      + '</div>';
+  }
+  h += card('¿1ra o 2da quincena? (por mes)', q,
+    'Proporción de ventas de cada quincena, mes a mes. La columna de la derecha marca qué quincena ganó. Si la 2da quincena manda de forma constante, hay margen para adelantar cierres con campañas a principio de mes.');
+
+  // ---- 3. Distribución por día del mes (scope) ----
+  const dayItems = [];
+  for (let d = 1; d <= 31; d++) dayItems.push({ label: String(d), value: agg.dias[d] || 0, color: d <= 15 ? C1 : C2, minw: 16, title: 'Día ' + d + ': ' + (agg.dias[d] || 0) });
+  h += card('Distribución por día del mes' + (filtra ? ' · ' + escapeHtml(scopeLabel) : ' · todos los meses'),
+    legendQ + colChart(dayItems, { minw: 17, h: 130 }),
+    'Cada barra es un día del calendario (1 a 31), sumando ' + (filtra ? 'ese mes' : 'todos los meses') + '. Sirve para ver si las ventas se disparan a fin de mes o en fechas puntuales.');
+
+  // ---- 4. Día de la semana (scope) ----
+  const order = [1, 2, 3, 4, 5, 6, 0];
+  const dowItems = order.map(i => ({ label: DOW[i], value: agg.dow[i], color: i === dowTop ? '#001e50' : C1, minw: 44, title: DOW[i] + ': ' + agg.dow[i] }));
+  h += card('Día de la semana' + (filtra ? ' · ' + escapeHtml(scopeLabel) : ' · todos los meses'), colChart(dowItems, { minw: 48, h: 120 }),
+    'En qué día de la semana se firman más preventas. Útil para guardias de vendedores y para elegir el día de envío de campañas.');
+
+  if (sinFecha) h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:4px">' + sinFecha + ' venta(s) sin fecha válida quedaron fuera del análisis.</div>';
+
   cont.innerHTML = h;
   const u = document.getElementById('updatedAtVentasOv');
   if (u && ventasOvData.updatedAt) u.textContent = 'Actualizado: ' + new Date(ventasOvData.updatedAt).toLocaleString('es-AR');
