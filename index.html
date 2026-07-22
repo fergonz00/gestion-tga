@@ -7996,15 +7996,39 @@ function _findModeloPorSerie(serie) {
 // Dado un pago parseado, busca el modelo y arma las 5 opciones de CC
 // (cc90/táctico/adic1/adic2/whosale) con su esperado y diff vs lo pagado.
 // Pre-selecciona la mejor opción, pero el usuario puede cambiarla manualmente.
+// Concepto según el texto libre que trae el PDF de la NC. Es la señal MÁS confiable
+// (lo dice la propia VW) y no depende de tener la BT del mes ni de reconocer la serie.
+// 'PB' = Performance Bonus → cc90.
+function _tipoPorTexto(textoTipo) {
+  const t = String(textoTipo || '').toLowerCase();
+  if (!t) return null;
+  if (/wholesale|whosale|whls/.test(t))       return 'whosale';
+  if (/tactic/.test(t))                       return 'tactico';
+  if (/(^|[^a-z])pb([^a-z]|$)/.test(t))       return 'cc90';
+  if (/cc.?90|c90/.test(t))                   return 'cc90';
+  if (/adicional\s*1|adic\s*1/.test(t))       return 'adicional1';
+  if (/adicional\s*2|adic\s*2/.test(t))       return 'adicional2';
+  if (/adicional/.test(t))                    return 'adicional1';
+  return null;
+}
+
 function _matchearPago(p) {
   const out = { tipoDetectado: 'desconocido', modelo: null, matchWarn: null, opciones: [] };
+  // El texto del PDF se evalúa ANTES de los cortes por serie/BT: si la serie no está
+  // en stock o no hay BT de ese mes igual sabemos el concepto. Sin esto, 221 NC
+  // históricas quedaron en 'desconocido' teniendo el concepto escrito ("Tacticos
+  // Enero 2026", "PB Febrero 2026"), y 5 de ellas eran whosale contándose como
+  // incentivo de patentamiento.
+  const tipoTexto = _tipoPorTexto(p.textoTipo);
+  if (tipoTexto) { out.tipoDetectado = tipoTexto; out.matchWarn = 'según el texto del PDF'; }
+
   out.modelo = _findModeloPorSerie(p.serie);
-  if (!out.modelo) { out.matchWarn = 'serie no está en stock/patent'; return out; }
+  if (!out.modelo) { out.matchWarn = 'serie no está en stock/patent' + (tipoTexto ? ' (tipo por texto)' : ''); return out; }
 
   const data = incentivosDataByMes[p.mesIncentivo];
-  if (!data || !data.modelosBT) { out.matchWarn = 'sin BT para ' + p.mesIncentivo; return out; }
+  if (!data || !data.modelosBT) { out.matchWarn = 'sin BT para ' + p.mesIncentivo + (tipoTexto ? ' (tipo por texto)' : ''); return out; }
   const cc = data.modelosBT[_normModeloKey(out.modelo)];
-  if (!cc) { out.matchWarn = 'modelo no está en la BT del mes'; return out; }
+  if (!cc) { out.matchWarn = 'modelo no está en la BT del mes' + (tipoTexto ? ' (tipo por texto)' : ''); return out; }
 
   // Armar las 5 opciones con su esperado y diff
   const tipos = [
@@ -8035,18 +8059,11 @@ function _matchearPago(p) {
   //        ≥ 28 días → patentamiento-based (cc90/tactico/adic*; ~1.5+ mes)
   //   3. Mejor diff por monto (cuando no hay ninguna pista)
 
-  const t = (p.textoTipo || '').toLowerCase();
-  let porTexto = null;
-  if      (/wholesale|whosale/.test(t)) porTexto = 'whosale';
-  else if (/tactic/.test(t))            porTexto = 'tactico';
-  else if (/cc.?90|c90/.test(t))        porTexto = 'cc90';
-  else if (/adicional\s*1|adic\s*1/.test(t)) porTexto = 'adicional1';
-  else if (/adicional\s*2|adic\s*2/.test(t)) porTexto = 'adicional2';
-  else if (/adicional/.test(t))         porTexto = 'adicional1';
-
-  if (porTexto && tipos.find(o => o.tipo === porTexto)) {
+  const porTexto = tipoTexto;
+  if (porTexto) {
+    // Ya quedó seteado arriba. Si además figura en la BT del mes, es match pleno.
     out.tipoDetectado = porTexto;
-    out.matchWarn = 'sugerido por texto del PDF';
+    out.matchWarn = tipos.find(o => o.tipo === porTexto) ? 'sugerido por texto del PDF' : 'texto del PDF (sin monto esperado en la BT)';
     return out;
   }
 
