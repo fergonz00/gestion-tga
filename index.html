@@ -7071,7 +7071,11 @@ function _urlIncentivos(mesKey, fresh) {
 }
 
 // ============ Panel Incentivos NUEVO (gestion-next /api/incentivos) ============
-var incNextVista = 'patentamientos'; // 'patentamientos' | 'whosale'
+// 'facturacion' = réplica de la planilla de Mónica calculada con el motor propio
+// (/api/facturacion, universo = unidades FACTURADAS en el mes). Reemplazó a la vista
+// 'patentamientos', que tomaba el presupuesto de la planilla en vez de calcularlo.
+// 'whosale' (incentivos a la compra) sigue saliendo de /api/incentivos.
+var incNextVista = 'facturacion'; // 'facturacion' | 'whosale'
 var incNextMes = '';       // '' → todos · 'YYYY-MM'
 var incNextFiltro = '';    // filtro por estado
 var incNextData = null;
@@ -7085,10 +7089,11 @@ var _INC_EST = {
 var _INC_ORDEN = ['reclamo','pendiente','aFavor','ok','sinInc'];
 function _pesosInc(n){ return (n==null)?'—':new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0}).format(n); }
 function _urlIncNext(forzar){
-  var qs = 'token=' + encodeURIComponent(GESTION_NEXT_TOKEN) + '&vista=' + incNextVista;
+  var qs = 'token=' + encodeURIComponent(GESTION_NEXT_TOKEN);
+  if (incNextVista !== 'facturacion') qs += '&vista=' + incNextVista;
   if (incNextMes) qs += '&mes=' + encodeURIComponent(incNextMes);
   else if (forzar) qs += '&fresh=1';
-  return GESTION_NEXT_URL + '/api/incentivos?' + qs;
+  return GESTION_NEXT_URL + (incNextVista === 'facturacion' ? '/api/facturacion?' : '/api/incentivos?') + qs;
 }
 async function loadIncentivosNext(forzar){
   var wrap = document.getElementById('incentivosContent');
@@ -7117,20 +7122,22 @@ function setMesIncNext(mes){ incNextMes = mes || ''; incNextData = null; incNext
 function setFiltroIncNext(est){ incNextFiltro = (incNextFiltro === est) ? '' : est; renderIncentivosNext(); }
 function setVistaIncNext(v){ if (incNextVista === v) return; incNextVista = v; incNextMes = ''; incNextData = null; incNextFiltro = ''; loadIncentivosNext(true); }
 function _incChip(txt){ return '<td style="padding:6px 10px;white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:5px;border-radius:999px;background:#fff;border:1px solid '+txt.bar+';padding:2px 8px;font-size:11px"><span style="width:6px;height:6px;border-radius:999px;background:'+txt.dot+'"></span>'+txt.label+'</span></td>'; }
+function _incSubTabs(){
+  var h = '<div style="display:flex;gap:6px;margin-bottom:12px;border-bottom:1px solid #eee">';
+  [['facturacion','Facturación'],['whosale','Whosale']].forEach(function(t){
+    var on = (incNextVista === t[0]);
+    h += '<button onclick="setVistaIncNext(\''+t[0]+'\')" style="padding:7px 16px;border:none;border-bottom:2px solid '+(on?'#1e3a5f':'transparent')+';background:none;color:'+(on?'#1e3a5f':'#888')+';font-size:13px;font-weight:'+(on?'700':'400')+';cursor:pointer">'+t[1]+'</button>';
+  });
+  return h + '</div>';
+}
 function renderIncentivosNext(){
+  if (incNextVista === 'facturacion') return renderFacturacionNext();
   var wrap = document.getElementById('incentivosContent'); var d = incNextData;
   if (!wrap || !d) return;
   var esWho = (d.vista === 'whosale');
   var filas = (d.filas || []).filter(function(f){ return !incNextFiltro || f.estado === incNextFiltro; });
   var dif = d.totalPresu - d.totalCobrado;
-  var h = '';
-  // sub-solapas
-  h += '<div style="display:flex;gap:6px;margin-bottom:12px;border-bottom:1px solid #eee">';
-  [['patentamientos','Patentamientos'],['whosale','Whosale']].forEach(function(t){
-    var on = (incNextVista === t[0]);
-    h += '<button onclick="setVistaIncNext(\''+t[0]+'\')" style="padding:7px 16px;border:none;border-bottom:2px solid '+(on?'#1e3a5f':'transparent')+';background:none;color:'+(on?'#1e3a5f':'#888')+';font-size:13px;font-weight:'+(on?'700':'400')+';cursor:pointer">'+t[1]+'</button>';
-  });
-  h += '</div>';
+  var h = _incSubTabs();
   // barra: selector de mes + totales
   h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:10px">';
   h += '<select onchange="setMesIncNext(this.value)" style="padding:4px 8px;border:1px solid #d4d4d4;border-radius:6px;font-size:13px">';
@@ -7199,6 +7206,154 @@ function renderIncentivosNext(){
       : 'Patentamientos por mes, desde junio. Presupuesto = performance + táctico + adicionales + cupo (sin whosale) que calculó Ventas; referencia planilla de Mónica. Cobrado = NC de esos conceptos. Pendiente = VW aún no liquidó (~1 mes de lag).') + '</p>';
   wrap.innerHTML = h;
 }
+
+// ---- Vista FACTURACIÓN (réplica de la planilla de Mónica, motor propio) ----
+var _FACT_AVISOS = {
+  anulada:         { label:'Preventa anulada',        color:'#dc2626' },
+  sinLista:        { label:'Sin precio de lista',     color:'#b45309' },
+  sinIncentivo:    { label:'Sin condiciones',         color:'#b45309' },
+  sinCosto:        { label:'Sin costo histórico',     color:'#888'    },
+  ncSinClasificar: { label:'NC sin clasificar',       color:'#0284c7' },
+  nd:              { label:'Nota de débito',          color:'#0284c7' }
+};
+function _pctFact(n){ return ((n||0)*100).toFixed(2).replace('.', ',') + '%'; }
+function _factCard(lbl, val, sub, color){
+  return '<div style="border:1px solid #e5e5e5;border-radius:8px;padding:8px 12px;min-width:135px">'
+       + '<div style="font-size:10px;text-transform:uppercase;color:#888">' + lbl + '</div>'
+       + '<div style="font-size:17px;font-weight:700' + (color ? ';color:' + color : '') + '">' + val + '</div>'
+       + (sub ? '<div style="font-size:11px;color:#aaa">' + sub + '</div>' : '') + '</div>';
+}
+function renderFacturacionNext(){
+  var wrap = document.getElementById('incentivosContent'); var d = incNextData;
+  if (!wrap || !d) return;
+  var t = d.totales || {};
+  var filas = (d.filas || []).filter(function(f){ return !incNextFiltro || f.estado === incNextFiltro; });
+  var esTodos = (d.mesSel === 'todos');
+  var h = _incSubTabs();
+
+  // selector de mes
+  h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:10px">';
+  h += '<select onchange="setMesIncNext(this.value)" style="padding:4px 8px;border:1px solid #d4d4d4;border-radius:6px;font-size:13px">';
+  (d.meses || []).forEach(function(m){ h += '<option value="' + m.mesKey + '"' + (m.mesKey === d.mesSel ? ' selected' : '') + '>' + escapeHtml(m.label) + '</option>'; });
+  h += '</select><span style="font-size:12px;color:#888">unidades facturadas en el mes · réplica de la planilla de Mónica</span></div>';
+
+  // tarjetas de cierre
+  h += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px">';
+  h += _factCard('Unidades', (t.unidades || 0), (t.patentadas || 0) + ' patentadas');
+  h += _factCard('Facturación s/IVA', _pesosInc(t.ventaSiva));
+  h += _factCard('Contrib. marginal', _pesosInc(t.cmg), _pctFact(t.cmgPct), (t.cmg < 0 ? '#dc2626' : '#059669'));
+  h += _factCard('CMg costo histórico', _pesosInc(t.cmgHistorico), (t.filasSinCosto ? t.filasSinCosto + ' sin costo' : _pctFact(t.cmgHistoricoPct)), (t.cmgHistorico < 0 ? '#dc2626' : '#059669'));
+  h += _factCard('Incentivos presup.', _pesosInc((t.condComerciales || 0) + (t.bonus || 0)), 'cobrado ' + _pesosInc(t.cobrado));
+  h += _factCard('Falta cobrar', _pesosInc(t.difIncentivo), '', (t.difIncentivo > 1000 ? '#dc2626' : '#059669'));
+  h += '</div>';
+
+  // cumplimiento del objetivo → tramo de bonus (se cuenta por fecha de AES)
+  var tr = d.tramos || {};
+  if (Object.keys(tr).length) {
+    h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">';
+    Object.keys(tr).sort().forEach(function(m){
+      var x = tr[m];
+      var col = x.tramo === 'performance100' ? '#059669' : (x.tramo === 'performance' ? '#0284c7' : '#dc2626');
+      var lbl = x.tramo === 'performance100' ? 'bonus 100%' : (x.tramo === 'performance' ? 'bonus 90%' : 'sin bonus');
+      h += '<span title="Patentamientos contados por fecha de AES, con fallback al dominio de Oversoft" style="border:1px solid ' + col + ';color:' + col + ';border-radius:6px;padding:3px 9px;font-size:11.5px">'
+         + '<b>' + escapeHtml(m) + '</b> · ' + x.patentamientos + '/' + x.objetivo + ' patent. = ' + Math.round((x.cumplimiento || 0) * 100) + '% · ' + lbl + '</span>';
+    });
+    h += '</div>';
+  }
+
+  // chips de estado del cobro de incentivos
+  h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px">';
+  h += '<span style="font-size:11px;text-transform:uppercase;color:#888">Incentivos:</span>';
+  _INC_ORDEN.forEach(function(e){
+    var r = (d.resumen || {})[e]; if (!r) return;
+    var cfg = _INC_EST[e], on = (incNextFiltro === e);
+    h += '<button onclick="setFiltroIncNext(\'' + e + '\')" title="' + _pesosInc(r.presu) + ' presupuestado · ' + _pesosInc(r.cobrado) + ' cobrado" style="display:inline-flex;align-items:center;gap:6px;border-radius:999px;border:1px solid ' + (on ? '#111' : '#e5e5e5') + ';background:' + (on ? '#111' : '#fff') + ';color:' + (on ? '#fff' : '#333') + ';padding:3px 10px;font-size:12px;cursor:pointer">';
+    h += '<span style="width:8px;height:8px;border-radius:999px;background:' + cfg.dot + '"></span>' + cfg.label + ' <b>' + r.n + '</b>';
+    if (e === 'reclamo' || e === 'pendiente') h += ' <span style="opacity:.7">' + _pesosInc(r.dif) + '</span>';
+    h += '</button>';
+  });
+  if (incNextFiltro) h += '<button onclick="setFiltroIncNext(\'\')" style="font-size:12px;color:#666;text-decoration:underline;background:none;border:none;cursor:pointer">ver todas</button>';
+  h += '</div>';
+
+  // chequeos (avisos)
+  var av = d.avisos || [];
+  if (av.length) {
+    var porTipo = {};
+    av.forEach(function(a){ (porTipo[a.tipo] = porTipo[a.tipo] || []).push(a); });
+    h += '<details style="margin-bottom:12px;border:1px solid #e5e5e5;border-radius:8px;padding:8px 12px">';
+    h += '<summary style="cursor:pointer;font-size:12.5px"><b>Chequeos</b> &nbsp;';
+    Object.keys(porTipo).forEach(function(k){
+      var c = _FACT_AVISOS[k] || { label:k, color:'#888' };
+      h += '<span style="border:1px solid ' + c.color + ';color:' + c.color + ';border-radius:999px;padding:1px 8px;font-size:11px;margin-right:5px">' + c.label + ' <b>' + porTipo[k].length + '</b></span>';
+    });
+    h += '</summary><div style="max-height:260px;overflow:auto;margin-top:8px;font-size:11.5px">';
+    av.forEach(function(a){
+      var c = _FACT_AVISOS[a.tipo] || { label:a.tipo, color:'#888' };
+      h += '<div style="border-bottom:1px solid #f5f5f5;padding:3px 0"><span style="color:' + c.color + ';font-weight:600">' + c.label + '</span> · <span style="font-family:monospace;color:#888">' + escapeHtml(a.mes || '') + ' ' + escapeHtml(a.pv || '') + '</span> — ' + escapeHtml(a.detalle || '') + '</div>';
+    });
+    h += '</div></details>';
+  }
+
+  // tabla (mismas columnas que la planilla)
+  h += '<div class="table-wrap"><div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:1450px">';
+  h += '<thead><tr style="text-align:left;background:#fafafa;color:#666;font-size:11px;text-transform:uppercase">'
+     + '<th style="padding:6px 8px">PV</th><th style="padding:6px 8px">Modelo</th><th style="padding:6px 8px">Serie</th>'
+     + '<th style="padding:6px 8px">Factura</th><th style="padding:6px 8px">Dominio</th><th style="padding:6px 8px">Vendedor</th>'
+     + '<th style="padding:6px 8px;text-align:right">Venta s/IVA</th><th style="padding:6px 8px;text-align:right">Cond. com.</th>'
+     + '<th style="padding:6px 8px;text-align:right">Bonus</th><th style="padding:6px 8px;text-align:right">Cobrado</th>'
+     + '<th style="padding:6px 8px;text-align:right">Falta</th><th style="padding:6px 8px">Estado</th>'
+     + '<th style="padding:6px 8px;text-align:right">Lista unif.</th><th style="padding:6px 8px;text-align:right">Comis.</th>'
+     + '<th style="padding:6px 8px;text-align:right">IIBB</th><th style="padding:6px 8px;text-align:right">CMg</th>'
+     + '<th style="padding:6px 8px;text-align:right">%</th></tr></thead><tbody>';
+  filas.forEach(function(f){
+    var cfg = _INC_EST[f.estado] || _INC_EST.sinInc;
+    var bg = f.pvAnulada ? '#fee2e2' : cfg.bg;
+    var difColor = f.estado === 'reclamo' ? '#dc2626' : (f.difIncentivo < -1000 ? '#0284c7' : '#999');
+    var ncTit = (f.ncs || []).map(function(n){ return n.nc + ' ' + n.tipo + ' ' + _pesosInc(n.monto) + ' ' + n.fecha; }).join(' | ');
+    h += '<tr style="border-top:1px solid #f0f0f0;background:' + bg + ';border-left:3px solid ' + cfg.bar + '">';
+    h += '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + escapeHtml(f.preventa || '')
+       + (f.pvAnulada ? ' <span style="background:#dc2626;color:#fff;border-radius:6px;padding:0 5px;font-size:9.5px;font-weight:700">ANULADA</span>' : '')
+       + (f.esAA ? ' <span title="Plan de ahorro: no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:6px;padding:0 5px;font-size:9.5px;font-weight:700">AA</span>' : '')
+       + (esTodos ? '<div style="color:#aaa">' + escapeHtml(f.mes || '') + '</div>' : '') + '</td>';
+    h += '<td style="padding:6px 8px">' + escapeHtml(f.modelo || '') + '</td>';
+    h += '<td style="padding:6px 8px;font-family:monospace;font-size:11px;color:#888">' + escapeHtml((f.serie || '').slice(-8)) + '</td>';
+    h += '<td style="padding:6px 8px;font-size:11px;color:#777">' + escapeHtml((f.fcNums || [])[0] || '—') + ((f.fcNums || []).length > 1 ? ' <span style="color:#aaa">+' + (f.fcNums.length - 1) + '</span>' : '') + '<div style="color:#aaa">' + escapeHtml(_fechaAr(f.fcFecha)) + '</div></td>';
+    h += '<td style="padding:6px 8px;font-size:11px">' + (f.patentado ? escapeHtml(_fechaAr(f.fechaPatentamiento)) : '<span style="color:#b45309">sin patentar</span>') + '</td>';
+    h += '<td style="padding:6px 8px;font-size:11px">' + escapeHtml(f.vendedor || '—') + '</td>';
+    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap">' + _pesosInc(f.ventaSiva) + '</td>';
+    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;color:#555">' + (f.condComerciales ? _pesosInc(f.condComerciales) : '—') + '</td>';
+    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;color:#555">' + (f.bonus ? _pesosInc(f.bonus) : '—') + '</td>';
+    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;color:#555" title="' + escapeHtml(ncTit) + '">' + (f.cobrado ? _pesosInc(f.cobrado) : '—') + '</td>';
+    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;color:' + difColor + ';font-weight:' + (f.estado === 'reclamo' ? '600' : '400') + '">' + (Math.abs(f.difIncentivo) > 1000 ? _pesosInc(f.difIncentivo) : '—') + '</td>';
+    h += _incChip(cfg);
+    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;color:#777">' + (f.listaUnificada ? _pesosInc(f.listaUnificada) : '<span style="color:#b45309">falta</span>') + '</td>';
+    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;color:#777">' + (f.comision ? _pesosInc(f.comision) : '—') + '</td>';
+    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;color:#777">' + _pesosInc(f.iibb) + '</td>';
+    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;font-weight:600;color:' + (f.cmg < 0 ? '#dc2626' : '#222') + '">' + _pesosInc(f.cmg) + '</td>';
+    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;font-size:11px;color:' + (f.cmg < 0 ? '#dc2626' : '#888') + '">' + _pctFact(f.cmgPct) + '</td>';
+    h += '</tr>';
+  });
+  h += '</tbody><tfoot><tr style="border-top:2px solid #ccc;background:#fafafa;font-weight:700">'
+     + '<td colspan="6" style="padding:8px">Total ' + filas.length + ' unidades</td>'
+     + '<td style="padding:8px;text-align:right">' + _pesosInc(t.ventaSiva) + '</td>'
+     + '<td style="padding:8px;text-align:right">' + _pesosInc(t.condComerciales) + '</td>'
+     + '<td style="padding:8px;text-align:right">' + _pesosInc(t.bonus) + '</td>'
+     + '<td style="padding:8px;text-align:right">' + _pesosInc(t.cobrado) + '</td>'
+     + '<td style="padding:8px;text-align:right;color:' + (t.difIncentivo > 1000 ? '#dc2626' : '#222') + '">' + _pesosInc(t.difIncentivo) + '</td>'
+     + '<td></td>'
+     + '<td style="padding:8px;text-align:right">' + _pesosInc(t.listaUnificada) + '</td>'
+     + '<td style="padding:8px;text-align:right">' + _pesosInc(t.comision) + '</td>'
+     + '<td style="padding:8px;text-align:right">' + _pesosInc(t.iibb) + '</td>'
+     + '<td style="padding:8px;text-align:right;color:' + (t.cmg < 0 ? '#dc2626' : '#222') + '">' + _pesosInc(t.cmg) + '</td>'
+     + '<td style="padding:8px;text-align:right">' + _pctFact(t.cmgPct) + '</td>'
+     + '</tr></tfoot></table></div></div>';
+  h += '<p style="margin-top:10px;font-size:11px;color:#999">Universo = unidades con factura de venta 0km viva en el mes (Oversoft, origen VTOKM); las FC anuladas y sus NC espejo no se cuentan. '
+     + 'Incentivos calculados con el mismo motor que la solapa Ventas (no se copian de la planilla): cond. comerciales = táctico + cupo + adicionales, bonus = performance del tramo que se cumplió. '
+     + 'Los patentamientos se cuentan por fecha de AES. El costo histórico es el único dato que viene de la planilla de Mónica.</p>';
+  wrap.innerHTML = h;
+}
+
+function _fechaAr(s){ return s ? String(s).split('-').reverse().join('/') : '—'; }
 
 async function loadIncentivos(forzar) {
   // MOTOR_NEXT: la solapa Incentivos usa el panel nuevo (gestion-next: presupuesto
