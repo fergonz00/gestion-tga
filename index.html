@@ -7245,6 +7245,7 @@ function renderFacturacionNext(){
   h += _factCard('Contrib. marginal', _pesosInc(t.cmg), _pctFact(t.cmgPct), (t.cmg < 0 ? '#dc2626' : '#059669'));
   h += _factCard('CMg costo histórico', _pesosInc(t.cmgHistorico), (t.filasSinCosto ? t.filasSinCosto + ' sin costo' : _pctFact(t.cmgHistoricoPct)), (t.cmgHistorico < 0 ? '#dc2626' : '#059669'));
   h += _factCard('CMg c/accesorios', _pesosInc(t.cmgConAcc), 'incluye ' + _pesosInc(t.accesorios) + ' de acc.', (t.cmgConAcc < 0 ? '#dc2626' : '#059669'));
+  h += _factCard('Ganancia REAL (Ventas)', _pesosInc(t.gciaVentas), (t.filasSinGciaVentas ? t.filasSinGciaVentas + ' sin dato' : 'la de la solapa Ventas'), (t.gciaVentas < 0 ? '#dc2626' : '#059669'));
   h += _factCard('Incentivos presup.', _pesosInc((t.condComerciales || 0) + (t.bonus || 0)), 'cobrado ' + _pesosInc(t.cobrado));
   h += _factCard('Falta cobrar', _pesosInc(t.difIncentivo), '', (t.difIncentivo > 1000 ? '#dc2626' : '#059669'));
   h += '</div>';
@@ -7297,7 +7298,10 @@ function renderFacturacionNext(){
   }
 
   // tabla (mismas columnas que la planilla)
-  h += '<div class="table-wrap"><div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:1720px">';
+  // Barra de scroll horizontal FIJA arriba: la tabla es ancha y sin esto hay que
+  // bajar hasta el pie para poder correrla. Se sincroniza con la tabla en los dos sentidos.
+  h += '<div id="factScrollTop" style="position:sticky;top:0;z-index:6;overflow-x:auto;overflow-y:hidden;background:#fff;border:1px solid #e5e5e5;border-bottom:0;border-radius:8px 8px 0 0"><div style="height:10px;min-width:1900px"></div></div>';
+  h += '<div class="table-wrap" style="border-top-left-radius:0;border-top-right-radius:0"><div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:1900px">';
   h += '<thead><tr style="text-align:left;background:#fafafa;color:#666;font-size:11px;text-transform:uppercase">'
      + '<th style="padding:6px 8px">PV</th><th style="padding:6px 8px">Modelo</th><th style="padding:6px 8px">Serie</th>'
      + '<th style="padding:6px 8px">Factura</th><th style="padding:6px 8px">Dominio</th><th style="padding:6px 8px">Vendedor</th>'
@@ -7308,7 +7312,9 @@ function renderFacturacionNext(){
      + '<th style="padding:6px 8px;text-align:right">IIBB</th><th style="padding:6px 8px;text-align:right">CMg</th>'
      + '<th style="padding:6px 8px;text-align:right">%</th>'
      + '<th style="padding:6px 8px;text-align:right">Accesorios</th><th style="padding:6px 8px;text-align:right">CMg c/acc.</th>'
-     + '<th style="padding:6px 8px;text-align:right">%</th></tr></thead><tbody>';
+     + '<th style="padding:6px 8px;text-align:right">%</th>'
+     + '<th style="padding:6px 8px;text-align:right;background:#eef6ff">Ganancia REAL<div style="font-weight:400;text-transform:none;font-size:10px">solapa Ventas</div></th>'
+     + '</tr></thead><tbody>';
   filas.forEach(function(f){
     var cfg = _INC_EST[f.estado] || _INC_EST.sinInc;
     var bg = f.pvAnulada ? '#fee2e2' : cfg.bg;
@@ -7338,6 +7344,7 @@ function renderFacturacionNext(){
     h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;color:#0284c7">' + (f.accesorios ? _pesosInc(f.accesorios) : '—') + '</td>';
     h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;font-weight:600;color:' + (f.cmgConAcc < 0 ? '#dc2626' : '#222') + '">' + _pesosInc(f.cmgConAcc) + '</td>';
     h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;font-size:11px;color:' + (f.cmgConAcc < 0 ? '#dc2626' : '#888') + '">' + _pctFact(f.cmgConAccPct) + '</td>';
+    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;font-weight:700;background:#eef6ff;color:' + (f.gciaVentas == null ? '#aaa' : (f.gciaVentas < 0 ? '#dc2626' : '#0b6b3a')) + '">' + (f.gciaVentas == null ? '—' : _pesosInc(f.gciaVentas)) + '</td>';
     h += '</tr>';
   });
   h += '</tbody><tfoot><tr style="border-top:2px solid #ccc;background:#fafafa;font-weight:700">'
@@ -7356,12 +7363,36 @@ function renderFacturacionNext(){
      + '<td style="padding:8px;text-align:right;color:#0284c7">' + _pesosInc(t.accesorios) + '</td>'
      + '<td style="padding:8px;text-align:right;color:' + (t.cmgConAcc < 0 ? '#dc2626' : '#222') + '">' + _pesosInc(t.cmgConAcc) + '</td>'
      + '<td style="padding:8px;text-align:right">' + _pctFact(t.cmgConAccPct) + '</td>'
+     + '<td style="padding:8px;text-align:right;background:#eef6ff;color:' + (t.gciaVentas < 0 ? '#dc2626' : '#0b6b3a') + '">' + _pesosInc(t.gciaVentas) + '</td>'
      + '</tr></tfoot></table></div></div>';
   h += '<p style="margin-top:10px;font-size:11px;color:#999">Universo = unidades con factura de venta 0km viva en el mes (Oversoft, origen VTOKM); las FC anuladas y sus NC espejo no se cuentan. '
      + 'Incentivos calculados con el mismo motor que la solapa Ventas (no se copian de la planilla): cond. comerciales = táctico + cupo + adicionales, bonus = performance del tramo que se cumplió. '
      + 'Los patentamientos se cuentan por fecha de AES. El costo histórico es el único dato que viene de la planilla de Mónica. '
-     + '<b>Accesorios</b>: la fórmula de Mónica no los ve, por eso van aparte — "CMg c/acc." es el resultado incluyéndolos, que es lo comparable con la ganancia de la solapa Ventas.</p>';
+     + '<b>Accesorios</b>: la fórmula de Mónica no los ve, por eso van aparte. La última columna, <b>Ganancia REAL</b>, es el número de la solapa Ventas — contempla accesorios, comisión 1,5%, IIBB con piso del 10% del margen y el descuento sobre lista. Esa es la que manda para decidir; la CMg queda al lado para poder conciliar contra la planilla.</p>';
   wrap.innerHTML = h;
+  _syncScrollFact(wrap);
+}
+
+// Mantiene alineadas la barra fija de arriba y el scroll real de la tabla.
+function _syncScrollFact(wrap){
+  if (!wrap || typeof wrap.querySelector !== 'function') return;
+  var top = document.getElementById('factScrollTop');
+  var body = wrap.querySelector('.table-scroll');
+  var tabla = wrap.querySelector('table');
+  if (!top || !body || !tabla) return;
+  // El ancho del espaciador se toma de la tabla YA renderizada, no de un valor fijo:
+  // si el contenido la hace mas ancha, las dos barras tienen que recorrer lo mismo.
+  // Se toma el scrollWidth del CONTENEDOR de la tabla (no el de la tabla) para que las
+  // dos barras tengan exactamente el mismo recorrido y no queden desfasadas al final.
+  var ajustar = function(){ if (top.firstChild) top.firstChild.style.minWidth = (body.scrollWidth || tabla.offsetWidth) + 'px'; };
+  ajustar();
+  setTimeout(ajustar, 0);
+  window.addEventListener('resize', ajustar);
+  // Sincronizacion idempotente: se asigna SOLO si el valor cambia. Un lock booleano no
+  // sirve porque el evento scroll llega asincronico (para entonces ya se solto), y las
+  // dos barras se realimentan hasta colgar el render.
+  top.addEventListener('scroll', function(){ if (body.scrollLeft !== top.scrollLeft) body.scrollLeft = top.scrollLeft; });
+  body.addEventListener('scroll', function(){ if (top.scrollLeft !== body.scrollLeft) top.scrollLeft = body.scrollLeft; });
 }
 
 function _fechaAr(s){ return s ? String(s).split('-').reverse().join('/') : '—'; }
