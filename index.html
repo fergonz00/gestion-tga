@@ -7228,7 +7228,11 @@ function renderFacturacionNext(){
   var wrap = document.getElementById('incentivosContent'); var d = incNextData;
   if (!wrap || !d) return;
   var t = d.totales || {};
-  var filas = (d.filas || []).filter(function(f){ return !incNextFiltro || f.estado === incNextFiltro; });
+  var filas = (d.filas || []).filter(function(f){
+    if (!incNextFiltro) return true;
+    if (incNextFiltro === '__ft') return !!f.fueraTermino;   // boton de fuera de termino
+    return f.estado === incNextFiltro;
+  });
   var esTodos = (d.mesSel === 'todos');
   var h = _incSubTabs();
 
@@ -7246,6 +7250,7 @@ function renderFacturacionNext(){
   h += _factCard('CMg costo histórico', _pesosInc(t.cmgHistorico), (t.filasSinCosto ? t.filasSinCosto + ' sin costo' : _pctFact(t.cmgHistoricoPct)), (t.cmgHistorico < 0 ? '#dc2626' : '#059669'));
   h += _factCard('CMg c/accesorios', _pesosInc(t.cmgConAcc), 'incluye ' + _pesosInc(t.accesorios) + ' de acc.', (t.cmgConAcc < 0 ? '#dc2626' : '#059669'));
   h += _factCard('Ganancia REAL (Ventas)', _pesosInc(t.gciaVentas), (t.filasSinGciaVentas ? t.filasSinGciaVentas + ' sin dato' : 'la de la solapa Ventas'), (t.gciaVentas < 0 ? '#dc2626' : '#059669'));
+  h += _factCard('Dif. vs planilla', _pesosInc(t.difGanancia), 'REAL menos CMg c/acc.', (t.difGanancia < 0 ? '#dc2626' : '#059669'));
   h += _factCard('Incentivos presup.', _pesosInc((t.condComerciales || 0) + (t.bonus || 0)), 'cobrado ' + _pesosInc(t.cobrado));
   h += _factCard('Falta cobrar', _pesosInc(t.difIncentivo), '', (t.difIncentivo > 1000 ? '#dc2626' : '#059669'));
   h += '</div>';
@@ -7278,6 +7283,19 @@ function renderFacturacionNext(){
   if (incNextFiltro) h += '<button onclick="setFiltroIncNext(\'\')" style="font-size:12px;color:#666;text-decoration:underline;background:none;border:none;cursor:pointer">ver todas</button>';
   h += '</div>';
 
+  // Boton: cobros fuera de termino (VW pago tarde, o pago menos de lo que correspondia).
+  // El plazo normal se midio sobre 547 pagos: mediana 30 dias desde el patentamiento,
+  // p95 48. Arriba de t.diasLimite (60) se considera fuera de termino.
+  if (t.nFueraTermino) {
+    var onFT = (incNextFiltro === '__ft');
+    h += '<div style="margin-bottom:10px">';
+    h += '<button onclick="setFiltroIncNext(\'__ft\')" style="display:inline-flex;align-items:center;gap:8px;border-radius:8px;border:1px solid ' + (onFT ? '#c2410c' : '#fdba74') + ';background:' + (onFT ? '#c2410c' : '#fff7ed') + ';color:' + (onFT ? '#fff' : '#9a3412') + ';padding:6px 12px;font-size:12.5px;font-weight:600;cursor:pointer">';
+    h += '&#9888; Cobros fuera de t&eacute;rmino <b>' + t.nFueraTermino + '</b>';
+    h += '<span style="font-weight:400;opacity:.85">&middot; ' + t.nTarde + ' tarde &middot; ' + t.nCorto + ' por menos &middot; ' + _pesosInc(t.montoFueraTermino) + ' en juego</span></button>';
+    h += '<div style="font-size:11px;color:#999;margin-top:3px">Plazo normal de VW: mediana 30 d&iacute;as desde el patentamiento; se marca arriba de ' + t.diasLimite + '.</div>';
+    h += '</div>';
+  }
+
   // chequeos (avisos)
   var av = d.avisos || [];
   if (av.length) {
@@ -7300,58 +7318,94 @@ function renderFacturacionNext(){
   // tabla (mismas columnas que la planilla)
   // Barra de scroll horizontal FIJA arriba: la tabla es ancha y sin esto hay que
   // bajar hasta el pie para poder correrla. Se sincroniza con la tabla en los dos sentidos.
-  h += '<div id="factScrollTop" style="position:sticky;top:0;z-index:6;overflow-x:auto;overflow-y:hidden;background:#fff;border:1px solid #e5e5e5;border-bottom:0;border-radius:8px 8px 0 0"><div style="height:10px;min-width:1900px"></div></div>';
-  h += '<div class="table-wrap" style="border-top-left-radius:0;border-top-right-radius:0"><div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:1900px">';
+  h += '<div id="factScrollTop" style="position:sticky;top:0;z-index:6;overflow-x:auto;overflow-y:hidden;background:#fff;border:1px solid #e5e5e5;border-bottom:0;border-radius:8px 8px 0 0"><div style="height:10px;min-width:1680px"></div></div>';
+  h += '<div class="table-wrap" style="border-top-left-radius:0;border-top-right-radius:0"><div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:1680px">';
   h += '<thead><tr style="text-align:left;background:#fafafa;color:#666;font-size:11px;text-transform:uppercase">'
-     + '<th style="padding:6px 8px">PV</th><th style="padding:6px 8px">Modelo</th><th style="padding:6px 8px">Serie</th>'
-     + '<th style="padding:6px 8px">Factura</th><th style="padding:6px 8px">Dominio</th><th style="padding:6px 8px">Vendedor</th>'
-     + '<th style="padding:6px 8px;text-align:right">Venta s/IVA</th><th style="padding:6px 8px;text-align:right">Cond. com.</th>'
-     + '<th style="padding:6px 8px;text-align:right">Bonus</th><th style="padding:6px 8px;text-align:right">Cobrado</th>'
+     + '<th style="padding:6px 8px">PV <span style="color:#bbb;text-transform:none">▸ dominio</span></th>'
+     + '<th style="padding:6px 8px">Modelo <span style="color:#bbb;text-transform:none">▸ serie / factura</span></th>'
+     + '<th style="padding:6px 8px">Vendedor</th>'
+     + '<th style="padding:6px 8px;text-align:right">Venta s/IVA</th>'
+     + '<th style="padding:6px 8px;text-align:right">Incentivos <span style="color:#bbb;text-transform:none">▸</span></th>'
+     + '<th style="padding:6px 8px;text-align:right">Cobrado</th>'
      + '<th style="padding:6px 8px;text-align:right">Falta</th><th style="padding:6px 8px">Estado</th>'
      + '<th style="padding:6px 8px;text-align:right">Lista unif.</th><th style="padding:6px 8px;text-align:right">Comis.</th>'
      + '<th style="padding:6px 8px;text-align:right">IIBB</th><th style="padding:6px 8px;text-align:right">CMg</th>'
-     + '<th style="padding:6px 8px;text-align:right">%</th>'
      + '<th style="padding:6px 8px;text-align:right">Accesorios</th><th style="padding:6px 8px;text-align:right">CMg c/acc.</th>'
-     + '<th style="padding:6px 8px;text-align:right">%</th>'
      + '<th style="padding:6px 8px;text-align:right;background:#eef6ff">Ganancia REAL<div style="font-weight:400;text-transform:none;font-size:10px">solapa Ventas</div></th>'
+     + '<th style="padding:6px 8px;text-align:right;background:#fff7ed">Dif<div style="font-weight:400;text-transform:none;font-size:10px">REAL − c/acc.</div></th>'
      + '</tr></thead><tbody>';
-  filas.forEach(function(f){
+  filas.forEach(function(f, ix){
     var cfg = _INC_EST[f.estado] || _INC_EST.sinInc;
-    var bg = f.pvAnulada ? '#fee2e2' : cfg.bg;
+    var bg = f.pvAnulada ? '#fee2e2' : (f.fueraTermino ? '#fff7ed' : cfg.bg);
     var difColor = f.estado === 'reclamo' ? '#dc2626' : (f.difIncentivo < -1000 ? '#0284c7' : '#999');
-    var ncTit = (f.ncs || []).map(function(n){ return n.nc + ' ' + n.tipo + ' ' + _pesosInc(n.monto) + ' ' + n.fecha; }).join(' | ');
-    h += '<tr style="border-top:1px solid #f0f0f0;background:' + bg + ';border-left:3px solid ' + cfg.bar + '">';
-    h += '<td style="padding:6px 8px;font-family:monospace;font-size:11px">' + escapeHtml(f.preventa || '')
+    var uid = 'fx' + ix;
+    var td = 'padding:6px 8px;';
+    var dot = 'cursor:pointer;border-bottom:1px dotted #bbb';
+    h += '<tr style="border-top:1px solid #f0f0f0;background:' + bg + ';border-left:3px solid ' + (f.fueraTermino ? '#f97316' : cfg.bar) + '">';
+
+    // PV -> despliega dominio / patente
+    h += '<td style="' + td + 'font-family:monospace;font-size:11px">'
+       + '<span onclick="_factTgl(\'' + uid + 'a\')" style="' + dot + '">' + escapeHtml(f.preventa || '') + '</span>'
        + (f.pvAnulada ? ' <span style="background:#dc2626;color:#fff;border-radius:6px;padding:0 5px;font-size:9.5px;font-weight:700">ANULADA</span>' : '')
        + (f.esAA ? ' <span title="Plan de ahorro: no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:6px;padding:0 5px;font-size:9.5px;font-weight:700">AA</span>' : '')
-       + (esTodos ? '<div style="color:#aaa">' + escapeHtml(f.mes || '') + '</div>' : '') + '</td>';
-    h += '<td style="padding:6px 8px">' + escapeHtml(f.modelo || '') + '</td>';
-    h += '<td style="padding:6px 8px;font-family:monospace;font-size:11px;color:#888">' + escapeHtml((f.serie || '').slice(-8)) + '</td>';
-    h += '<td style="padding:6px 8px;font-size:11px;color:#777">' + escapeHtml((f.fcNums || [])[0] || '—') + ((f.fcNums || []).length > 1 ? ' <span style="color:#aaa">+' + (f.fcNums.length - 1) + '</span>' : '') + '<div style="color:#aaa">' + escapeHtml(_fechaAr(f.fcFecha)) + '</div></td>';
-    h += '<td style="padding:6px 8px;font-size:11px">' + (f.patentado ? escapeHtml(_fechaAr(f.fechaPatentamiento)) : '<span style="color:#b45309">sin patentar</span>') + '</td>';
-    h += '<td style="padding:6px 8px;font-size:11px">' + escapeHtml(f.vendedor || '—') + '</td>';
-    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap">' + _pesosInc(f.ventaSiva) + '</td>';
-    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;color:#555">' + (f.condComerciales ? _pesosInc(f.condComerciales) : '—') + '</td>';
-    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;color:#555">' + (f.bonus ? _pesosInc(f.bonus) : '—') + '</td>';
-    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;color:#555" title="' + escapeHtml(ncTit) + '">' + (f.cobrado ? _pesosInc(f.cobrado) : '—') + '</td>';
-    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;color:' + difColor + ';font-weight:' + (f.estado === 'reclamo' ? '600' : '400') + '">' + (Math.abs(f.difIncentivo) > 1000 ? _pesosInc(f.difIncentivo) : '—') + '</td>';
-    h += _incChip(cfg);
-    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;color:#777">' + (f.listaUnificada ? _pesosInc(f.listaUnificada) : '<span style="color:#b45309">falta</span>') + '</td>';
-    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;color:#777">' + (f.comision ? _pesosInc(f.comision) : '—') + '</td>';
-    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;color:#777">' + _pesosInc(f.iibb) + '</td>';
-    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;font-weight:600;color:' + (f.cmg < 0 ? '#dc2626' : '#222') + '">' + _pesosInc(f.cmg) + '</td>';
-    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;font-size:11px;color:' + (f.cmg < 0 ? '#dc2626' : '#888') + '">' + _pctFact(f.cmgPct) + '</td>';
-    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;color:#0284c7">' + (f.accesorios ? _pesosInc(f.accesorios) : '—') + '</td>';
-    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;font-weight:600;color:' + (f.cmgConAcc < 0 ? '#dc2626' : '#222') + '">' + _pesosInc(f.cmgConAcc) + '</td>';
-    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;font-size:11px;color:' + (f.cmgConAcc < 0 ? '#dc2626' : '#888') + '">' + _pctFact(f.cmgConAccPct) + '</td>';
-    h += '<td style="padding:6px 8px;text-align:right;white-space:nowrap;font-weight:700;background:#eef6ff;color:' + (f.gciaVentas == null ? '#aaa' : (f.gciaVentas < 0 ? '#dc2626' : '#0b6b3a')) + '">' + (f.gciaVentas == null ? '—' : _pesosInc(f.gciaVentas)) + '</td>';
+       + (esTodos ? '<div style="color:#aaa">' + escapeHtml(f.mes || '') + '</div>' : '')
+       + '<div id="' + uid + 'a" style="display:none;margin-top:3px;font-family:inherit;font-size:11px;color:#666">'
+       + 'Dominio: <b>' + (f.patentado ? escapeHtml(_fechaAr(f.fechaPatentamiento)) : 'sin patentar') + '</b>'
+       + (f.patente ? '<br>Patente: ' + escapeHtml(f.patente) : '')
+       + '</div></td>';
+
+    // Modelo -> despliega serie + factura
+    h += '<td style="' + td + '">'
+       + '<span onclick="_factTgl(\'' + uid + 'b\')" style="' + dot + '">' + escapeHtml(f.modelo || '') + '</span>'
+       + '<div id="' + uid + 'b" style="display:none;margin-top:3px;font-size:11px;color:#666">'
+       + 'Serie: <span style="font-family:monospace">' + escapeHtml(f.serie || '-') + '</span><br>'
+       + 'Factura: ' + escapeHtml((f.fcNums || [])[0] || '-') + ((f.fcNums || []).length > 1 ? ' <span style="color:#aaa">+' + (f.fcNums.length - 1) + '</span>' : '')
+       + ' &middot; ' + escapeHtml(_fechaAr(f.fcFecha))
+       + '</div></td>';
+
+    h += '<td style="' + td + 'font-size:11px">' + escapeHtml(f.vendedor || '-') + '</td>';
+    h += '<td style="' + td + 'text-align:right;white-space:nowrap">' + _pesosInc(f.ventaSiva) + '</td>';
+
+    // Incentivos: total -> despliega el desglose por concepto
+    var inc = (f.condComerciales || 0) + (f.bonus || 0);
+    var dt = f.incDetalle || {};
+    h += '<td style="' + td + 'text-align:right;white-space:nowrap">'
+       + (inc ? '<span onclick="_factTgl(\'' + uid + 'c\')" style="' + dot + '">' + _pesosInc(inc) + '</span>' : '-')
+       + '<div id="' + uid + 'c" style="display:none;margin-top:3px;font-size:11px;color:#666;text-align:right">'
+       + (dt.tactico ? 'T&aacute;ctico: ' + _pesosInc(dt.tactico) + '<br>' : '')
+       + (dt.cupo ? 'Cupo: ' + _pesosInc(dt.cupo) + '<br>' : '')
+       + (dt.adicional1 ? 'Adicional 1: ' + _pesosInc(dt.adicional1) + '<br>' : '')
+       + (dt.adicional2 ? 'Adicional 2: ' + _pesosInc(dt.adicional2) + '<br>' : '')
+       + (f.bonus ? 'Bonus: ' + _pesosInc(f.bonus) : '')
+       + '</div></td>';
+
+    // Cobrado -> despliega NC y plazo
+    h += '<td style="' + td + 'text-align:right;white-space:nowrap;color:#555">'
+       + (f.cobrado ? '<span onclick="_factTgl(\'' + uid + 'd\')" style="' + dot + '">' + _pesosInc(f.cobrado) + '</span>' : '-')
+       + '<div id="' + uid + 'd" style="display:none;margin-top:3px;font-size:11px;color:#666;text-align:right">'
+       + (f.ncNum ? 'NC ' + escapeHtml(String(f.ncNum)) + '<br>' : '')
+       + (f.ultimaNc ? escapeHtml(_fechaAr(f.ultimaNc)) + '<br>' : '')
+       + (f.diasCobro != null ? '<b>' + f.diasCobro + ' d&iacute;as</b> desde el patentamiento' : (f.diasEspera != null ? 'esperando hace <b>' + f.diasEspera + ' d&iacute;as</b>' : ''))
+       + '</div></td>';
+
+    h += '<td style="' + td + 'text-align:right;white-space:nowrap;color:' + difColor + ';font-weight:' + (f.estado === 'reclamo' ? '600' : '400') + '">' + (Math.abs(f.difIncentivo) > 1000 ? _pesosInc(f.difIncentivo) : '-') + '</td>';
+    h += '<td style="' + td + 'white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:5px;border-radius:999px;background:#fff;border:1px solid ' + cfg.bar + ';padding:2px 8px;font-size:11px"><span style="width:6px;height:6px;border-radius:999px;background:' + cfg.dot + '"></span>' + cfg.label + '</span>'
+       + (f.fueraTermino ? '<div style="margin-top:2px"><span title="' + (f.tarde ? 'Cobrado fuera del plazo normal de VW' : 'Cobrado por menos de lo que correspondia') + '" style="background:#f97316;color:#fff;border-radius:6px;padding:0 5px;font-size:9.5px;font-weight:700">' + (f.tarde ? 'TARDE' : '') + (f.tarde && f.corto ? ' + ' : '') + (f.corto ? 'CORTO' : '') + '</span></div>' : '')
+       + '</td>';
+    h += '<td style="' + td + 'text-align:right;white-space:nowrap;color:#777">' + (f.listaUnificada ? _pesosInc(f.listaUnificada) : '<span style="color:#b45309">falta</span>') + '</td>';
+    h += '<td style="' + td + 'text-align:right;white-space:nowrap;color:#777">' + (f.comision ? _pesosInc(f.comision) : '-') + '</td>';
+    h += '<td style="' + td + 'text-align:right;white-space:nowrap;color:#777">' + _pesosInc(f.iibb) + '</td>';
+    h += '<td style="' + td + 'text-align:right;white-space:nowrap;color:' + (f.cmg < 0 ? '#dc2626' : '#222') + '">' + _pesosInc(f.cmg) + ' <span style="font-size:10px;color:#aaa">' + _pctFact(f.cmgPct) + '</span></td>';
+    h += '<td style="' + td + 'text-align:right;white-space:nowrap;color:#0284c7">' + (f.accesorios ? _pesosInc(f.accesorios) : '-') + '</td>';
+    h += '<td style="' + td + 'text-align:right;white-space:nowrap;font-weight:600;color:' + (f.cmgConAcc < 0 ? '#dc2626' : '#222') + '">' + _pesosInc(f.cmgConAcc) + ' <span style="font-size:10px;color:#aaa">' + _pctFact(f.cmgConAccPct) + '</span></td>';
+    h += '<td style="' + td + 'text-align:right;white-space:nowrap;font-weight:700;background:#eef6ff;color:' + (f.gciaVentas == null ? '#aaa' : (f.gciaVentas < 0 ? '#dc2626' : '#0b6b3a')) + '">' + (f.gciaVentas == null ? '-' : _pesosInc(f.gciaVentas)) + '</td>';
+    h += '<td style="' + td + 'text-align:right;white-space:nowrap;background:#fff7ed;color:' + (f.difGanancia == null ? '#aaa' : (f.difGanancia < 0 ? '#dc2626' : '#0b6b3a')) + '">' + (f.difGanancia == null ? '-' : _pesosInc(f.difGanancia)) + '</td>';
     h += '</tr>';
   });
   h += '</tbody><tfoot><tr style="border-top:2px solid #ccc;background:#fafafa;font-weight:700">'
-     + '<td colspan="6" style="padding:8px">Total ' + filas.length + ' unidades</td>'
+     + '<td colspan="3" style="padding:8px">Total ' + filas.length + ' unidades</td>'
      + '<td style="padding:8px;text-align:right">' + _pesosInc(t.ventaSiva) + '</td>'
-     + '<td style="padding:8px;text-align:right">' + _pesosInc(t.condComerciales) + '</td>'
-     + '<td style="padding:8px;text-align:right">' + _pesosInc(t.bonus) + '</td>'
+     + '<td style="padding:8px;text-align:right">' + _pesosInc((t.condComerciales || 0) + (t.bonus || 0)) + '</td>'
      + '<td style="padding:8px;text-align:right">' + _pesosInc(t.cobrado) + '</td>'
      + '<td style="padding:8px;text-align:right;color:' + (t.difIncentivo > 1000 ? '#dc2626' : '#222') + '">' + _pesosInc(t.difIncentivo) + '</td>'
      + '<td></td>'
@@ -7359,18 +7413,25 @@ function renderFacturacionNext(){
      + '<td style="padding:8px;text-align:right">' + _pesosInc(t.comision) + '</td>'
      + '<td style="padding:8px;text-align:right">' + _pesosInc(t.iibb) + '</td>'
      + '<td style="padding:8px;text-align:right;color:' + (t.cmg < 0 ? '#dc2626' : '#222') + '">' + _pesosInc(t.cmg) + '</td>'
-     + '<td style="padding:8px;text-align:right">' + _pctFact(t.cmgPct) + '</td>'
      + '<td style="padding:8px;text-align:right;color:#0284c7">' + _pesosInc(t.accesorios) + '</td>'
-     + '<td style="padding:8px;text-align:right;color:' + (t.cmgConAcc < 0 ? '#dc2626' : '#222') + '">' + _pesosInc(t.cmgConAcc) + '</td>'
-     + '<td style="padding:8px;text-align:right">' + _pctFact(t.cmgConAccPct) + '</td>'
+     + '<td style="padding:8px;text-align:right">' + _pesosInc(t.cmgConAcc) + '</td>'
      + '<td style="padding:8px;text-align:right;background:#eef6ff;color:' + (t.gciaVentas < 0 ? '#dc2626' : '#0b6b3a') + '">' + _pesosInc(t.gciaVentas) + '</td>'
+     + '<td style="padding:8px;text-align:right;background:#fff7ed;color:' + (t.difGanancia < 0 ? '#dc2626' : '#0b6b3a') + '">' + _pesosInc(t.difGanancia) + '</td>'
      + '</tr></tfoot></table></div></div>';
   h += '<p style="margin-top:10px;font-size:11px;color:#999">Universo = unidades con factura de venta 0km viva en el mes (Oversoft, origen VTOKM); las FC anuladas y sus NC espejo no se cuentan. '
      + 'Incentivos calculados con el mismo motor que la solapa Ventas (no se copian de la planilla): cond. comerciales = táctico + cupo + adicionales, bonus = performance del tramo que se cumplió. '
      + 'Los patentamientos se cuentan por fecha de AES. El costo histórico es el único dato que viene de la planilla de Mónica. '
-     + '<b>Accesorios</b>: la fórmula de Mónica no los ve, por eso van aparte. La última columna, <b>Ganancia REAL</b>, es el número de la solapa Ventas — contempla accesorios, comisión 1,5%, IIBB con piso del 10% del margen y el descuento sobre lista. Esa es la que manda para decidir; la CMg queda al lado para poder conciliar contra la planilla.</p>';
+     + 'Tocá la <b>PV</b> para ver el dominio, el <b>modelo</b> para la serie y la factura, el total de <b>incentivos</b> para el desglose por concepto y el <b>cobrado</b> para la NC y el plazo. '
+     + '<b>Accesorios</b>: la fórmula de Mónica no los ve, por eso van aparte. <b>Ganancia REAL</b> es el número de la solapa Ventas — contempla accesorios, comisión 1,5%, IIBB con piso del 10% del margen y el descuento sobre lista. Esa es la que manda para decidir; la CMg queda al lado para poder conciliar contra la planilla.</p>';
   wrap.innerHTML = h;
   _syncScrollFact(wrap);
+}
+
+// Despliega/oculta el detalle dentro de una celda (dominio, serie/factura, desglose
+// de incentivos, NC y plazo). Evita columnas sueltas para todo.
+function _factTgl(id){
+  var el = document.getElementById(id);
+  if (el) el.style.display = (el.style.display === 'none' || !el.style.display) ? 'block' : 'none';
 }
 
 // Mantiene alineadas la barra fija de arriba y el scroll real de la tabla.
