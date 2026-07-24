@@ -2003,6 +2003,19 @@ function migrarComprasVW() {
   try { _cacheDrop('comprasvw'); } catch (e) {}
   return { ok: true, candidatos: rows.length, conciliados: rows.filter(r => r.conciliado).length };
 }
+// Calendario VWFS PUNTUAL (lote facturado 24–31 jul 2026): fecha de factura →
+// vencimiento en VWFS. NO es una fórmula (VW lo publica por lote), por eso es un
+// mapa fijo y acotado a estas 6 fechas. Cuando Valeria carga una factura con una
+// de estas fechas, el vence se autocompleta solo (si no lo puso a mano). Para
+// otros lotes hay que pasar el nuevo mapa. Formato "DD-mmm" (como se guarda).
+const VWFS_VTO_PUNTUAL = {
+  '24-jul': '04-sep', '27-jul': '04-sep', '28-jul': '03-sep',
+  '29-jul': '02-sep', '30-jul': '01-sep', '31-jul': '24-ago',
+};
+function _vwfsVtoPuntual(fechaFc) {
+  const k = String(fechaFc || '').trim().toLowerCase().replace(/\s+/g, '');
+  return VWFS_VTO_PUNTUAL[k] || null;
+}
 function saveCompraVW(body) {
   const serie = String(body.serie || '').trim().toUpperCase();
   if (!serie) return { error: 'falta serie' };
@@ -2016,6 +2029,12 @@ function saveCompraVW(body) {
     else if (k === 'conciliado') v = (v === true || v === 'true' || v === 1);
     else v = (v === '' ? null : v);
     row[k] = v;
+  }
+  // Autocompletar el vencimiento VWFS cuando se está cargando la fecha de factura
+  // (fecha_fc) de este lote puntual y no se pisó el vence a mano. Solo estas fechas.
+  if (campos.fecha_fc !== undefined && (row.vence === undefined || row.vence === null || row.vence === '')) {
+    const vtoAuto = _vwfsVtoPuntual(row.fecha_fc);
+    if (vtoAuto) row.vence = vtoAuto;
   }
   const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
   const res = UrlFetchApp.fetch(SUPA_URL + '/compras_vw?on_conflict=serie', { method: 'post', headers: hh, payload: JSON.stringify(row), muteHttpExceptions: true });
