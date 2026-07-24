@@ -4511,7 +4511,7 @@ function getReparto() {
   try {
     motor = _cached('motor', CACHE_TTL_SEC, false, getBaratitoMotor);
     (motor.modelos || []).forEach(function (m) {
-      var v = { ventasPorMes: m.ventasPorMes, stock: m.stock, colores: m.colores || [], chasis: m.chasis || [], nombreCorto: m.nombreCorto };
+      var v = { ventasPorMes: m.ventasPorMes, stock: m.stock, colores: m.colores || [], chasis: m.chasis || [], nombreCorto: m.nombreCorto, diasVenta: m.diasVenta || null };
       if (m.modelo) motorByNorm[_repartoNtrim(m.modelo)] = v;
       if (m.nombreCorto) motorByNorm[_repartoNtrim(m.nombreCorto)] = v;
     });
@@ -4615,6 +4615,12 @@ function getReparto() {
     return Object.assign({}, r, {
       color_nombre: colorNom,
       ventasPorMes: mm ? mm.ventasPorMes : null,
+      // rotacion REAL del modelo (dias promedio en venderse, ult. 12 meses) para
+      // mostrarla por fila junto a stock/ventas. Misma fuente que la seccion Rotacion.
+      diasVenta: (mm && mm.diasVenta) ? mm.diasVenta.diasProm : null,
+      diasVentaN: (mm && mm.diasVenta) ? (mm.diasVenta.n || 0) : 0,
+      diasLentoN: (mm && mm.diasVenta) ? (mm.diasVenta.lentoN || 0) : 0,
+      diasLentoMax: (mm && mm.diasVenta) ? (mm.diasVenta.lentoMax || 0) : 0,
       stockActual: hayStock ? ((mm ? (Number(mm.stock) || 0) : 0) + vAdd) : null,
       coloresStock: hayStock ? coloresStock : null,
       chasisStock: chasisStock,

@@ -5789,10 +5789,28 @@ function repartoFiltrar() {
     return;
   }
   let h = '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
-    + '<th></th><th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num" title="Ventas del modelo en los últimos 4 meses completos (misma ventana que Meses stock y la Rotación)">Vendido (4m)</th><th class="num" title="Meses de stock = stock ÷ venta mensual promedio (mismos 4 meses que la sección Rotación)">Meses stock</th><th>Estado</th><th class="num">Acción</th></tr></thead><tbody>';
+    + '<th></th><th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th>'
+    + '<th class="num" title="Unidades de este modelo vendidas en el mes en curso (' + _mesLabel(_mesKeyHoy()) + ', parcial). Ventas desde Oversoft.">Vend. mes</th>'
+    + '<th class="num" title="Ventas del modelo en los últimos 4 meses completos (misma ventana que Meses stock y la Rotación)">Vendido (4m)</th>'
+    + '<th class="num" title="Meses de stock = stock ÷ venta mensual promedio (mismos 4 meses que la sección Rotación)">Meses stock</th>'
+    + '<th class="num" title="Rotación real: días promedio entre que la unidad entró al sistema y se vendió (últimos 12 meses). Mismo dato que la sección Rotación.">Días en venderse</th>'
+    + '<th class="num" title="Unidades de este modelo que YA marcaste compradas/confirmadas en el reparto de este mes.">Comp. mes</th>'
+    + '<th>Estado</th><th class="num">Acción</th></tr></thead><tbody>';
+  // Compradas de cada modelo YA en este reparto (comprado + confirmado). Los ítems
+  // del mismo modelo comparten exactamente la misma descripción (vienen del mismo
+  // mail de VW), así que la clave por descripción es exacta.
+  const mesHoy = _mesKeyHoy();
+  const compradasPorModelo = {};
+  (repartoData.items || []).forEach(i => {
+    if (i.estado_compra === 'comprado' || i.estado_compra === 'ok') {
+      compradasPorModelo[i.descripcion] = (compradasPorModelo[i.descripcion] || 0) + 1;
+    }
+  });
   items.forEach(it => {
     const rowCls = it.alerta ? 'reparto-tr-alerta' : (it.enOversoft ? 'reparto-tr-ovs' : '');
     const vend = _repVendido(it.ventasPorMes);
+    const vendMes = it.ventasPorMes ? (Number(it.ventasPorMes[mesHoy]) || 0) : null;
+    const compMod = compradasPorModelo[it.descripcion] || 0;
     h += '<tr class="' + rowCls + '">';
     h += '<td>' + (it.estado_compra === 'pendiente' ? '<input type="checkbox" ' + (repartoSel[it.vin] ? 'checked' : '') + ' onchange="repartoToggleSel(\'' + it.vin + '\')">' : '') + '</td>';
     h += '<td><div class="reparto-modelo">' + escapeHtml((it.descripcion || '').replace(/^VW /, '')) + '</div><div class="reparto-fam">' + escapeHtml(it.familia || '') + '</div></td>';
@@ -5802,8 +5820,11 @@ function repartoFiltrar() {
       ? '<span class="reparto-fam">s/d</span>'
       : '<button class="reparto-stock-btn" onclick="repartoToggleDetalle(\'' + it.vin + '\')" title="Ver stock por color y antigüedad por chasis">' + it.stockActual + (it.tieneAntiguedad ? ' <span class="reparto-antig-flag" title="Tenés unidad(es) con +90 días en stock">⏳</span>' : '') + ' <span class="reparto-chev">▾</span></button>';
     h += '<td class="num">' + stockCell + '</td>';
+    h += '<td class="num">' + (vendMes == null ? '<span class="reparto-fam">s/d</span>' : (vendMes > 0 ? '<strong>' + vendMes + '</strong>' : '<span class="reparto-fam">0</span>')) + '</td>';
     h += '<td class="num">' + (vend == null ? '<span class="reparto-fam">s/d</span>' : vend) + '</td>';
     h += '<td class="num">' + _rotMesesCell(_repMesesStock(it), it.stockActual) + '</td>';
+    h += '<td class="num">' + _diasBadge(it.diasVenta, it.diasVentaN, it.diasLentoN, it.diasLentoMax) + '</td>';
+    h += '<td class="num">' + (compMod > 0 ? '<strong>' + compMod + '</strong>' : '<span class="reparto-fam">0</span>') + '</td>';
     let estado;
     if (it.estado_compra === 'pendiente') estado = '<span class="reparto-fam">' + escapeHtml(it.status || 'pendiente') + '</span>';
     else if (it.alerta) estado = '<span class="reparto-est-alerta">⚠ comprado hace ' + it.diasComprado + 'd · sin Oversoft</span>';
@@ -5860,7 +5881,7 @@ function repartoFiltrar() {
       det += '</div>';
       if (viejas) det += '<div class="reparto-det-buy">⏳ Tenés <strong>' + viejas + '</strong> unidad' + (viejas !== 1 ? 'es' : '') + ' con más de 90 días en stock → priorizá su venta.</div>';
     }
-    h += '<tr id="repdet-' + it.vin + '" class="reparto-detalle hidden"><td colspan="9">' + det + '</td></tr>';
+    h += '<tr id="repdet-' + it.vin + '" class="reparto-detalle hidden"><td colspan="12">' + det + '</td></tr>';
   });
   h += '</tbody></table></div></div>';
   wrap.innerHTML = h;
