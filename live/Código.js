@@ -2046,14 +2046,64 @@ function saveCompraVW(body) {
 // (ingresos esperados, de getAdmVentas: cada concepto no cobrado con su vto) y
 // los pagos pendientes a VW (egresos, de compras_vw impagas con su vence).
 // El front agrupa por semana y arma la línea de tiempo.
+//
+// DOS CORRECCIONES sobre el cálculo ingenuo "todo concepto con saldo > 0":
+//
+// 1) NETEO POR PREVENTA. En Oversoft la nota de crédito se carga bajo el motivo
+//    que quiera el administrativo, no necesariamente el que tenía la deuda. La
+//    PV 7904/1 (ene-26) es el caso testigo: CANCOKM quedó +4.000.000 y la NC de
+//    -4.000.000 entró como VTGTS/GASTADM. Sumando solo los conceptos positivos
+//    aparecía un cobro fantasma de $4M en la semana del 26/01 de una preventa
+//    saldada al peso. Se netea SOLO dentro de la misma preventa (mismo cliente,
+//    misma operación): cruzar preventas sería peor, un cliente que pagó de más
+//    no cancela la deuda de otro. El descuento se imputa de la deuda más vieja
+//    a la más nueva.
+//
+// 2) REPROYECCIÓN A LA ENTREGA. El vencimiento de detcash se carga al hacer la
+//    preventa y nadie lo mueve cuando la entrega se corre. La PV 8029/1 tenía
+//    $61,5M colgados en junio con la unidad facturada, sin entregar y con
+//    entrega programada para el 06/08. Regla: si el vto ya pasó, la unidad NO
+//    está entregada y hay entrega programada posterior, el cobro se proyecta a
+//    esa fecha. Queda `fechaOrig`/`reproyectado` para poder mostrarlo.
 function getFlujoFinanciero() {
   const ingresos = [];
+  const hoy = _yyyyMmDd(new Date());
   try {
     const adm = getAdmVentas();
     for (const v of (adm.ventas || [])) {
+      // saldos por concepto: positivos = deuda, negativos = NC/cobro de más
+      const pos = [], negs = [];
       for (const c of (v.cuadro || [])) {
         const saldo = Math.round(((c.plan || 0) - (c.cobrado || 0)));
-        if (saldo > 1) ingresos.push({ fecha: c.vto || '', monto: saldo, pv: v.preventa, cliente: v.cliente || '', localidad: v.localidad || '', concepto: c.concepto || '', modelo: v.modelo || '' });
+        if (saldo > 1) pos.push({ vto: c.vto || '', monto: saldo, concepto: c.concepto || '' });
+        else if (saldo < -1) negs.push(-saldo);
+      }
+      if (!pos.length) continue;
+      // (1) neteo intra-preventa, de la deuda más vieja a la más nueva
+      let credito = 0;
+      for (let i = 0; i < negs.length; i++) credito += negs[i];
+      pos.sort(function (a, b) { return (a.vto || '9999').localeCompare(b.vto || '9999'); });
+      for (let i = 0; i < pos.length && credito > 0; i++) {
+        const usa = Math.min(credito, pos[i].monto);
+        pos[i].monto -= usa;
+        credito -= usa;
+      }
+      // (2) reproyección al día de entrega si el vto quedó viejo
+      for (let i = 0; i < pos.length; i++) {
+        const p = pos[i];
+        if (p.monto <= 1) continue;
+        let fecha = p.vto, reproy = false;
+        if (fecha && fecha < hoy && !v.entregada && v.entregaFecha && v.entregaFecha > fecha) {
+          fecha = v.entregaFecha;
+          reproy = true;
+        }
+        ingresos.push({
+          fecha: fecha, fechaOrig: p.vto, reproyectado: reproy,
+          vencido: !!(fecha && fecha < hoy),
+          monto: p.monto, pv: v.preventa, cliente: v.cliente || '', localidad: v.localidad || '',
+          concepto: p.concepto, modelo: v.modelo || '',
+          tipo: v.tipo || '', especial: !!v.especial, entregada: !!v.entregada,
+        });
       }
     }
   } catch (e) {}
@@ -3260,6 +3310,10 @@ function getPatentamientos() {
 
 function _yyyyMm(d) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+
+function _yyyyMmDd(d) {
+  return _yyyyMm(d) + '-' + String(d.getDate()).padStart(2, '0');
 }
 
 function _mesLabel(yyyyMm) {
