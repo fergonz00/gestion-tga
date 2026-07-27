@@ -5795,6 +5795,20 @@ function repartoConfirmadosSec(items) {
   return h;
 }
 
+// Clave de modelo normalizada — RÉPLICA de _repartoNtrim/_ntrim del backend
+// (live/Código.js). Se usa para agrupar unidades del reparto por MODELO: VW escribe
+// el mismo producto de dos formas ("Amarok Comfortline V6 AT 4x4 G2" y "... 4x4 SE
+// G2") y agrupar por la descripción cruda parte el modelo en dos.
+// Preferimos siempre `item.modeloKey` que manda el backend; esto es el fallback
+// mientras ese deploy no esté arriba. Si tocás una, tocá la otra.
+function _repNtrimFront(s) {
+  s = String(s || '').toLowerCase();
+  s = s.replace(/bi[\s-]*tono/g, 'bitono').replace(/\b(vw|nuevo)\b/g, '').replace(/\bmtg([123])\b/g, 'mt');
+  s = s.replace(/\bmy\s*2[0-9]\b/g, '').replace(/\b20[0-9][0-9]\b/g, '').replace(/\bg[123]\b/g, '');
+  s = s.replace(/\bph[ag]\b/g, '').replace(/\b(se|cd|l)\b/g, '');
+  return s.replace(/[^a-z0-9]/g, '');
+}
+
 function repartoFiltrar() {
   const wrap = document.getElementById('repartoTablaWrap'); if (!wrap) return;
   const qEl = document.getElementById('repartoBusqueda');
@@ -5818,21 +5832,25 @@ function repartoFiltrar() {
     + '<th class="num" title="Rotación real: días promedio entre que la unidad entró al sistema y se vendió (últimos 12 meses). Mismo dato que la sección Rotación.">Días en venderse</th>'
     + '<th class="num" title="Unidades de este modelo que YA marcaste compradas/confirmadas en el reparto de este mes.">Comp. mes</th>'
     + '<th>Estado</th><th class="num">Acción</th></tr></thead><tbody>';
-  // Compradas de cada modelo YA en este reparto (comprado + confirmado). Los ítems
-  // del mismo modelo comparten exactamente la misma descripción (vienen del mismo
-  // mail de VW), así que la clave por descripción es exacta.
+  // Compradas de cada modelo YA en este reparto (comprado + confirmado). OJO: NO
+  // agrupar por la descripción cruda — VW escribe el MISMO producto de dos formas
+  // ("Amarok Comfortline V6 AT 4x4 G2" y "... 4x4 SE G2") y eso partía el modelo en
+  // dos (2 compradas se veían como 1). Se agrupa por `modeloKey`, la clave
+  // normalizada que manda el backend (_repartoNtrim, la misma que cruza el motor).
   const mesHoy = _mesKeyHoy();
+  const _repModKey = i => i.modeloKey || _repNtrimFront(i.descripcion) || i.descripcion;
   const compradasPorModelo = {};
   (repartoData.items || []).forEach(i => {
     if (i.estado_compra === 'comprado' || i.estado_compra === 'ok') {
-      compradasPorModelo[i.descripcion] = (compradasPorModelo[i.descripcion] || 0) + 1;
+      const k = _repModKey(i);
+      compradasPorModelo[k] = (compradasPorModelo[k] || 0) + 1;
     }
   });
   items.forEach(it => {
     const rowCls = it.alerta ? 'reparto-tr-alerta' : (it.enOversoft ? 'reparto-tr-ovs' : '');
     const vend = _repVendido(it.ventasPorMes);
     const vendMes = it.ventasPorMes ? (Number(it.ventasPorMes[mesHoy]) || 0) : null;
-    const compMod = compradasPorModelo[it.descripcion] || 0;
+    const compMod = compradasPorModelo[_repModKey(it)] || 0;
     h += '<tr class="' + rowCls + '">';
     h += '<td>' + (it.estado_compra === 'pendiente' ? '<input type="checkbox" ' + (repartoSel[it.vin] ? 'checked' : '') + ' onchange="repartoToggleSel(\'' + it.vin + '\')">' : '') + '</td>';
     h += '<td><div class="reparto-modelo">' + escapeHtml((it.descripcion || '').replace(/^VW /, '')) + '</div><div class="reparto-fam">' + escapeHtml(it.familia || '') + '</div></td>';

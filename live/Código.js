@@ -4633,6 +4633,12 @@ function getReparto() {
     }
     return Object.assign({}, r, {
       color_nombre: colorNom,
+      // Clave de modelo NORMALIZADA (la misma que cruza contra el motor). VW escribe
+      // el MISMO producto de dos formas en el reparto ("Amarok Comfortline V6 AT 4x4
+      // G2" y "... 4x4 SE G2"), asi que agrupar por la descripcion cruda parte el
+      // modelo en dos y se cuenta de menos (Fer compro 2 Comfort V6 y la columna
+      // "Comp. mes" mostraba 1). Agrupar SIEMPRE por modeloKey, nunca por descripcion.
+      modeloKey: _repartoNtrim(r.descripcion) || String(r.descripcion || '').trim(),
       ventasPorMes: mm ? mm.ventasPorMes : null,
       // rotacion REAL del modelo (dias promedio en venderse, ult. 12 meses) para
       // mostrarla por fila junto a stock/ventas. Misma fuente que la seccion Rotacion.
