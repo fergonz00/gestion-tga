@@ -1568,6 +1568,13 @@ const USUARIOS_PATENTAMIENTOS = [];
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby13NRmtve2ojB0IMZgFPnKh3HsLSBLDca4kOduRenO97KLH3W3ILbiJfDzGYVLAUpwpQ/exec';
 const APPS_SCRIPT_TOKEN = 'tga-gestion-R7nQ4xK8jL';
 
+// Web App de la planilla ESPEJO de saldos (la que consume saldos.titogonzalez.online).
+// Se usa SOLO para el bloque "Saldos" del Resumen: de acá sale el "Disponible para
+// pagar VW", que vive en la planilla de tesorería 1qIP4OT5 (hoja INFORME, fila
+// "SALDOS DISPONIBLES VW") y no existe en ningún lado de gestión.
+const SALDOS_URL   = 'https://script.google.com/macros/s/AKfycbyRTqqpQMjKDL82Z5Cjd9IJWPQnINF0LAEvji8FizfXMBO8Cz0IVbTSnQnNmH_rRxz9yg/exec';
+const SALDOS_TOKEN = 'tga-saldos-K9Mx2P7vQ';
+
 // Motor nuevo (gestion-next, Next+Supabase en Vercel) que reemplaza al Apps Script.
 // Cubre las solapas Ventas (default desde 1-jul, validado) y Adm. ventas (default
 // desde 6-jul, port validado 0-diff: lee /api/admventas y guarda por POST JSON).
@@ -6484,16 +6491,34 @@ function onIndustriaInputChange(input) {
 // Cada loadX/_fetchXSilent llama a renderResumen() al final, así esta tab
 // se actualiza sola cuando alguna sección refresca.
 
+// INFORME de tesorería (planilla espejo de saldos). Solo se usa para el
+// "Disponible para pagar VW" del bloque Saldos. Si falla, la card queda en "—"
+// y el resto del Resumen sigue andando igual.
+let saldosInformeData = null;
+async function loadSaldosInforme(forzar) {
+  if (saldosInformeData && !forzar) return saldosInformeData;
+  try {
+    const res = await fetch(SALDOS_URL + '?token=' + encodeURIComponent(SALDOS_TOKEN) + '&tipo=informe');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    saldosInformeData = data;
+  } catch (e) { /* silencioso: la card muestra "—" */ }
+  return saldosInformeData;
+}
+
 async function loadResumen() {
   renderResumen();  // pinta lo que haya en cache (si hay)
   // El Resumen sale TODO de Oversoft: stock (oversoftStockData), ventas
   // (ventasOvData = Oversoft+BT) y patentamientos (patentData = adm_ventas).
+  // La excepción es el bloque Saldos: deuda de compras_vw + informe de tesorería.
   await Promise.all([
     oversoftStockData ? Promise.resolve() : loadOversoftStock(false).catch(() => {}),
     ventasOvData      ? Promise.resolve() : loadVentasOv(false).catch(() => {}),
     patentData        ? Promise.resolve() : loadPatentamientos(false),
     comprasVWData     ? Promise.resolve() : loadComprasVW(false).catch(() => {}),
     loadObjetivosCompras().catch(() => {}),
+    loadSaldosInforme(false).catch(() => {}),
   ]);
   renderResumen();  // re-pinta con datos frescos
 }
@@ -6507,6 +6532,7 @@ function refreshResumen() {
     _fetchPatentSilent(),
     loadComprasVW(true).catch(() => {}),
     loadObjetivosCompras().catch(() => {}),
+    loadSaldosInforme(true).catch(() => {}),
   ]).finally(() => {
     renderResumen();
     if (btn) { btn.disabled = false; btn.textContent = 'Actualizar todo'; }
@@ -6622,6 +6648,67 @@ function renderResumen() {
     h += '</div>';
   } else {
     h += '<div class="resumen-loading">Cargando patentamientos...</div>';
+  }
+  h += '</div>';
+
+  // ----- SALDOS -----
+  // Dos números que hoy solo se ven en saldos.titogonzalez.online:
+  //   · Disponible para pagar VW → INFORME de tesorería (1qIP4OT5), vía SALDOS_URL.
+  //   · Deuda Floor Plan         → suma del bruto de las compras_vw impagas
+  //                                (mismo cálculo que usa Saldos), desglosada por
+  //                                fecha de vencimiento: las fechas suman el total.
+  h += '<div class="resumen-block">';
+  h += '  <div class="resumen-head"><h3>Saldos</h3>'
+     + '    <button class="resumen-link" onclick="window.open(\'https://saldos.titogonzalez.online/\',\'_blank\')">Ver detalle →</button>'
+     + '  </div>';
+  if (comprasVWData && Array.isArray(comprasVWData.compras)) {
+    const impagasVW = comprasVWData.compras.filter(c => c.impaga);
+    const deudaFP = impagasVW.reduce((a, c) => a + _cvwBruto(c), 0);
+    const dispVW = saldosInformeData ? (Number(saldosInformeData.disponibleVW) || 0) : null;
+    // agrupo por vencimiento; las que todavía no tienen factura cargada (bruto 0)
+    // no suman nada, así que quedan afuera del desglose.
+    const porVto = {};
+    impagasVW.forEach(c => {
+      const m = _cvwBruto(c);
+      if (!m) return;
+      const k = _cvwToISO(c.vence) || '';
+      if (!porVto[k]) porVto[k] = { monto: 0, u: 0 };
+      porVto[k].monto += m;
+      porVto[k].u++;
+    });
+    const vtos = Object.keys(porVto).sort((a, b) => (a || '9999-99-99').localeCompare(b || '9999-99-99'));
+    h += '<div class="cards-resumen">';
+    h += kpi('Disponible para pagar VW', dispVW == null ? '—' : fmtPesos(dispVW),
+             dispVW == null ? 'planilla de tesorería (cargando...)' : 'planilla de tesorería', dispVW ? 'good' : '');
+    h += kpi('Deuda Floor Plan', fmtPesos(deudaFP),
+             impagasVW.length + ' unidad' + (impagasVW.length === 1 ? '' : 'es') + ' impaga' + (impagasVW.length === 1 ? '' : 's'),
+             deudaFP ? 'warn' : '');
+    h += '<div class="card placeholder"></div>';
+    h += '<div class="card placeholder"></div>';
+    h += '</div>';
+    // desglose por fecha de vencimiento
+    h += '<div style="margin-top:10px;background:#fff;border:1px solid var(--vw-grey-2);border-radius:12px;padding:12px 14px">'
+       + '<div style="font-size:12px;color:var(--vw-grey-3);font-weight:700;margin-bottom:6px">Deuda Floor Plan por vencimiento</div>';
+    if (!vtos.length) {
+      h += '<div style="font-size:13px;color:var(--vw-grey-3)">Sin unidades impagas.</div>';
+    } else {
+      for (const k of vtos) {
+        const v = porVto[k];
+        h += '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #eef1f5">'
+           + '<span style="min-width:120px;font-weight:700;font-size:14px">' + escapeHtml(k ? _cvwFechaDisp(k) : 'Sin vto cargado') + '</span>'
+           + '<span style="flex:1;font-size:12px;color:var(--vw-grey-3)">' + v.u + ' unidad' + (v.u === 1 ? '' : 'es') + '</span>'
+           + '<span style="font-weight:800;font-size:15px;white-space:nowrap">' + fmtPesos(v.monto) + '</span>'
+           + '</div>';
+      }
+      h += '<div style="display:flex;align-items:center;gap:10px;padding:9px 0 0">'
+         + '<span style="min-width:120px;font-weight:800;font-size:12px;color:var(--vw-grey-3)">TOTAL</span>'
+         + '<span style="flex:1"></span>'
+         + '<span style="font-weight:800;font-size:15px;white-space:nowrap">' + fmtPesos(deudaFP) + '</span>'
+         + '</div>';
+    }
+    h += '</div>';
+  } else {
+    h += '<div class="resumen-loading">Cargando saldos...</div>';
   }
   h += '</div>';
 
