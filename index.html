@@ -1284,6 +1284,8 @@ table.patent-tbl tr.tbl-sep.pat:hover td  { background: var(--green-soft); }
 .rot-col-tabla td { padding: 3px 8px; font-size: 12px; border-top: 1px solid var(--vw-grey-2); }
 .rot-col-tabla tr.rot-agotado { background: #eef7f0; }
 .rot-agotado-lbl { color: #1a7f37; font-weight: 600; font-size: 11px; }
+.rot-enrep { color: #0057a0; }                       /* lo que VW ofrece y todavía no compraste */
+.rot-col-tabla tr.rot-solorep { background: #f4f8fc; }  /* color que sólo existe en el reparto */
 </style>
 
 <!-- pdf.js para parsing client-side de los NCs -->
@@ -5958,7 +5960,8 @@ function repartoRotacionSec() {
   h += '<p class="reparto-hint">Cuántas se venden por mes y cuántos <strong>meses de stock</strong> tenés al ritmo actual (stock ÷ venta mensual). '
     + '<span class="rot-rapido">Verde</span> = rota rápido, poco stock → reponer · <span class="rot-sobra">gris</span> = sobra stock · <span class="rot-norota">rojo</span> = no se vende. '
     + 'El <strong>Stock</strong> ya incluye lo que compraste este mes en el reparto aunque todavía no haya entrado a Oversoft (columna <strong>Compr. mes</strong>): si tenías 10 y compraste 2, dice 12. '
-    + 'Tocá un modelo para ver el detalle por color.</p>';
+    + '<strong class="rot-enrep">En reparto</strong> es lo que VW te ofrece este mes y todavía NO compraste — eso NO está en el Stock. '
+    + 'Tocá un modelo para ver el detalle por color, con los colores que hay en el reparto.</p>';
   h += '<input type="search" id="repartoRotBusq" placeholder="Buscar modelo o familia..." oninput="repartoRotFiltrar()" class="reparto-search" style="margin-bottom:8px">';
   h += '<div id="repartoRotWrap"></div></div></div>';
   return h;
@@ -5983,6 +5986,24 @@ function _rotCompradas() {
     porColor[ck] = (porColor[ck] || 0) + 1;
   });
   return { porModelo, porColor };
+}
+// Lo que VW te OFRECE en el reparto del mes y todavía no compraste: pendientes +
+// elegidas (la "elegida" está apalabrada pero no comprada). Es el complemento de
+// _rotCompradas: pendiente/elegida = todavía la podés pedir, comprado/ok = ya es tuya
+// y por eso ya está sumada en el Stock. `nombre` guarda cómo escribe VW cada color,
+// para poder mostrar colores que el modelo no tiene ni en stock ni en ventas.
+function _rotEnReparto() {
+  const porModelo = {}, porColor = {}, nombre = {};
+  ((repartoData && repartoData.items) || []).forEach(i => {
+    if (i.estado_compra !== 'pendiente' && i.estado_compra !== 'elegida') return;
+    const k = _repModKeyOf(i);
+    porModelo[k] = (porModelo[k] || 0) + 1;
+    const cn = _rotColNorm(i.color_nombre);
+    const ck = k + '||' + cn;
+    porColor[ck] = (porColor[ck] || 0) + 1;
+    if (!nombre[ck]) nombre[ck] = i.color_nombre || i.color_codigo || '(sin color)';
+  });
+  return { porModelo, porColor, nombre };
 }
 // Vendidas en el MES EN CURSO, por modelo y por modelo+color. Sale del MOTOR
 // (`?tipo=motor`, el mismo que alimenta Precios), que ya trae `ventasPorMes` y
@@ -6028,11 +6049,13 @@ function repartoRotFiltrar() {
     || (m.modelo || '').toLowerCase().includes(q) || (m.familia || '').toLowerCase().includes(q));
   if (!items.length) { wrap.innerHTML = '<div class="empty">Sin datos de rotación' + (q ? ' para la búsqueda.' : '.') + '</div>'; return; }
   const comp = _rotCompradas();
+  const enRep = _rotEnReparto();
   const vend = _rotVendMes();
   const mesLbl = _mesLabel(_mesKeyHoy());
   let h = '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla rot-tabla"><thead><tr>'
     + '<th>Modelo</th>'
     + '<th class="num" title="Stock disponible. Ya INCLUYE las unidades que compraste este mes en el reparto y todavía no entraron a Oversoft (si tenías 10 y compraste 2, dice 12).">Stock</th>'
+    + '<th class="num" title="Unidades de este modelo que VW te ofrece en el reparto de ' + mesLbl + ' y todavía NO compraste (pendientes + elegidas). Tocá la fila para ver de qué colores son. NO están sumadas en el Stock: todavía no son tuyas.">En reparto</th>'
     + '<th class="num" title="Unidades de este modelo que ya marcaste compradas/confirmadas en el reparto de ' + mesLbl + '. Están sumadas en la columna Stock.">Compr. mes</th>'
     + '<th class="num" title="Unidades de este modelo vendidas en el mes en curso (' + mesLbl + ', parcial). Ventas desde Oversoft.">Vend. mes</th>'
     + '<th class="num">Vta/mes</th><th class="num">Meses stock</th>'
@@ -6040,16 +6063,18 @@ function repartoRotFiltrar() {
   items.forEach((m, idx) => {
     const mk = _rotModKey(m);
     const cMes = comp.porModelo[mk] || 0;
+    const rMes = enRep.porModelo[mk] || 0;
     const vMes = (m.ventaMesActual != null) ? Number(m.ventaMesActual) : vend.porModelo[mk];
     h += '<tr class="rot-row" onclick="repartoRotToggle(' + idx + ')">';
     h += '<td><span class="reparto-chev" id="rotchev-' + idx + '">▸</span> <span class="reparto-modelo">' + escapeHtml((m.modelo || '').replace(/^VW /, '')) + '</span><div class="reparto-fam">' + escapeHtml(m.familia || '') + '</div></td>';
     h += '<td class="num">' + m.stock + '</td>';
+    h += '<td class="num">' + (rMes > 0 ? '<strong class="rot-enrep">' + rMes + '</strong>' : '<span class="reparto-fam">—</span>') + '</td>';
     h += '<td class="num">' + (cMes > 0 ? '<strong>' + cMes + '</strong>' : '<span class="reparto-fam">0</span>') + '</td>';
     h += '<td class="num">' + (vMes == null ? '<span class="reparto-fam">s/d</span>' : (vMes > 0 ? '<strong>' + vMes + '</strong>' : '<span class="reparto-fam">0</span>')) + '</td>';
     h += '<td class="num">' + _rotFmt(m.ventaMes) + '</td>';
     h += '<td class="num">' + _rotMesesCell(m.mesesStock, m.stock) + '</td>';
     h += '<td class="num">' + _diasBadgeRep(m.diasVenta, m.diasVentaN, m.diasLentoN, m.diasLentoMax) + '</td></tr>';
-    h += '<tr id="rotdet-' + idx + '" class="reparto-detalle hidden"><td colspan="7">' + _rotColoresHtml(m, comp, mk, vend) + '</td></tr>';
+    h += '<tr id="rotdet-' + idx + '" class="reparto-detalle hidden"><td colspan="8">' + _rotColoresHtml(m, comp, mk, vend, enRep) + '</td></tr>';
   });
   h += '</tbody></table></div></div>';
   wrap.innerHTML = h;
@@ -6084,23 +6109,39 @@ function _rotColoresMerge(cols, nMes) {
     return c;
   }).sort((a, b) => (b.venta4m || 0) - (a.venta4m || 0) || (b.stock || 0) - (a.stock || 0));
 }
-function _rotColoresHtml(m, comp, mk, vend) {
+function _rotColoresHtml(m, comp, mk, vend, enRep) {
   const nMes = ((repartoData && repartoData.rotacion && repartoData.rotacion.meses) || []).length || 4;
-  const cols = _rotColoresMerge(m.colores, nMes);
-  if (!cols.length) return '<div class="reparto-fam">Sin datos por color.</div>';
   comp = comp || { porColor: {} };
   vend = vend || { porColor: {} };
-  let h = '<div class="reparto-det-ttl">Por color · vta/mes · stock · compradas y vendidas del mes · meses de stock · días en venderse:</div>';
+  enRep = enRep || { porColor: {}, nombre: {} };
+  const cols = _rotColoresMerge(m.colores, nMes);
+  // Un color puede estar EN EL REPARTO y no figurar acá (el modelo nunca lo tuvo
+  // en stock ni lo vendió) — si no lo agregamos, "los colores que hay en el
+  // reparto" quedaría incompleto, que es justo lo que se viene a mirar.
+  const yaEsta = new Set(cols.map(c => _rotColNorm(c.color)));
+  Object.keys(enRep.porColor).forEach(ck => {
+    const [kMod, cn] = ck.split('||');
+    if (kMod !== mk || yaEsta.has(cn)) return;
+    cols.push({ color: enRep.nombre[ck] || cn, stock: 0, venta4m: 0, ventaMes: 0,
+                mesesStock: null, ventaMesActual: 0, diasVenta: null, diasVentaN: 0,
+                diasLentoN: 0, diasLentoMax: 0, soloReparto: true });
+  });
+  if (!cols.length) return '<div class="reparto-fam">Sin datos por color.</div>';
+  const totRep = Object.keys(enRep.porColor).reduce((a, ck) => a + (ck.split('||')[0] === mk ? enRep.porColor[ck] : 0), 0);
+  let h = '<div class="reparto-det-ttl">Por color · vta/mes · stock · en reparto · compradas y vendidas del mes · meses de stock · días en venderse'
+        + (totRep ? ' <span class="rot-enrep">· ' + totRep + ' en el reparto de este mes</span>' : '') + ':</div>';
   h += '<table class="rot-col-tabla"><tbody>';
   cols.forEach(c => {
     const agotado = (c.stock || 0) === 0 && (c.venta4m || 0) > 0;
     const ck = mk + '||' + _rotColNorm(c.color);
     const cMes = comp.porColor[ck] || 0;
+    const rMes = enRep.porColor[ck] || 0;
     const vMesC = (c.ventaMesActual != null) ? c.ventaMesActual : vend.porColor[ck];
-    h += '<tr' + (agotado ? ' class="rot-agotado"' : '') + '>'
-      + '<td><strong>' + escapeHtml(c.color) + '</strong></td>'
+    h += '<tr' + (agotado ? ' class="rot-agotado"' : (c.soloReparto ? ' class="rot-solorep"' : '')) + '>'
+      + '<td><strong>' + escapeHtml(c.color) + '</strong>' + (c.soloReparto ? ' <span class="reparto-fam">(sin stock ni ventas)</span>' : '') + '</td>'
       + '<td class="num">' + _rotFmt(c.ventaMes) + '/mes</td>'
       + '<td class="num">stock ' + c.stock + '</td>'
+      + '<td class="num">' + (rMes > 0 ? '<strong class="rot-enrep">' + rMes + ' en reparto</strong>' : '<span class="reparto-fam">—</span>') + '</td>'
       + '<td class="num">' + (cMes > 0 ? '<strong>+' + cMes + ' compr.</strong>' : '<span class="reparto-fam">—</span>') + '</td>'
       + '<td class="num">' + (vMesC == null ? '<span class="reparto-fam">—</span>'
           : (vMesC > 0 ? '<strong>' + vMesC + ' vend.</strong>' : '<span class="reparto-fam">0 vend.</span>')) + '</td>'
