@@ -5984,17 +5984,37 @@ function _rotCompradas() {
   });
   return { porModelo, porColor };
 }
-// Vendidas en el MES EN CURSO por modelo. Lo manda el backend en `ventaMesActual`;
-// mientras ese deploy no esté arriba se cae al `ventasPorMes` que ya viaja en cada
-// ítem del reparto (misma fuente: el motor), que cubre sólo los modelos que están
-// en el reparto — el resto queda "s/d" en vez de mostrar un 0 mentiroso.
-function _rotVendMesFallback() {
-  const out = {};
-  ((repartoData && repartoData.items) || []).forEach(i => {
-    if (!i.ventasPorMes) return;
-    out[_repModKeyOf(i)] = Number(i.ventasPorMes[_mesKeyHoy()]) || 0;
+// Vendidas en el MES EN CURSO, por modelo y por modelo+color. Sale del MOTOR
+// (`?tipo=motor`, el mismo que alimenta Precios), que ya trae `ventasPorMes` y
+// `ventasColorPorMes` con el mes corriente para los 47 modelos del catálogo.
+// El backend del reparto también lo manda en `ventaMesActual`; si está, gana ése
+// y ni se pide el motor.
+function _rotVendMes() {
+  const mes = _mesKeyHoy();
+  const porModelo = {}, porColor = {};
+  ((preciosData && preciosData.modelos) || []).forEach(m => {
+    const k = _rotModKey(m);
+    porModelo[k] = Number((m.ventasPorMes || {})[mes]) || 0;
+    const vc = m.ventasColorPorMes || {};
+    Object.keys(vc).forEach(c => {
+      const ck = k + '||' + _rotColNorm(c);
+      porColor[ck] = (porColor[ck] || 0) + (Number((vc[c] || {})[mes]) || 0);
+    });
   });
-  return out;
+  return { porModelo, porColor };
+}
+// Trae el motor UNA sola vez si todavía no está en memoria (lo comparte con la
+// solapa Precios). Se pide sin `fresh` para que salga del caché del backend.
+let _rotMotorPedido = null;
+function _rotAsegurarMotor() {
+  if (preciosData && Array.isArray(preciosData.modelos)) return Promise.resolve(true);
+  if (!_rotMotorPedido) {
+    _rotMotorPedido = fetch(APPS_SCRIPT_URL + '?token=' + encodeURIComponent(APPS_SCRIPT_TOKEN) + '&tipo=motor')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d && Array.isArray(d.modelos)) { preciosData = d; return true; } return false; })
+      .catch(() => false);
+  }
+  return _rotMotorPedido;
 }
 function _repModKeyOf(i) { return i.modeloKey || _repNtrimFront(i.descripcion) || i.descripcion; }
 function _rotModKey(m) { return _repNtrimFront(m.nombreCorto || m.modelo) || (m.nombreCorto || m.modelo); }
@@ -6008,7 +6028,7 @@ function repartoRotFiltrar() {
     || (m.modelo || '').toLowerCase().includes(q) || (m.familia || '').toLowerCase().includes(q));
   if (!items.length) { wrap.innerHTML = '<div class="empty">Sin datos de rotación' + (q ? ' para la búsqueda.' : '.') + '</div>'; return; }
   const comp = _rotCompradas();
-  const vendFb = _rotVendMesFallback();
+  const vend = _rotVendMes();
   const mesLbl = _mesLabel(_mesKeyHoy());
   let h = '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla rot-tabla"><thead><tr>'
     + '<th>Modelo</th>'
@@ -6020,7 +6040,7 @@ function repartoRotFiltrar() {
   items.forEach((m, idx) => {
     const mk = _rotModKey(m);
     const cMes = comp.porModelo[mk] || 0;
-    const vMes = (m.ventaMesActual != null) ? Number(m.ventaMesActual) : vendFb[mk];
+    const vMes = (m.ventaMesActual != null) ? Number(m.ventaMesActual) : vend.porModelo[mk];
     h += '<tr class="rot-row" onclick="repartoRotToggle(' + idx + ')">';
     h += '<td><span class="reparto-chev" id="rotchev-' + idx + '">▸</span> <span class="reparto-modelo">' + escapeHtml((m.modelo || '').replace(/^VW /, '')) + '</span><div class="reparto-fam">' + escapeHtml(m.familia || '') + '</div></td>';
     h += '<td class="num">' + m.stock + '</td>';
@@ -6029,10 +6049,15 @@ function repartoRotFiltrar() {
     h += '<td class="num">' + _rotFmt(m.ventaMes) + '</td>';
     h += '<td class="num">' + _rotMesesCell(m.mesesStock, m.stock) + '</td>';
     h += '<td class="num">' + _diasBadgeRep(m.diasVenta, m.diasVentaN, m.diasLentoN, m.diasLentoMax) + '</td></tr>';
-    h += '<tr id="rotdet-' + idx + '" class="reparto-detalle hidden"><td colspan="7">' + _rotColoresHtml(m, comp, mk) + '</td></tr>';
+    h += '<tr id="rotdet-' + idx + '" class="reparto-detalle hidden"><td colspan="7">' + _rotColoresHtml(m, comp, mk, vend) + '</td></tr>';
   });
   h += '</tbody></table></div></div>';
   wrap.innerHTML = h;
+  // Si "Vend. mes" todavía no tiene de dónde salir (backend viejo + motor sin
+  // cargar), lo traemos y redibujamos una sola vez.
+  if (!items.some(m => m.ventaMesActual != null) && !(preciosData && preciosData.modelos)) {
+    _rotAsegurarMotor().then(ok => { if (ok) repartoRotFiltrar(); });
+  }
 }
 // Une filas de color repetidas que sólo difieren en cómo está escrito el nombre
 // ("Gris Volcan" de Oversoft vs "Gris Volcán" del reparto de VW): salían dos veces,
@@ -6059,23 +6084,26 @@ function _rotColoresMerge(cols, nMes) {
     return c;
   }).sort((a, b) => (b.venta4m || 0) - (a.venta4m || 0) || (b.stock || 0) - (a.stock || 0));
 }
-function _rotColoresHtml(m, comp, mk) {
+function _rotColoresHtml(m, comp, mk, vend) {
   const nMes = ((repartoData && repartoData.rotacion && repartoData.rotacion.meses) || []).length || 4;
   const cols = _rotColoresMerge(m.colores, nMes);
   if (!cols.length) return '<div class="reparto-fam">Sin datos por color.</div>';
   comp = comp || { porColor: {} };
+  vend = vend || { porColor: {} };
   let h = '<div class="reparto-det-ttl">Por color · vta/mes · stock · compradas y vendidas del mes · meses de stock · días en venderse:</div>';
   h += '<table class="rot-col-tabla"><tbody>';
   cols.forEach(c => {
     const agotado = (c.stock || 0) === 0 && (c.venta4m || 0) > 0;
-    const cMes = comp.porColor[mk + '||' + _rotColNorm(c.color)] || 0;
+    const ck = mk + '||' + _rotColNorm(c.color);
+    const cMes = comp.porColor[ck] || 0;
+    const vMesC = (c.ventaMesActual != null) ? c.ventaMesActual : vend.porColor[ck];
     h += '<tr' + (agotado ? ' class="rot-agotado"' : '') + '>'
       + '<td><strong>' + escapeHtml(c.color) + '</strong></td>'
       + '<td class="num">' + _rotFmt(c.ventaMes) + '/mes</td>'
       + '<td class="num">stock ' + c.stock + '</td>'
       + '<td class="num">' + (cMes > 0 ? '<strong>+' + cMes + ' compr.</strong>' : '<span class="reparto-fam">—</span>') + '</td>'
-      + '<td class="num">' + (c.ventaMesActual == null ? '<span class="reparto-fam">—</span>'
-          : (c.ventaMesActual > 0 ? '<strong>' + c.ventaMesActual + ' vend.</strong>' : '<span class="reparto-fam">0 vend.</span>')) + '</td>'
+      + '<td class="num">' + (vMesC == null ? '<span class="reparto-fam">—</span>'
+          : (vMesC > 0 ? '<strong>' + vMesC + ' vend.</strong>' : '<span class="reparto-fam">0 vend.</span>')) + '</td>'
       + '<td class="num">' + _rotMesesCell(c.mesesStock, c.stock) + '</td>'
       + '<td class="num">' + _diasBadgeRep(c.diasVenta, c.diasVentaN, c.diasLentoN, c.diasLentoMax) + '</td>'
       + '<td>' + (agotado ? '<span class="rot-agotado-lbl">⚠ se vendió todo · reponé este color</span>' : '') + '</td></tr>';
