@@ -5838,7 +5838,7 @@ function repartoFiltrar() {
   // dos (2 compradas se veían como 1). Se agrupa por `modeloKey`, la clave
   // normalizada que manda el backend (_repartoNtrim, la misma que cruza el motor).
   const mesHoy = _mesKeyHoy();
-  const _repModKey = i => i.modeloKey || _repNtrimFront(i.descripcion) || i.descripcion;
+  const _repModKey = _repModKeyOf;   // definido más abajo, junto a la rotación
   const compradasPorModelo = {};
   (repartoData.items || []).forEach(i => {
     if (i.estado_compra === 'comprado' || i.estado_compra === 'ok') {
@@ -5957,11 +5957,48 @@ function repartoRotacionSec() {
   h += '<div id="repartoRotBox" class="reparto-box hidden">';
   h += '<p class="reparto-hint">Cuántas se venden por mes y cuántos <strong>meses de stock</strong> tenés al ritmo actual (stock ÷ venta mensual). '
     + '<span class="rot-rapido">Verde</span> = rota rápido, poco stock → reponer · <span class="rot-sobra">gris</span> = sobra stock · <span class="rot-norota">rojo</span> = no se vende. '
+    + 'El <strong>Stock</strong> ya incluye lo que compraste este mes en el reparto aunque todavía no haya entrado a Oversoft (columna <strong>Compr. mes</strong>): si tenías 10 y compraste 2, dice 12. '
     + 'Tocá un modelo para ver el detalle por color.</p>';
   h += '<input type="search" id="repartoRotBusq" placeholder="Buscar modelo o familia..." oninput="repartoRotFiltrar()" class="reparto-search" style="margin-bottom:8px">';
   h += '<div id="repartoRotWrap"></div></div></div>';
   return h;
 }
+// Normaliza un nombre de color para cruzar reparto ("Gris Volcán") con el motor
+// ("Gris Volcan"). Réplica de _stockColNorm del backend.
+function _rotColNorm(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+}
+// Compradas del reparto de este mes (comprado + confirmado), indexadas por modelo
+// normalizado y por modelo+color. El stock que muestra la rotación YA las incluye
+// (el backend suma el "stock virtual": las compradas a VW que todavía no entraron
+// a Oversoft), así que esta columna es la que explica de dónde sale ese número:
+// si tenías 10 y compraste 2, Stock dice 12 y Compr. mes dice 2.
+function _rotCompradas() {
+  const porModelo = {}, porColor = {};
+  ((repartoData && repartoData.items) || []).forEach(i => {
+    if (i.estado_compra !== 'comprado' && i.estado_compra !== 'ok') return;
+    const k = _repModKeyOf(i);
+    porModelo[k] = (porModelo[k] || 0) + 1;
+    const ck = k + '||' + _rotColNorm(i.color_nombre);
+    porColor[ck] = (porColor[ck] || 0) + 1;
+  });
+  return { porModelo, porColor };
+}
+// Vendidas en el MES EN CURSO por modelo. Lo manda el backend en `ventaMesActual`;
+// mientras ese deploy no esté arriba se cae al `ventasPorMes` que ya viaja en cada
+// ítem del reparto (misma fuente: el motor), que cubre sólo los modelos que están
+// en el reparto — el resto queda "s/d" en vez de mostrar un 0 mentiroso.
+function _rotVendMesFallback() {
+  const out = {};
+  ((repartoData && repartoData.items) || []).forEach(i => {
+    if (!i.ventasPorMes) return;
+    out[_repModKeyOf(i)] = Number(i.ventasPorMes[_mesKeyHoy()]) || 0;
+  });
+  return out;
+}
+function _repModKeyOf(i) { return i.modeloKey || _repNtrimFront(i.descripcion) || i.descripcion; }
+function _rotModKey(m) { return _repNtrimFront(m.nombreCorto || m.modelo) || (m.nombreCorto || m.modelo); }
+
 function repartoRotFiltrar() {
   const wrap = document.getElementById('repartoRotWrap'); if (!wrap) return;
   const rot = (repartoData && repartoData.rotacion) || { items: [] };
@@ -5970,33 +6007,77 @@ function repartoRotFiltrar() {
   const items = (rot.items || []).filter(m => !q
     || (m.modelo || '').toLowerCase().includes(q) || (m.familia || '').toLowerCase().includes(q));
   if (!items.length) { wrap.innerHTML = '<div class="empty">Sin datos de rotación' + (q ? ' para la búsqueda.' : '.') + '</div>'; return; }
+  const comp = _rotCompradas();
+  const vendFb = _rotVendMesFallback();
+  const mesLbl = _mesLabel(_mesKeyHoy());
   let h = '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla rot-tabla"><thead><tr>'
-    + '<th>Modelo</th><th class="num">Stock</th><th class="num">Vta/mes</th><th class="num">Meses stock</th><th class="num" title="Rotación real: días promedio entre que la unidad entró al sistema y se vendió (últimos 12 meses)">Días en venderse</th></tr></thead><tbody>';
+    + '<th>Modelo</th>'
+    + '<th class="num" title="Stock disponible. Ya INCLUYE las unidades que compraste este mes en el reparto y todavía no entraron a Oversoft (si tenías 10 y compraste 2, dice 12).">Stock</th>'
+    + '<th class="num" title="Unidades de este modelo que ya marcaste compradas/confirmadas en el reparto de ' + mesLbl + '. Están sumadas en la columna Stock.">Compr. mes</th>'
+    + '<th class="num" title="Unidades de este modelo vendidas en el mes en curso (' + mesLbl + ', parcial). Ventas desde Oversoft.">Vend. mes</th>'
+    + '<th class="num">Vta/mes</th><th class="num">Meses stock</th>'
+    + '<th class="num" title="Rotación real: días promedio entre que la unidad entró al sistema y se vendió (últimos 12 meses)">Días en venderse</th></tr></thead><tbody>';
   items.forEach((m, idx) => {
+    const mk = _rotModKey(m);
+    const cMes = comp.porModelo[mk] || 0;
+    const vMes = (m.ventaMesActual != null) ? Number(m.ventaMesActual) : vendFb[mk];
     h += '<tr class="rot-row" onclick="repartoRotToggle(' + idx + ')">';
     h += '<td><span class="reparto-chev" id="rotchev-' + idx + '">▸</span> <span class="reparto-modelo">' + escapeHtml((m.modelo || '').replace(/^VW /, '')) + '</span><div class="reparto-fam">' + escapeHtml(m.familia || '') + '</div></td>';
     h += '<td class="num">' + m.stock + '</td>';
+    h += '<td class="num">' + (cMes > 0 ? '<strong>' + cMes + '</strong>' : '<span class="reparto-fam">0</span>') + '</td>';
+    h += '<td class="num">' + (vMes == null ? '<span class="reparto-fam">s/d</span>' : (vMes > 0 ? '<strong>' + vMes + '</strong>' : '<span class="reparto-fam">0</span>')) + '</td>';
     h += '<td class="num">' + _rotFmt(m.ventaMes) + '</td>';
     h += '<td class="num">' + _rotMesesCell(m.mesesStock, m.stock) + '</td>';
-    h += '<td class="num">' + _diasBadge(m.diasVenta, m.diasVentaN, m.diasLentoN, m.diasLentoMax) + '</td></tr>';
-    h += '<tr id="rotdet-' + idx + '" class="reparto-detalle hidden"><td colspan="5">' + _rotColoresHtml(m) + '</td></tr>';
+    h += '<td class="num">' + _diasBadgeRep(m.diasVenta, m.diasVentaN, m.diasLentoN, m.diasLentoMax) + '</td></tr>';
+    h += '<tr id="rotdet-' + idx + '" class="reparto-detalle hidden"><td colspan="7">' + _rotColoresHtml(m, comp, mk) + '</td></tr>';
   });
   h += '</tbody></table></div></div>';
   wrap.innerHTML = h;
 }
-function _rotColoresHtml(m) {
-  const cols = m.colores || [];
+// Une filas de color repetidas que sólo difieren en cómo está escrito el nombre
+// ("Gris Volcan" de Oversoft vs "Gris Volcán" del reparto de VW): salían dos veces,
+// una con el stock real y otra con la comprada. El backend ya las unifica; esto es
+// la red de seguridad para el front (y arregla la vista mientras ese deploy no esté).
+function _rotColoresMerge(cols, nMes) {
+  const porNorm = new Map();
+  (cols || []).forEach(c => {
+    const n = _rotColNorm(c.color);
+    const a = porNorm.get(n);
+    if (!a) { porNorm.set(n, Object.assign({}, c)); return; }
+    a.stock = (a.stock || 0) + (c.stock || 0);
+    a.venta4m = (a.venta4m || 0) + (c.venta4m || 0);
+    if (c.ventaMesActual != null) a.ventaMesActual = (a.ventaMesActual || 0) + c.ventaMesActual;
+    if ((c.diasVentaN || 0) > (a.diasVentaN || 0)) {   // gana el promedio con más unidades detrás
+      a.diasVenta = c.diasVenta; a.diasVentaN = c.diasVentaN;
+      a.diasLentoN = c.diasLentoN; a.diasLentoMax = c.diasLentoMax;
+    }
+  });
+  const n = nMes || 4;
+  return [...porNorm.values()].map(c => {
+    c.ventaMes = (c.venta4m || 0) / n;
+    c.mesesStock = c.venta4m > 0 ? (c.stock || 0) / c.ventaMes : null;
+    return c;
+  }).sort((a, b) => (b.venta4m || 0) - (a.venta4m || 0) || (b.stock || 0) - (a.stock || 0));
+}
+function _rotColoresHtml(m, comp, mk) {
+  const nMes = ((repartoData && repartoData.rotacion && repartoData.rotacion.meses) || []).length || 4;
+  const cols = _rotColoresMerge(m.colores, nMes);
   if (!cols.length) return '<div class="reparto-fam">Sin datos por color.</div>';
-  let h = '<div class="reparto-det-ttl">Por color · vta/mes · stock · meses de stock · días en venderse:</div>';
+  comp = comp || { porColor: {} };
+  let h = '<div class="reparto-det-ttl">Por color · vta/mes · stock · compradas y vendidas del mes · meses de stock · días en venderse:</div>';
   h += '<table class="rot-col-tabla"><tbody>';
   cols.forEach(c => {
     const agotado = (c.stock || 0) === 0 && (c.venta4m || 0) > 0;
+    const cMes = comp.porColor[mk + '||' + _rotColNorm(c.color)] || 0;
     h += '<tr' + (agotado ? ' class="rot-agotado"' : '') + '>'
       + '<td><strong>' + escapeHtml(c.color) + '</strong></td>'
       + '<td class="num">' + _rotFmt(c.ventaMes) + '/mes</td>'
       + '<td class="num">stock ' + c.stock + '</td>'
+      + '<td class="num">' + (cMes > 0 ? '<strong>+' + cMes + ' compr.</strong>' : '<span class="reparto-fam">—</span>') + '</td>'
+      + '<td class="num">' + (c.ventaMesActual == null ? '<span class="reparto-fam">—</span>'
+          : (c.ventaMesActual > 0 ? '<strong>' + c.ventaMesActual + ' vend.</strong>' : '<span class="reparto-fam">0 vend.</span>')) + '</td>'
       + '<td class="num">' + _rotMesesCell(c.mesesStock, c.stock) + '</td>'
-      + '<td class="num">' + _diasBadge(c.diasVenta, c.diasVentaN, c.diasLentoN, c.diasLentoMax) + '</td>'
+      + '<td class="num">' + _diasBadgeRep(c.diasVenta, c.diasVentaN, c.diasLentoN, c.diasLentoMax) + '</td>'
       + '<td>' + (agotado ? '<span class="rot-agotado-lbl">⚠ se vendió todo · reponé este color</span>' : '') + '</td></tr>';
   });
   h += '</tbody></table>';

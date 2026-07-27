@@ -4814,37 +4814,49 @@ function _repartoRotacion(motor, virt) {
   var nMes = refMeses.length;
   var sum = function (vpm) { var s = 0; for (var i = 0; i < refMeses.length; i++) s += Number((vpm || {})[refMeses[i]]) || 0; return s; };
   var out = [];
+  // Mes EN CURSO (parcial). refMeses son los 4 meses CERRADOS (para el promedio),
+  // asi que las vendidas del mes corriente hay que sacarlas aparte.
+  var mesAct = _yyyyMm(new Date());
   ((motor && motor.modelos) || []).forEach(function (m) {
     var v4 = sum(m.ventasPorMes);
+    var vMesAct = Number((m.ventasPorMes || {})[mesAct]) || 0;
     var stock = Number(m.stock) || 0;
     var dv = m.diasVenta || null;
     // Antes se descartaban los modelos sin stock ni ventas; ahora se listan TODOS
     // los del armado de precios (baratito) aunque esten en cero, en orden de catalogo.
-    var stkCol = {};
-    (m.colores || []).forEach(function (c) { stkCol[c.color] = Number(c.stock) || 0; });
-    // Sumar el stock VIRTUAL (compradas a VW aun no en Oversoft) del modelo.
-    stock += (virt.byNc[m.nombreCorto] || 0);
-    var vcmap = virt.colorByNc[m.nombreCorto] || {};
-    Object.keys(vcmap).forEach(function (cn) {
-      var key = _stockColKey(stkCol, cn) || cn;
-      stkCol[key] = (stkCol[key] || 0) + vcmap[cn];
-    });
+    stock += (virt.byNc[m.nombreCorto] || 0);   // stock VIRTUAL (compradas a VW aun no en Oversoft)
     var vtaCol = m.ventasColorPorMes || {};
-    var nombres = {};
-    Object.keys(stkCol).forEach(function (k) { nombres[k] = 1; });
-    Object.keys(vtaCol).forEach(function (k) { nombres[k] = 1; });
-    if (dv) Object.keys(dv.colores || {}).forEach(function (k) { nombres[k] = 1; });
-    var colores = Object.keys(nombres).map(function (col) {
-      var cv4 = sum(vtaCol[col]);
-      var cstk = stkCol[col] || 0;
-      var cdv = (dv && dv.colores && dv.colores[col]) || null;
-      return { color: col, stock: cstk, venta4m: cv4, ventaMes: cv4 / nMes, mesesStock: cv4 > 0 ? cstk / (cv4 / nMes) : null,
+    var vcmap = virt.colorByNc[m.nombreCorto] || {};
+    // Un color puede llegar escrito de dos formas segun la fuente (Oversoft dice
+    // "Gris Volcan", el reparto de VW "Gris Volcán") y antes salian como DOS filas
+    // distintas: una con el stock real y otra con la comprada. Se agrupa todo por
+    // color NORMALIZADO (_stockColNorm) y se muestra el primer nombre visto, con
+    // esta prioridad: stock real -> ventas -> dias -> comprada.
+    var byNorm = {}, ordenN = [];
+    var slot = function (nombre) {
+      var n = _stockColNorm(nombre);
+      if (!byNorm[n]) { byNorm[n] = { color: nombre, stock: 0, vpm: [], dv: null }; ordenN.push(n); }
+      return byNorm[n];
+    };
+    (m.colores || []).forEach(function (c) { slot(c.color).stock += Number(c.stock) || 0; });
+    Object.keys(vtaCol).forEach(function (c) { slot(c).vpm.push(vtaCol[c]); });
+    if (dv) Object.keys(dv.colores || {}).forEach(function (c) { var s = slot(c); if (!s.dv) s.dv = dv.colores[c]; });
+    Object.keys(vcmap).forEach(function (cn) { slot(cn).stock += vcmap[cn]; });
+    var colores = ordenN.map(function (n) {
+      var s = byNorm[n];
+      var cv4 = 0, cvAct = 0;
+      s.vpm.forEach(function (v) { cv4 += sum(v); cvAct += Number((v || {})[mesAct]) || 0; });
+      var cdv = s.dv;
+      return { color: s.color, stock: s.stock, venta4m: cv4, ventaMes: cv4 / nMes,
+               mesesStock: cv4 > 0 ? s.stock / (cv4 / nMes) : null,
+               ventaMesActual: cvAct,
                diasVenta: cdv ? cdv.diasProm : null, diasVentaN: cdv ? cdv.n : 0,
                diasLentoN: (cdv && cdv.lentoN) || 0, diasLentoMax: (cdv && cdv.lentoMax) || 0 };
     }).sort(function (a, b) { return b.venta4m - a.venta4m || b.stock - a.stock; });
     out.push({
       modelo: m.modelo, nombreCorto: m.nombreCorto, familia: m.familia,
       stock: stock, venta4m: v4, ventaMes: v4 / nMes,
+      ventaMesActual: vMesAct,
       mesesStock: v4 > 0 ? stock / (v4 / nMes) : null,
       diasVenta: dv ? dv.diasProm : null, diasVentaN: dv ? dv.n : 0,
       diasLentoN: (dv && dv.lentoN) || 0, diasLentoMax: (dv && dv.lentoMax) || 0,
@@ -4853,7 +4865,7 @@ function _repartoRotacion(motor, virt) {
   });
   // Orden = el del catalogo/baratito (motor.modelos ya viene Polo Track -> ... -> Amarok).
   // No se reordena por ventas, para que coincida con el panel de precios.
-  return { meses: refMeses, items: out };
+  return { meses: refMeses, mesActual: mesAct, items: out };
 }
 
 // =======================================================================
