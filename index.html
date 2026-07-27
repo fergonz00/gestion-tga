@@ -6507,6 +6507,79 @@ async function loadSaldosInforme(forzar) {
   return saldosInformeData;
 }
 
+// Dólar blue COMPRA (para pasar a pesos el fondo en u$s del INFORME). dolarapi
+// publica la misma cotización que muestra dolarhoy y manda CORS *, así que se
+// puede leer directo del navegador. Si falla, el fondo en u$s se muestra sin
+// convertir y no se suma al total de Bancos (mejor que sumar con un valor viejo).
+let dolarBlue = null;
+async function loadDolarBlue(forzar) {
+  if (dolarBlue && !forzar) return dolarBlue;
+  try {
+    const res = await fetch('https://dolarapi.com/v1/dolares/blue');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    const compra = Number(d && d.compra) || 0;
+    if (compra > 0) dolarBlue = { compra: compra, fecha: (d && d.fechaActualizacion) || '' };
+  } catch (e) { /* silencioso */ }
+  return dolarBlue;
+}
+
+// ---- Lectura del INFORME de tesorería para el bloque Saldos ----------------
+// Se matchea por NOMBRE de concepto, NO por número de fila: la planilla la
+// mantiene tesorería a mano y las filas se mueven. Los que están en 0 no se
+// toman (pedido de Fer) y los "Total ..." quedan afuera para no duplicar
+// (el backend ya los marca con tipo='total').
+const _BANCOS_ARS_RE = /^(efectivo caja|pf santander|pf galicia|fondo de inversi[oó]n santander super ahorro|fondo pf galicia)/i;
+const _BANCOS_USD_RE = /super ahorro santander u\$s/i;
+const _VW_CREDIT_RE  = /^saldo\s+disponible\s+vw\s+credit/i;
+
+function _saldosInformeRows() {
+  return (saldosInformeData && Array.isArray(saldosInformeData.rows)) ? saldosInformeData.rows : [];
+}
+// Bancos = fondos de inversión + plazos fijos + efectivo. El fondo en u$s se
+// pasa a pesos al blue compra. `d` es la col C de la planilla (el monto).
+function _saldosBancos() {
+  const items = [];
+  let totalPesos = 0, usd = 0, usdConcepto = '';
+  _saldosInformeRows().forEach(r => {
+    if (r.tipo !== 'row') return;
+    const concepto = String(r.concepto || '').trim();
+    const monto = Number(r.d) || 0;
+    if (!monto) return;                       // en 0 → no se toma
+    if (_BANCOS_USD_RE.test(concepto)) { usd += monto; usdConcepto = concepto; return; }
+    if (!_BANCOS_ARS_RE.test(concepto)) return;
+    items.push({ concepto: concepto, monto: monto });
+    totalPesos += monto;
+  });
+  const blue = dolarBlue ? dolarBlue.compra : 0;
+  const usdPesos = (usd && blue) ? usd * blue : 0;
+  return { items: items, totalPesos: totalPesos, usd: usd, usdConcepto: usdConcepto, usdPesos: usdPesos, blue: blue, total: totalPesos + usdPesos };
+}
+// "Saldo Disponible VW Credit ..." con monto en col C = plata de VW todavía por
+// cobrar. Se suma aparte del disponible de hoy.
+function _saldosVWCredit() {
+  const items = _saldosInformeRows()
+    .filter(r => _VW_CREDIT_RE.test(String(r.concepto || '')) && (Number(r.d) || 0) > 0)
+    .map(r => ({ concepto: String(r.concepto || '').trim(), monto: Number(r.d) }));
+  return { items: items, total: items.reduce((a, x) => a + x.monto, 0) };
+}
+
+// Card del bloque Saldos: colapsada, se abre al apretarla (una sola a la vez).
+let resumenSaldosOpen = '';
+function toggleResumenSaldos(key) {
+  resumenSaldosOpen = (resumenSaldosOpen === key) ? '' : key;
+  renderResumen();
+}
+function _resSaldosCard(key, label, value, sub, cls, extra) {
+  const abierta = (resumenSaldosOpen === key);
+  return '<div class="card ' + (cls || '') + '" onclick="toggleResumenSaldos(\'' + key + '\')" style="cursor:pointer" title="Ver el detalle">'
+       + '  <div class="label">' + escapeHtml(label) + ' <span style="font-size:9px;opacity:.75">' + (abierta ? '▲' : '▼') + '</span></div>'
+       + '  <div class="value">' + escapeHtml(String(value)) + '</div>'
+       + (extra || '')
+       + (sub ? '  <div class="sub">' + escapeHtml(sub) + '</div>' : '')
+       + '</div>';
+}
+
 async function loadResumen() {
   renderResumen();  // pinta lo que haya en cache (si hay)
   // El Resumen sale TODO de Oversoft: stock (oversoftStockData), ventas
@@ -6519,6 +6592,7 @@ async function loadResumen() {
     comprasVWData     ? Promise.resolve() : loadComprasVW(false).catch(() => {}),
     loadObjetivosCompras().catch(() => {}),
     loadSaldosInforme(false).catch(() => {}),
+    loadDolarBlue(false).catch(() => {}),
   ]);
   renderResumen();  // re-pinta con datos frescos
 }
@@ -6533,6 +6607,7 @@ function refreshResumen() {
     loadComprasVW(true).catch(() => {}),
     loadObjetivosCompras().catch(() => {}),
     loadSaldosInforme(true).catch(() => {}),
+    loadDolarBlue(true).catch(() => {}),
   ]).finally(() => {
     renderResumen();
     if (btn) { btn.disabled = false; btn.textContent = 'Actualizar todo'; }
@@ -6652,11 +6727,12 @@ function renderResumen() {
   h += '</div>';
 
   // ----- SALDOS -----
-  // Dos números que hoy solo se ven en saldos.titogonzalez.online:
-  //   · Disponible para pagar VW → INFORME de tesorería (1qIP4OT5), vía SALDOS_URL.
-  //   · Deuda Floor Plan         → suma del bruto de las compras_vw impagas
-  //                                (mismo cálculo que usa Saldos), desglosada por
-  //                                fecha de vencimiento: las fechas suman el total.
+  // Tres tarjetas, TODAS colapsadas: se aprieta el título y recién ahí baja el
+  // detalle (una sola abierta a la vez, `resumenSaldosOpen`).
+  //   · Bancos                   → fondos de inversión + PF + efectivo del INFORME.
+  //   · Disponible para pagar VW → INFORME + los "Saldo Disponible VW Credit"
+  //                                todavía por cobrar (segunda línea de la card).
+  //   · Deuda Floor Plan         → compras_vw impagas, desglosadas por vencimiento.
   h += '<div class="resumen-block">';
   h += '  <div class="resumen-head"><h3>Saldos</h3>'
      + '    <button class="resumen-link" onclick="window.open(\'https://saldos.titogonzalez.online/\',\'_blank\')">Ver detalle →</button>'
@@ -6677,36 +6753,73 @@ function renderResumen() {
       porVto[k].u++;
     });
     const vtos = Object.keys(porVto).sort((a, b) => (a || '9999-99-99').localeCompare(b || '9999-99-99'));
+    const ban = _saldosBancos();      // { items, totalPesos, usd, usdPesos, total, blue }
+    const vwc = _saldosVWCredit();    // { items, total }
+    const dispVWfuturo = (dispVW || 0) + vwc.total;
+
     h += '<div class="cards-resumen">';
-    h += kpi('Disponible para pagar VW', dispVW == null ? '—' : fmtPesos(dispVW),
-             dispVW == null ? 'planilla de tesorería (cargando...)' : 'planilla de tesorería', dispVW ? 'good' : '');
-    h += kpi('Deuda Floor Plan', fmtPesos(deudaFP),
-             impagasVW.length + ' unidad' + (impagasVW.length === 1 ? '' : 'es') + ' impaga' + (impagasVW.length === 1 ? '' : 's'),
-             deudaFP ? 'warn' : '');
-    h += '<div class="card placeholder"></div>';
+    h += _resSaldosCard('bancos', 'Bancos', saldosInformeData ? fmtPesos(ban.total) : '—',
+           saldosInformeData ? 'fondos, PF y efectivo' : 'planilla de tesorería (cargando...)', '');
+    h += _resSaldosCard('dispvw', 'Disponible para pagar VW', dispVW == null ? '—' : fmtPesos(dispVW),
+           'planilla de tesorería', 'good',
+           vwc.total ? ('<div style="font-size:14px;font-weight:700;color:var(--vw-grey-4);margin-top:2px">'
+                        + '+ VW Credit → ' + fmtPesos(dispVWfuturo) + '</div>') : '');
+    h += _resSaldosCard('deudafp', 'Deuda Floor Plan', fmtPesos(deudaFP),
+           impagasVW.length + ' unidad' + (impagasVW.length === 1 ? '' : 'es') + ' impaga' + (impagasVW.length === 1 ? '' : 's'),
+           'warn');
     h += '<div class="card placeholder"></div>';
     h += '</div>';
-    // desglose por fecha de vencimiento
-    h += '<div style="margin-top:10px;background:#fff;border:1px solid var(--vw-grey-2);border-radius:12px;padding:12px 14px">'
-       + '<div style="font-size:12px;color:var(--vw-grey-3);font-weight:700;margin-bottom:6px">Deuda Floor Plan por vencimiento</div>';
-    if (!vtos.length) {
-      h += '<div style="font-size:13px;color:var(--vw-grey-3)">Sin unidades impagas.</div>';
-    } else {
-      for (const k of vtos) {
-        const v = porVto[k];
-        h += '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #eef1f5">'
-           + '<span style="min-width:120px;font-weight:700;font-size:14px">' + escapeHtml(k ? _cvwFechaDisp(k) : 'Sin vto cargado') + '</span>'
-           + '<span style="flex:1;font-size:12px;color:var(--vw-grey-3)">' + v.u + ' unidad' + (v.u === 1 ? '' : 'es') + '</span>'
-           + '<span style="font-weight:800;font-size:15px;white-space:nowrap">' + fmtPesos(v.monto) + '</span>'
-           + '</div>';
+
+    // ---- detalle desplegable (solo el de la card apretada) ----
+    const _det = (titulo, cuerpo) => '<div style="margin-top:10px;background:#fff;border:1px solid var(--vw-grey-2);border-radius:12px;padding:12px 14px">'
+      + '<div style="font-size:12px;color:var(--vw-grey-3);font-weight:700;margin-bottom:6px">' + titulo + '</div>' + cuerpo + '</div>';
+    const _lin = (izq, medio, der, fuerte) => '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #eef1f5">'
+      + '<span style="flex:1;font-size:' + (fuerte ? '13px;font-weight:800' : '13px;font-weight:600') + '">' + izq + '</span>'
+      + (medio ? '<span style="font-size:12px;color:var(--vw-grey-3);white-space:nowrap">' + medio + '</span>' : '')
+      + '<span style="font-weight:800;font-size:15px;white-space:nowrap;min-width:130px;text-align:right">' + der + '</span></div>';
+    const _tot = (der) => '<div style="display:flex;align-items:center;gap:10px;padding:9px 0 0">'
+      + '<span style="flex:1;font-weight:800;font-size:12px;color:var(--vw-grey-3)">TOTAL</span>'
+      + '<span style="font-weight:800;font-size:15px;white-space:nowrap">' + der + '</span></div>';
+
+    if (resumenSaldosOpen === 'bancos') {
+      let b = '';
+      if (!saldosInformeData) {
+        b = '<div style="font-size:13px;color:var(--vw-grey-3)">Cargando planilla de tesorería...</div>';
+      } else if (!ban.items.length && !ban.usd) {
+        b = '<div style="font-size:13px;color:var(--vw-grey-3)">Sin saldos cargados.</div>';
+      } else {
+        for (const it of ban.items) b += _lin(escapeHtml(it.concepto), '', fmtPesos(it.monto));
+        if (ban.usd) {
+          b += _lin(escapeHtml(ban.usdConcepto), 'u$s ' + Math.round(ban.usd).toLocaleString('es-AR')
+                    + (ban.blue ? ' × ' + fmtPesos(ban.blue) + ' (blue compra)' : ' · sin cotización'),
+                    ban.blue ? fmtPesos(ban.usdPesos) : '—');
+        }
+        b += _tot(fmtPesos(ban.total));
       }
-      h += '<div style="display:flex;align-items:center;gap:10px;padding:9px 0 0">'
-         + '<span style="min-width:120px;font-weight:800;font-size:12px;color:var(--vw-grey-3)">TOTAL</span>'
-         + '<span style="flex:1"></span>'
-         + '<span style="font-weight:800;font-size:15px;white-space:nowrap">' + fmtPesos(deudaFP) + '</span>'
-         + '</div>';
+      h += _det('Bancos · fondos de inversión, plazos fijos y efectivo', b);
+    } else if (resumenSaldosOpen === 'dispvw') {
+      let b = _lin('Disponible para pagar VW', 'planilla de tesorería', dispVW == null ? '—' : fmtPesos(dispVW), true);
+      if (!vwc.items.length) {
+        b += '<div style="font-size:13px;color:var(--vw-grey-3);padding-top:8px">Sin saldos de VW Credit a cobrar.</div>';
+      } else {
+        for (const it of vwc.items) b += _lin(escapeHtml(it.concepto), 'a cobrar', fmtPesos(it.monto));
+        b += _tot(fmtPesos(dispVWfuturo) + ' <span style="font-size:11px;font-weight:600;color:var(--vw-grey-3)">cuando se cobre</span>');
+      }
+      h += _det('Disponible para pagar VW + VW Credit a cobrar', b);
+    } else if (resumenSaldosOpen === 'deudafp') {
+      let b = '';
+      if (!vtos.length) {
+        b = '<div style="font-size:13px;color:var(--vw-grey-3)">Sin unidades impagas.</div>';
+      } else {
+        for (const k of vtos) {
+          const v = porVto[k];
+          b += _lin(escapeHtml(k ? _cvwFechaDisp(k) : 'Sin vto cargado'),
+                    v.u + ' unidad' + (v.u === 1 ? '' : 'es'), fmtPesos(v.monto));
+        }
+        b += _tot(fmtPesos(deudaFP));
+      }
+      h += _det('Deuda Floor Plan por vencimiento', b);
     }
-    h += '</div>';
   } else {
     h += '<div class="resumen-loading">Cargando saldos...</div>';
   }
