@@ -6564,11 +6564,78 @@ function _saldosVWCredit() {
   return { items: items, total: items.reduce((a, x) => a + x.monto, 0) };
 }
 
+// ---- NOVEDADES DEL PERSONAL (col E/F de la hoja INFORME) -------------------
+// Lo escribe tesorería A MANO, en texto libre, así que el parseo es defensivo:
+//   · Ausentes  → una fila por persona, "Nombre ( Motivo)". Los paréntesis
+//                 vienen con espacios de más y el motivo escrito de cualquier
+//                 forma ("No ficho", "dias dados x Catalina", "Vacaciones").
+//                 La col F, cuando está, es la fecha de reincorporación.
+//   · Tarde     → normalmente TODOS en UNA sola celda separados por " / ", con
+//                 la hora pegada al nombre ("Alcaraz 08:59 / Gomez 10:00").
+// REGLA: lo que no matchea un motivo conocido NO se descarta, cae en "Otros".
+// Así, si mañana escriben un motivo nuevo, aparece igual y no se pierde gente.
+const _PERSONAL_MOTIVOS = [
+  { key: 'vacaciones', label: 'Vacaciones',     re: /vacac|licencia/i },
+  { key: 'dia',        label: 'Se tomó el día', re: /d[ií]as?\s*dad|se\s*tom|franco|d[ií]a\s*x\s/i },
+  { key: 'nofico',     label: 'No fichó',       re: /no\s*fich/i },
+];
+function _saldosPersonal() {
+  const rows = (saldosInformeData && Array.isArray(saldosInformeData.personal)) ? saldosInformeData.personal : [];
+  const grupos = {};
+  const push = (key, label, nombre, extra) => {
+    if (!nombre) return;
+    if (!grupos[key]) grupos[key] = { key: key, label: label, items: [] };
+    grupos[key].items.push({ nombre: nombre, extra: extra || '' });
+  };
+  let seccion = '';
+  rows.forEach(r => {
+    if (r.tipo === 'subhead') { seccion = String(r.texto || '').trim(); return; }
+    if (r.tipo !== 'item') return;
+    const texto = String(r.texto || '').trim();
+    if (!texto) return;
+    if (/tarde/i.test(seccion)) {
+      // separadores conservadores (/ ; salto de línea): con coma se correría el
+      // riesgo de partir un "Apellido, Nombre".
+      texto.split(/\s*[\/;\n]\s*/).forEach(p => {
+        const t = p.trim();
+        if (!t) return;
+        const m = t.match(/^(.*?)\s*(\d{1,2}[:.]\d{2})\s*$/);   // "Nombre 08:59"
+        push('tarde', 'Tarde', (m ? m[1] : t).trim(), m ? m[2].replace('.', ':') : '');
+      });
+      return;
+    }
+    const m = texto.match(/^([^(]+?)\s*\(([^)]*)\)\s*$/);       // "Nombre ( Motivo)"
+    const nombre = (m ? m[1] : texto).trim();
+    const motivo = (m ? m[2] : '').trim();
+    const reincorp = String(r.fecha || '').trim();
+    const sub = reincorp ? ('vuelve ' + reincorp) : '';
+    const hit = _PERSONAL_MOTIVOS.filter(x => x.re.test(motivo))[0];
+    if (hit) push(hit.key, hit.label, nombre, sub);
+    else      push('otros', 'Otros', nombre, motivo || sub);
+  });
+  const orden = ['vacaciones', 'dia', 'nofico', 'otros', 'tarde'];
+  return orden.filter(k => grupos[k]).map(k => grupos[k]);
+}
+
 // Card del bloque Saldos: colapsada, se abre al apretarla (una sola a la vez).
 let resumenSaldosOpen = '';
 function toggleResumenSaldos(key) {
   resumenSaldosOpen = (resumenSaldosOpen === key) ? '' : key;
   renderResumen();
+}
+// Idem para el bloque Personal, con estado propio (abrir una no cierra la otra).
+let resumenPersonalOpen = '';
+function toggleResumenPersonal(key) {
+  resumenPersonalOpen = (resumenPersonalOpen === key) ? '' : key;
+  renderResumen();
+}
+function _resPersonalCard(key, label, value, sub, cls) {
+  const abierta = (resumenPersonalOpen === key);
+  return '<div class="card ' + (cls || '') + '" onclick="toggleResumenPersonal(\'' + key + '\')" style="cursor:pointer" title="Ver quiénes">'
+       + '  <div class="label">' + escapeHtml(label) + ' <span style="font-size:9px;opacity:.75">' + (abierta ? '▲' : '▼') + '</span></div>'
+       + '  <div class="value">' + escapeHtml(String(value)) + '</div>'
+       + (sub ? '  <div class="sub">' + escapeHtml(sub) + '</div>' : '')
+       + '</div>';
 }
 function _resSaldosCard(key, label, value, sub, cls, extra) {
   const abierta = (resumenSaldosOpen === key);
@@ -6822,6 +6889,44 @@ function renderResumen() {
     }
   } else {
     h += '<div class="resumen-loading">Cargando saldos...</div>';
+  }
+  h += '</div>';
+
+  // ----- PERSONAL ----- (NOVEDADES DEL PERSONAL de la hoja INFORME)
+  h += '<div class="resumen-block">';
+  h += '  <div class="resumen-head"><h3>Personal</h3>'
+     + '    <button class="resumen-link" onclick="window.open(\'https://saldos.titogonzalez.online/\',\'_blank\')">Ver detalle →</button>'
+     + '  </div>';
+  if (!saldosInformeData) {
+    h += '<div class="resumen-loading">Cargando novedades del personal...</div>';
+  } else {
+    const gruposPers = _saldosPersonal();
+    const totalPers = gruposPers.reduce((a, g) => a + g.items.length, 0);
+    if (!totalPers) {
+      h += '<div class="resumen-loading">Sin novedades cargadas en la planilla.</div>';
+    } else {
+      const clsPers = { tarde: 'warn', otros: 'warn', nofico: 'bad' };
+      h += '<div class="cards-resumen">';
+      gruposPers.forEach(g => {
+        h += _resPersonalCard(g.key, g.label, g.items.length,
+               (g.key === 'tarde' ? 'llegaron tarde' : 'ausentes'), clsPers[g.key] || '');
+      });
+      for (let i = gruposPers.length; i % 4 !== 0; i++) h += '<div class="card placeholder"></div>';
+      h += '</div>';
+      const abierto = gruposPers.filter(g => g.key === resumenPersonalOpen)[0];
+      if (abierto) {
+        let b = '';
+        abierto.items.forEach(it => {
+          b += '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #eef1f5">'
+             + '<span style="flex:1;font-size:14px;font-weight:600">' + escapeHtml(it.nombre) + '</span>'
+             + (it.extra ? '<span style="font-size:12px;color:var(--vw-grey-3);white-space:nowrap">' + escapeHtml(it.extra) + '</span>' : '')
+             + '</div>';
+        });
+        h += '<div style="margin-top:10px;background:#fff;border:1px solid var(--vw-grey-2);border-radius:12px;padding:12px 14px">'
+           + '<div style="font-size:12px;color:var(--vw-grey-3);font-weight:700;margin-bottom:6px">'
+           + escapeHtml(abierto.label) + ' · ' + abierto.items.length + '</div>' + b + '</div>';
+      }
+    }
   }
   h += '</div>';
 
