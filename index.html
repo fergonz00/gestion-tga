@@ -6582,10 +6582,22 @@ const _PERSONAL_MOTIVOS = [
 function _saldosPersonal() {
   const rows = (saldosInformeData && Array.isArray(saldosInformeData.personal)) ? saldosInformeData.personal : [];
   const grupos = {};
-  const push = (key, label, nombre, extra) => {
+  const push = (key, label, nombre, motivo, extra) => {
     if (!nombre) return;
     if (!grupos[key]) grupos[key] = { key: key, label: label, items: [] };
-    grupos[key].items.push({ nombre: nombre, extra: extra || '' });
+    grupos[key].items.push({ nombre: nombre, motivo: motivo || '', extra: extra || '' });
+  };
+  // Saca el comentario entre paréntesis esté donde esté y devuelve { nombre, motivo }.
+  // El comentario SIEMPRE se conserva y se muestra: aunque el motivo ya defina el
+  // grupo, adentro suele haber info que no está en ningún otro lado (quién dio el
+  // día, por ejemplo "dias dados x Catalina").
+  const partir = (txt) => {
+    const c = String(txt).match(/\(([^)]*)\)/);
+    if (!c) return { nombre: String(txt).trim(), motivo: '' };
+    return {
+      nombre: String(txt).replace(c[0], ' ').replace(/\s+/g, ' ').trim(),
+      motivo: c[1].trim(),
+    };
   };
   let seccion = '';
   rows.forEach(r => {
@@ -6597,21 +6609,18 @@ function _saldosPersonal() {
       // separadores conservadores (/ ; salto de línea): con coma se correría el
       // riesgo de partir un "Apellido, Nombre".
       texto.split(/\s*[\/;\n]\s*/).forEach(p => {
-        const t = p.trim();
-        if (!t) return;
-        const m = t.match(/^(.*?)\s*(\d{1,2}[:.]\d{2})\s*$/);   // "Nombre 08:59"
-        push('tarde', 'Tarde', (m ? m[1] : t).trim(), m ? m[2].replace('.', ':') : '');
+        if (!p.trim()) return;
+        const q = partir(p);
+        const m = q.nombre.match(/^(.*?)\s*(\d{1,2}[:.]\d{2})\s*$/);   // "Nombre 08:59"
+        push('tarde', 'Tarde', (m ? m[1] : q.nombre).trim(), q.motivo, m ? m[2].replace('.', ':') : '');
       });
       return;
     }
-    const m = texto.match(/^([^(]+?)\s*\(([^)]*)\)\s*$/);       // "Nombre ( Motivo)"
-    const nombre = (m ? m[1] : texto).trim();
-    const motivo = (m ? m[2] : '').trim();
+    const q = partir(texto);                                    // "Nombre ( Motivo)"
     const reincorp = String(r.fecha || '').trim();
     const sub = reincorp ? ('vuelve ' + reincorp) : '';
-    const hit = _PERSONAL_MOTIVOS.filter(x => x.re.test(motivo))[0];
-    if (hit) push(hit.key, hit.label, nombre, sub);
-    else      push('otros', 'Otros', nombre, motivo || sub);
+    const hit = _PERSONAL_MOTIVOS.filter(x => x.re.test(q.motivo))[0];
+    push(hit ? hit.key : 'otros', hit ? hit.label : 'Otros', q.nombre, q.motivo, sub);
   });
   const orden = ['vacaciones', 'dia', 'nofico', 'otros', 'tarde'];
   return orden.filter(k => grupos[k]).map(k => grupos[k]);
@@ -6918,7 +6927,9 @@ function renderResumen() {
         let b = '';
         abierto.items.forEach(it => {
           b += '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #eef1f5">'
-             + '<span style="flex:1;font-size:14px;font-weight:600">' + escapeHtml(it.nombre) + '</span>'
+             + '<span style="flex:1;font-size:14px;font-weight:600">' + escapeHtml(it.nombre)
+             + (it.motivo ? ' <span style="font-weight:400;font-size:12.5px;color:var(--vw-grey-3)">(' + escapeHtml(it.motivo) + ')</span>' : '')
+             + '</span>'
              + (it.extra ? '<span style="font-size:12px;color:var(--vw-grey-3);white-space:nowrap">' + escapeHtml(it.extra) + '</span>' : '')
              + '</div>';
         });
