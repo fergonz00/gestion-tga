@@ -613,6 +613,38 @@ h4.desg-title {
   color: var(--vw-grey-3); text-transform: uppercase; letter-spacing: 0.5px;
 }
 
+/* Detalle por administrativa (patentamientos) */
+.table-wrap.admin-detalle { margin-bottom: 22px; }
+table.admin-tbl tbody td {
+  padding: 8px 10px; border-bottom: 1px solid var(--vw-grey-2);
+  font-variant-numeric: tabular-nums; vertical-align: top;
+}
+table.admin-tbl tbody tr.adm-row { cursor: pointer; }
+table.admin-tbl tbody tr.adm-row.sel { background: var(--vw-blue); color: #fff; }
+table.admin-tbl tbody tr.adm-row.sel td { color: #fff; }
+table.admin-tbl tbody tr.adm-row.sel:hover { background: var(--vw-blue); }
+table.admin-tbl tbody tr.adm-total { background: var(--vw-grey-1); font-weight: 700; }
+table.admin-tbl tbody tr.adm-total:hover { background: var(--vw-grey-1); }
+table.admin-tbl td.grp, table.admin-tbl th.grp {
+  border-left: 2px solid var(--vw-grey-2); background: rgba(0, 30, 80, 0.03);
+}
+table.admin-tbl tbody tr.adm-row.sel td.grp { background: rgba(255, 255, 255, 0.12); }
+table.admin-tbl td.good { color: var(--green-dark); font-weight: 600; }
+table.admin-tbl td.warn { color: var(--orange-dark); font-weight: 600; }
+table.admin-tbl tbody tr.adm-row.sel td.good,
+table.admin-tbl tbody tr.adm-row.sel td.warn { color: #fff; }
+.adm-sub { font-size: 10.5px; color: var(--vw-grey-3); font-weight: 400; margin-top: 2px; }
+table.admin-tbl tbody tr.adm-row.sel .adm-sub { color: rgba(255, 255, 255, 0.8); }
+.adm-pct { font-size: 10.5px; color: var(--vw-grey-3); font-weight: 400; }
+table.admin-tbl tbody tr.adm-row.sel .adm-pct { color: rgba(255, 255, 255, 0.8); }
+.adm-chip {
+  background: #fff; color: var(--vw-blue); border-radius: 10px;
+  padding: 1px 7px; font-size: 10px; font-weight: 700;
+}
+.adm-nota {
+  padding: 8px 16px 12px; font-size: 11px; color: var(--vw-grey-3); line-height: 1.5;
+}
+
 /* Resumen — vista panorámica */
 .resumen-block {
   margin-bottom: 28px;
@@ -1658,6 +1690,7 @@ let rankingOpen = false;          // toggle de la sección "Ranking de vendedore
 let patentData = null;            // { carpetas, meses, mesActual, updatedAt }
 let mesSelPat = '';
 let vendedorFiltroPat = '';       // filtro por vendedor (drill-down)
+let adminFiltroPat = '';          // filtro por administrativa (drill-down)
 let vistaResumidaPat = false;     // toggle vista resumida en patentamientos
 
 // Trimestre — formato 'YYYY-Qn'. Default = trimestre calendario actual.
@@ -2298,6 +2331,10 @@ async function loadAdmVentas(forzar) {
     renderAdmVentas();
     // Si la subtab Financiaciones está abierta, repintarla con la data fresca.
     if (document.getElementById('subpanelAdmVentasFin') && document.getElementById('subpanelAdmVentasFin').classList.contains('active')) renderAdmFinanciaciones();
+    // Patentamientos: el panel por administrativa usa esta data para los montos
+    // financiados; si está abierto y ya tiene carpetas, repintar para mostrarlos.
+    const subPat = document.getElementById('subpanelAdmVentasPatent');
+    if (subPat && subPat.classList.contains('active') && patentData) renderPatentamientos();
   } catch (e) { console.error('loadAdmVentas:', e); }
 }
 
@@ -9017,6 +9054,10 @@ function descartarPagosParseados() {
 
 function setMesPat(mesKey)       { mesSelPat = mesKey || ''; renderPatentamientos(); }
 function setVendedorFiltroPat(v) { vendedorFiltroPat = v || ''; renderPatentamientos(); }
+function setAdminFiltroPat(a)    { adminFiltroPat = a || ''; renderPatentamientos(); }
+// Click en la fila de una administrativa del panel: filtra por ella, y si ya
+// estaba filtrada, limpia (toggle).
+function toggleAdminFiltroPat(a) { setAdminFiltroPat(adminFiltroPat === a ? '' : a); }
 function toggleVistaResumidaPat(){ vistaResumidaPat = !vistaResumidaPat; renderPatentamientos(); }
 function setObjetivoPat(val) {
   const n = parseInt(val, 10);
@@ -9387,12 +9428,18 @@ function renderPatentamientos() {
 
   const todas  = patentData.carpetas;
   const meses  = patentData.meses || [];
-  let delMes   = todas.filter(c => c.mesKey === mesSelPat);
+  const delMesTodo = todas.filter(c => c.mesKey === mesSelPat);
 
-  // Filtro por vendedor (drill-down)
-  if (vendedorFiltroPat) {
-    delMes = delMes.filter(c => c.vendedor === vendedorFiltroPat);
-  }
+  // Filtro por vendedor (drill-down). `delMesSinAdmin` es la base del panel por
+  // administrativa: respeta el vendedor pero NO el filtro de admin, para que el
+  // panel siga sirviendo de comparación entre administrativas.
+  const delMesSinAdmin = vendedorFiltroPat
+    ? delMesTodo.filter(c => c.vendedor === vendedorFiltroPat)
+    : delMesTodo;
+
+  let delMes = adminFiltroPat
+    ? delMesSinAdmin.filter(c => (c.admin || '—') === adminFiltroPat)
+    : delMesSinAdmin;
 
   // KPIs base
   const total       = delMes.length;
@@ -9401,22 +9448,14 @@ function renderPatentamientos() {
   const objetivo    = objetivosPat[mesSelPat] || 0;
   const restanObj   = Math.max(0, objetivo - patentadas);
 
-  // Desgloses (% por grupo)
+  // Desgloses (% por grupo). El tipo de operación sale de Oversoft (Adm. ventas)
+  // con respaldo en el tipo_carpeta manual — ver _tipoOperTxt.
+  const admMapDesg = _admMapPorPv();
   const porPatenta = _agruparCount(delMes, c => c.patentaA || '—');     // TG / CLIENTE / REVENTA
-  const porTipo    = _agruparCount(delMes, c => c.tipoCarpetaCanon || c.tipoCarpeta || '—');
+  const porTipo    = _agruparCount(delMes, c => _tipoOperTxt(c, admMapDesg ? admMapDesg[_pvKey(c.pv)] : null));
   const porRevPart = _agruparCount(delMes, c => c.reventaOParticular || '—');
   const porVend    = _agruparCount(delMes, c => c.vendedor || (c.vendedorRaw || '—'));
-
-  // Mix admin × tipo canónico: por cada admin, cuántas carpetas de cada bucket.
-  // Estructura: { admin: { total, tipos: { 'Tradicional/Contado': N, ... } } }
-  const adminMix = {};
-  for (const c of delMes) {
-    const a = c.admin || '—';
-    const t = c.tipoCarpetaCanon || c.tipoCarpeta || '—';
-    if (!adminMix[a]) adminMix[a] = { total: 0, tipos: {} };
-    adminMix[a].total += 1;
-    adminMix[a].tipos[t] = (adminMix[a].tipos[t] || 0) + 1;
-  }
+  const porAdmin   = _agruparCount(delMes, c => c.admin || '—');
 
   let html = '';
 
@@ -9438,8 +9477,11 @@ function renderPatentamientos() {
   }
   html += '  </select>';
 
-  // Filtro vendedor (drill-down)
-  const vendedoresDelMes = Object.keys(_agruparCount(todas.filter(c => c.mesKey === mesSelPat), c => c.vendedor || '')).filter(Boolean);
+  // Filtro vendedor (drill-down). Cuenta con el filtro de admin aplicado para
+  // que la lista no ofrezca vendedores que no tienen nada con esa admin.
+  const baseVend = adminFiltroPat ? delMesTodo.filter(c => (c.admin || '—') === adminFiltroPat) : delMesTodo;
+  const vendedoresDelMes = Object.keys(_agruparCount(baseVend, c => c.vendedor || '')).filter(Boolean);
+  if (vendedorFiltroPat && vendedoresDelMes.indexOf(vendedorFiltroPat) === -1) vendedoresDelMes.push(vendedorFiltroPat);
   html += '  <select id="vendFiltroPat" onchange="setVendedorFiltroPat(this.value)" style="min-width:200px">';
   html += '    <option value="">Todos los vendedores</option>';
   for (const v of vendedoresDelMes.sort()) {
@@ -9448,16 +9490,36 @@ function renderPatentamientos() {
   }
   html += '  </select>';
   if (vendedorFiltroPat) {
-    html += '  <button class="calc-clear" onclick="setVendedorFiltroPat(\'\')" title="Limpiar">✕</button>';
+    html += '  <button class="calc-clear" onclick="setVendedorFiltroPat(\'\')" title="Limpiar vendedor">✕</button>';
   }
+
+  // Filtro administrativa (drill-down) — la lista sale del mes con el filtro de
+  // vendedor puesto, así no ofrece admins sin carpetas de ese vendedor.
+  const adminsDelMes = Object.keys(_agruparCount(delMesSinAdmin, c => c.admin || '—'));
+  if (adminFiltroPat && adminsDelMes.indexOf(adminFiltroPat) === -1) adminsDelMes.push(adminFiltroPat);
+  html += '  <select id="admFiltroPat" onchange="setAdminFiltroPat(this.value)" style="min-width:200px">';
+  html += '    <option value="">Todas las administrativas</option>';
+  for (const a of adminsDelMes.sort()) {
+    const sel = a === adminFiltroPat ? ' selected' : '';
+    html += '    <option value="' + escapeHtml(a) + '"' + sel + '>' + escapeHtml(a) + '</option>';
+  }
+  html += '  </select>';
+  if (adminFiltroPat) {
+    html += '  <button class="calc-clear" onclick="setAdminFiltroPat(\'\')" title="Limpiar administrativa">✕</button>';
+  }
+
   html += '  <label class="toggle-resumida">'
         + '    <input type="checkbox" ' + (vistaResumidaPat ? 'checked' : '') + ' onchange="toggleVistaResumidaPat()"> Vista resumida'
         + '  </label>';
   html += '</div>';
 
-  if (vendedorFiltroPat) {
+  if (vendedorFiltroPat || adminFiltroPat) {
+    const partes = [];
+    if (vendedorFiltroPat) partes.push('vendedor <b>' + escapeHtml(vendedorFiltroPat) + '</b>');
+    if (adminFiltroPat)    partes.push('administrativa <b>' + escapeHtml(adminFiltroPat) + '</b>');
     html += '<div class="pat-filterinfo">'
-          + '  📊 Viendo solo carpetas de <b>' + escapeHtml(vendedorFiltroPat) + '</b> en ' + escapeHtml((meses.find(m => m.mesKey === mesSelPat)?.label) || mesSelPat)
+          + '  📊 Viendo solo carpetas de ' + partes.join(' + ') + ' en ' + escapeHtml((meses.find(m => m.mesKey === mesSelPat)?.label) || mesSelPat)
+          + '  <button class="calc-clear" style="margin-left:10px" onclick="setVendedorFiltroPat(\'\');setAdminFiltroPat(\'\')" title="Limpiar todos los filtros">✕ limpiar</button>'
           + '</div>';
   }
 
@@ -9555,12 +9617,13 @@ function renderPatentamientos() {
   html += '<div class="desgloses">';
   html += desgloseCard('Quién patenta',     porPatenta, total);
   html += desgloseCard('Reventa / Particular', porRevPart, total);
-  html += desgloseCard('Tipo de carpeta',   porTipo,    total);
+  html += desgloseCard('Tipo de operación', porTipo,    total);
   html += desgloseCard('Por vendedor',      porVend,    total);
+  html += desgloseCard('Por administrativa', porAdmin,  total);
   html += '</div>';
 
-  // ----- Mix por administrativa (admin × tipo de carpeta) -----
-  html += desgloseAdminMix(adminMix);
+  // ----- Detalle por administrativa (financiaciones, tipos, quién patenta) -----
+  html += panelAdminDetalle(delMesSinAdmin);
 
   // ----- Tabla -----
   html += '<div class="table-wrap">'
@@ -9591,13 +9654,16 @@ function renderPatentamientos() {
     // Pendientes arriba, patentadas todas juntas al final (no mezcladas)
     const pendList = delMes.filter(c => !c.patentada);
     const patList  = delMes.filter(c => c.patentada);
+    // Mapa de Adm. ventas (Oversoft) para la columna Tipo: el tipo_carpeta manual
+    // suele estar vacío en el mes en curso.
+    const admMapTbl = _admMapPorPv();
     if (pendList.length) {
       html += '<tr class="tbl-sep pend"><td colspan="12">Pendientes de patentar · ' + pendList.length + '</td></tr>';
-      for (const c of pendList) html += filaPatent(c);
+      for (const c of pendList) html += filaPatent(c, admMapTbl);
     }
     if (patList.length) {
       html += '<tr class="tbl-sep pat"><td colspan="12">Patentadas · ' + patList.length + '</td></tr>';
-      for (const c of patList) html += filaPatent(c);
+      for (const c of patList) html += filaPatent(c, admMapTbl);
     }
   }
   html += '</tbody></table></div></div>';
@@ -9605,7 +9671,22 @@ function renderPatentamientos() {
   wrap.innerHTML = html;
 }
 
-function filaPatent(c) {
+// Texto de la columna "Tipo": el tipo real de Oversoft (con el financiador
+// cuando es un crédito) y, si esa PV no está en Adm. ventas, el tipo que cargó
+// a mano la administrativa.
+function _tipoOperTxt(c, ov) {
+  const b = _admBucketDe(c, ov);
+  const quien = (ov && ov.financia) || '';
+  if (b === 'vw')      return quien || 'VW Credit';
+  if (b === 'ext')     return quien || 'Banco externo';
+  if (b === 'tgf')     return quien || 'TG (propio)';
+  if (b === 'plan')    return 'Plan ahorro';
+  if (b === 'contado') return 'Contado';
+  return c.tipoCarpetaCanon || c.tipoCarpeta || '—';
+}
+
+function filaPatent(c, admMap) {
+  const ov = admMap ? admMap[_pvKey(c.pv)] : null;
   const patBadge = c.patentada
     ? '<span class="badge paga">' + escapeHtml(c.fechaPatStr || fmtFechaCorta(c.fechaPatIso)) + '</span>'
     : '<span class="badge impaga">Pendiente</span>';
@@ -9619,7 +9700,7 @@ function filaPatent(c) {
   h += '<td class="col-extra" data-label="Serie"><span class="serie">' + escapeHtml(c.serie) + '</span></td>';
   h += '<td class="ctr" data-label="Patenta">' + patentaBadge + '</td>';
   h += '<td class="col-extra" data-label="Admin">' + escapeHtml(c.admin || '—') + '</td>';
-  h += '<td class="col-extra" data-label="Tipo">' + escapeHtml(c.tipoCarpetaCanon || c.tipoCarpeta || '—') + '</td>';
+  h += '<td class="col-extra" data-label="Tipo">' + escapeHtml(_tipoOperTxt(c, ov)) + '</td>';
   h += '<td class="col-extra" data-label="Rev/Part">' + escapeHtml(c.reventaOParticular || '—') + '</td>';
   h += '<td data-label="Vendedor">' + escapeHtml(c.vendedor || c.vendedorRaw || '—') + '</td>';
   h += '<td class="col-extra" data-label="Cliente">' + escapeHtml(c.cliente || '—') + '</td>';
@@ -9647,32 +9728,193 @@ function _agruparCount(arr, keyFn) {
   return o;
 }
 
-// Sección "Carpetas por administrativa" — una card por admin con el mix de
-// tipos de carpeta. Reutiliza el mismo HTML/CSS de las desgloses (.desg / .dr).
-function desgloseAdminMix(adminMix) {
-  const admins = Object.keys(adminMix);
-  if (!admins.length) return '';
-  // Orden: por total descendente, luego alfabético.
-  admins.sort((a, b) => adminMix[b].total - adminMix[a].total || a.localeCompare(b));
+// =======================================================================
+// PATENTAMIENTOS · detalle por administrativa
+// =======================================================================
+// Mapa PV → carpeta de Adm. ventas (Oversoft en vivo). De ahí sale el TIPO real
+// de la operación (CONTADO / FINANCIA_VW / FINANCIA_OTROS / FINANCIA_TG / AA), el
+// financiador y el cuadro con las líneas «Financia» (monto del crédito).
+// El `tipo_carpeta` que cargan a mano las administrativas queda solo de respaldo:
+// en el mes en curso casi nunca está completo. Devuelve null si admVentasData
+// todavía no se cargó (el panel avisa y muestra solo lo manual).
+function _admMapPorPv() {
+  if (!admVentasData || !Array.isArray(admVentasData.ventas)) return null;
+  const m = {};
+  for (const v of admVentasData.ventas) m[_pvKey(v.preventa)] = v;
+  return m;
+}
 
-  let h = '<h4 class="desg-title">Carpetas por administrativa</h4>';
-  h += '<div class="desgloses">';
-  for (const a of admins) {
-    const { total: tot, tipos } = adminMix[a];
-    const items = Object.keys(tipos).map(k => ({ k: k, n: tipos[k] }))
-      .sort((x, y) => y.n - x.n);
-    h += '<div class="desg">';
-    h += '  <div class="hd">' + escapeHtml(a) + ' · <span class="hd-sub">' + tot + ' carp.</span></div>';
-    for (const it of items) {
-      const pct = tot ? Math.round(it.n / tot * 100) : 0;
-      h += '<div class="dr">'
-         + '  <div class="dr-k">' + escapeHtml(it.k) + '</div>'
-         + '  <div class="dr-bar"><div class="dr-fill" style="width:' + pct + '%"></div></div>'
-         + '  <div class="dr-v">' + it.n + ' · ' + pct + '%</div>'
-         + '</div>';
+// Bucket de la operación → columna del panel. Financiadas = vw + ext + tgf.
+function _admBucketDe(c, ov) {
+  const t = String((ov && ov.tipo) || '').toUpperCase();
+  if (t === 'FINANCIA_VW')    return 'vw';
+  if (t === 'FINANCIA_OTROS') return 'ext';
+  if (t === 'FINANCIA_TG')    return 'tgf';
+  if (t === 'AA')             return 'plan';
+  if (t === 'CONTADO')        return 'contado';
+  // Respaldo: el tipo que cargó a mano la administrativa en Adm. ventas.
+  const k = c.tipoCarpetaCanon || c.tipoCarpeta || '';
+  if (k === 'VW')            return 'vw';
+  if (k === 'Banco externo') return 'ext';
+  if (k === 'Plan ahorro')   return 'plan';
+  if (k === 'Contado')       return 'contado';
+  return 'sin';
+}
+
+// Sección "Detalle por administrativa": una fila por admin con cuántas carpetas
+// manejó, cuántas patentó y —lo que se pide acá— cuántos créditos/financiaciones
+// tuvo (VW Credit + banco externo), abiertos por tipo, más quién patenta y los
+// montos financiados si la data de Adm. ventas ya está cargada.
+// `rows` = carpetas del mes con el filtro de vendedor puesto pero SIN el de
+// administrativa, para que el panel siga sirviendo de comparación.
+function panelAdminDetalle(rows) {
+  if (!rows.length) return '';
+  const admMap = _admMapPorPv();
+
+  const acc = {};
+  const nuevo = () => ({
+    total: 0, pat: 0, vw: 0, ext: 0, tgf: 0, plan: 0, contado: 0, sin: 0,
+    pTg: 0, pCli: 0, pRev: 0, reventa: 0, particular: 0,
+    nMonto: 0, montoPlan: 0, montoCob: 0, pendCobro: 0,
+    vend: {}, financ: {},
+  });
+  for (const c of rows) {
+    const a = c.admin || '—';
+    const o = acc[a] || (acc[a] = nuevo());
+    const ov = admMap ? admMap[_pvKey(c.pv)] : null;
+    o.total++;
+    if (c.patentada) o.pat++;
+    const b = _admBucketDe(c, ov);
+    o[b]++;
+    if      (c.patentaA === 'TG')      o.pTg++;
+    else if (c.patentaA === 'CLIENTE') o.pCli++;
+    else if (c.patentaA === 'REVENTA') o.pRev++;
+    const rp = String(c.reventaOParticular || '').toUpperCase();
+    if      (rp.indexOf('REV') === 0) o.reventa++;
+    else if (rp.indexOf('PAR') === 0) o.particular++;
+    const vd = c.vendedor || c.vendedorRaw;
+    if (vd) o.vend[vd] = (o.vend[vd] || 0) + 1;
+    // Financiadas: quién presta y cuánto (líneas «Financia» del cuadro de la PV,
+    // el mismo dato que usa la subtab Financiaciones).
+    if (b === 'vw' || b === 'ext' || b === 'tgf') {
+      const quien = (ov && ov.financia) || c.tipoCarpeta || 'Sin financiador';
+      o.financ[quien] = (o.financ[quien] || 0) + 1;
+      const fl = ov ? _finLineaDe(ov) : null;
+      if (fl) {
+        const x = { v: ov, fl: fl, liq: _finLiqEstado(ov, fl) };
+        o.nMonto++;
+        o.montoPlan += fl.plan;
+        o.montoCob  += _finCobradoEff(x);
+        if (!x.liq.cobradaEfectiva) o.pendCobro++;
+      }
     }
-    h += '</div>';
   }
+
+  const admins = Object.keys(acc).sort((a, b) => acc[b].total - acc[a].total || a.localeCompare(b));
+  const NUMK = ['total','pat','vw','ext','tgf','plan','contado','sin','pTg','pCli','pRev',
+                'reventa','particular','nMonto','montoPlan','montoCob','pendCobro'];
+  const tot = nuevo();
+  for (const a of admins) {
+    const o = acc[a];
+    for (const k of NUMK) tot[k] += o[k];
+    for (const k in o.vend)   tot.vend[k]   = (tot.vend[k]   || 0) + o.vend[k];
+    for (const k in o.financ) tot.financ[k] = (tot.financ[k] || 0) + o.financ[k];
+  }
+
+  const conMonto = !!admMap;
+
+  let h = '<div class="table-wrap admin-detalle">'
+        + '  <div class="table-head">'
+        + '    <h3>Detalle por administrativa</h3>'
+        + '    <div class="count">' + admins.length + ' administrativas · clic en una fila para filtrar todo por ella</div>'
+        + '  </div>'
+        + '  <div class="table-scroll">'
+        + '    <table class="admin-tbl">'
+        + '      <thead><tr>'
+        + '        <th>Administrativa</th>'
+        + '        <th class="num">Carpetas</th>'
+        + '        <th class="num">Patent.</th>'
+        + '        <th class="num">Pend.</th>'
+        + '        <th class="num grp" title="Créditos que maneja: VW Credit + bancos externos + financiación propia TG. NO incluye plan de ahorro.">Financiadas</th>'
+        + '        <th class="num" title="Financiado VW Credit">VW Credit</th>'
+        + '        <th class="num" title="Créditos de bancos externos (Galicia, Nación, etc.)">Banco ext.</th>'
+        + '        <th class="num" title="Financiación propia de Tito Gonzalez">TG propio</th>'
+        + '        <th class="num" title="Plan de ahorro (AA)">Plan ahorro</th>'
+        + '        <th class="num">Contado</th>'
+        + '        <th class="num" title="Sin tipo en Oversoft ni cargado a mano en Adm. ventas">Sin dato</th>'
+        + (conMonto
+            ? '        <th class="num grp" title="Suma de las líneas Financia del cuadro de cada PV (mismo dato de la subtab Financiaciones)">$ financiado</th>'
+            + '        <th class="num" title="Cobrado: recibo en Oversoft o marcado como liquidado por la administrativa">$ cobrado</th>'
+            + '        <th class="num" title="Lo que falta cobrar de esas financiaciones">$ a cobrar</th>'
+            : '')
+        + '      </tr></thead><tbody>';
+
+  const fila = (a, o, esTotal) => {
+    const fin   = o.vw + o.ext + o.tgf;
+    const pctF  = o.total ? Math.round(fin / o.total * 100) : 0;
+    const saldo = o.montoPlan - o.montoCob;
+    // Tooltip con el mix de vendedores de esa admin (top 6).
+    const vends = Object.keys(o.vend).map(k => ({ k: k, n: o.vend[k] })).sort((x, y) => y.n - x.n);
+    const tip = vends.length
+      ? 'Vendedores: ' + vends.slice(0, 6).map(x => x.k + ' (' + x.n + ')').join(', ') + (vends.length > 6 ? ', +' + (vends.length - 6) : '')
+      : '';
+    // Sub-línea de la celda Financiadas: quién presta.
+    const fncs = Object.keys(o.financ).map(k => ({ k: k, n: o.financ[k] })).sort((x, y) => y.n - x.n);
+    const fncTxt = fncs.length ? fncs.map(x => escapeHtml(x.k) + ' ' + x.n).join(' · ') : '';
+
+    const sel = !esTotal && adminFiltroPat === a;
+    let r = '<tr class="' + (esTotal ? 'adm-total' : 'adm-row' + (sel ? ' sel' : '')) + '"'
+          + (esTotal ? '' : ' onclick="toggleAdminFiltroPat(\'' + escapeHtml(a).replace(/'/g, '&#39;') + '\')"')
+          + (tip ? ' title="' + escapeHtml(tip) + '"' : '') + '>';
+
+    // Sub-línea: quién patenta (TG / cliente / reventa) y si la operación es
+    // reventa o a particular. Son dos cosas distintas, van separadas por " | ".
+    const quienPat = [
+      o.pTg  ? 'TG ' + o.pTg       : '',
+      o.pCli ? 'cliente ' + o.pCli : '',
+      o.pRev ? 'reventa ' + o.pRev : '',
+    ].filter(Boolean).join(' · ');
+    const revPart = [
+      o.reventa    ? 'reventa ' + o.reventa       : '',
+      o.particular ? 'particular ' + o.particular : '',
+    ].filter(Boolean).join(' · ');
+    const patTxt = [quienPat ? 'patenta: ' + quienPat : '', revPart].filter(Boolean).join(' | ');
+
+    r += '<td data-label="Administrativa"><b>' + escapeHtml(esTotal ? 'TOTAL' : a) + '</b>'
+       + (sel ? ' <span class="adm-chip">filtrando</span>' : '')
+       + (patTxt ? '<div class="adm-sub">' + patTxt + '</div>' : '') + '</td>';
+    r += '<td class="num" data-label="Carpetas">' + o.total + '</td>';
+    r += '<td class="num good" data-label="Patent.">' + o.pat + '</td>';
+    r += '<td class="num' + ((o.total - o.pat) ? ' warn' : '') + '" data-label="Pend.">' + (o.total - o.pat) + '</td>';
+    r += '<td class="num grp" data-label="Financiadas"><b>' + fin + '</b> <span class="adm-pct">' + pctF + '%</span>'
+       + (fncTxt ? '<div class="adm-sub">' + fncTxt + '</div>' : '') + '</td>';
+    r += '<td class="num" data-label="VW Credit">' + (o.vw || '—') + '</td>';
+    r += '<td class="num" data-label="Banco ext.">' + (o.ext || '—') + '</td>';
+    r += '<td class="num" data-label="TG propio">' + (o.tgf || '—') + '</td>';
+    r += '<td class="num" data-label="Plan ahorro">' + (o.plan || '—') + '</td>';
+    r += '<td class="num" data-label="Contado">' + (o.contado || '—') + '</td>';
+    r += '<td class="num" data-label="Sin dato">' + (o.sin || '—') + '</td>';
+    if (conMonto) {
+      r += '<td class="num grp" data-label="$ financiado">' + (o.montoPlan ? fmtPesos(o.montoPlan) : '—')
+         + (o.nMonto ? '<div class="adm-sub">' + o.nMonto + ' c/ cuadro</div>' : '') + '</td>';
+      r += '<td class="num" data-label="$ cobrado">' + (o.montoCob ? fmtPesos(o.montoCob) : '—') + '</td>';
+      r += '<td class="num' + (saldo > 1 ? ' warn' : '') + '" data-label="$ a cobrar">' + (saldo > 1 ? fmtPesos(saldo) : '—')
+         + (o.pendCobro ? '<div class="adm-sub">' + o.pendCobro + ' sin cobrar</div>' : '') + '</td>';
+    }
+    r += '</tr>';
+    return r;
+  };
+
+  for (const a of admins) h += fila(a, acc[a], false);
+  h += fila('', tot, true);
+  h += '</tbody></table></div>';
+  h += '<div class="adm-nota">El tipo de operación sale de <b>Oversoft</b> (contado / financiado VW / banco externo / TG propio / plan de ahorro); '
+     + 'si una PV no está en Adm. ventas se cae al «tipo de carpeta» que carga la administrativa a mano. '
+     + 'Financiadas = VW Credit + banco externo + TG propio (el plan de ahorro va aparte). '
+     + (conMonto
+         ? 'Los $ salen de las líneas «Financia» del cuadro de cada PV, igual que la subtab Financiaciones; «cobrado» incluye lo que la administrativa marcó como liquidado aunque el recibo todavía no esté. '
+         : '⚠️ Falta cargar la subtab <b>Adm. ventas</b>: sin ella no hay tipos de Oversoft ni montos. ')
+     + 'Pasá el mouse por la fila para ver el mix de vendedores.</div>';
   h += '</div>';
   return h;
 }
