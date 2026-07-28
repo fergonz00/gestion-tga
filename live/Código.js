@@ -3269,17 +3269,32 @@ function getPatentamientos() {
     num++;
     if (mesKey) cuentaPorMes[mesKey] = (cuentaPorMes[mesKey] || 0) + 1;
 
+    // Rev/Part: cuando la administrativa no cargó la columna, se deriva de
+    // "Patenta" (RE ⇒ la operación ES una reventa; CL ⇒ patenta el cliente
+    // final ⇒ particular). Pasa seguido: en 8731/3 Mónica puso RE en Patenta y
+    // dejó Rev/Part vacío. TG no se infiere: patentamos nosotros tanto para
+    // particulares como para revendedores. Va marcado como inferido para que se
+    // distinga de lo cargado a mano.
+    const patentaA  = _normPatenta(m.patenta);                       // TG / CLIENTE / REVENTA
+    let revPart     = _normRevPart(m.reventa_particular);
+    let revPartInfe = false;
+    if (!revPart) {
+      if      (patentaA === 'REVENTA') { revPart = 'REVENTA';    revPartInfe = true; }
+      else if (patentaA === 'CLIENTE') { revPart = 'PARTICULAR'; revPartInfe = true; }
+    }
+
     carpetas.push({
       num:                num,
       pv:                 v.preventa,
       serie:              v.serie,
       mesPatente:         String(m.mes_patentamiento || ''),         // 'yyyy-mm' confirmado por la adm
       mesKey:             mesKey,                                    // 'yyyy-mm'
-      patentaA:           _normPatenta(m.patenta),                   // TG / CLIENTE / REVENTA
+      patentaA:           patentaA,                                  // TG / CLIENTE / REVENTA
       admin:              String(m.admin || '').trim().toUpperCase(),
       tipoCarpeta:        String(m.tipo_carpeta || '').trim().toUpperCase(),
       tipoCarpetaCanon:   _normTipoCarpeta(m.tipo_carpeta),          // 4 buckets
-      reventaOParticular: _normRevPart(m.reventa_particular),
+      reventaOParticular: revPart,
+      revPartInferido:    revPartInfe,                               // derivado de Patenta, no cargado
       vendedor:           _matchVendedor(v.vendedor),                // → oficial o null
       vendedorRaw:        v.vendedor,
       cliente:            v.cliente,

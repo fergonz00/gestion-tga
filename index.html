@@ -644,6 +644,13 @@ table.admin-tbl tbody tr.adm-row.sel .adm-pct { color: rgba(255, 255, 255, 0.8);
 .adm-nota {
   padding: 8px 16px 12px; font-size: 11px; color: var(--vw-grey-3); line-height: 1.5;
 }
+/* Rev/Part deducido de la columna Patenta (la administrativa no lo cargó) */
+.rp-inferido { color: var(--vw-grey-3); font-style: italic; cursor: help; }
+.rp-aviso {
+  background: var(--orange-soft); color: var(--orange-dark);
+  padding: 8px 14px; border-radius: 8px; font-size: 12px;
+  margin-bottom: 14px; line-height: 1.5;
+}
 
 /* Resumen — vista panorámica */
 .resumen-block {
@@ -9523,6 +9530,22 @@ function renderPatentamientos() {
           + '</div>';
   }
 
+  // ----- Aviso Rev/Part: deducidos + los que no se pueden deducir -----
+  // El backend completa Rev/Part desde la columna Patenta cuando la adm la dejó
+  // vacía (RE→reventa, CL→particular). Las que patentamos nosotros (TG) no se
+  // pueden deducir: hay que cargarlas a mano en Adm. ventas.
+  const rpInferidas = delMes.filter(c => c.revPartInferido);
+  const rpFaltan    = delMes.filter(c => !c.reventaOParticular);
+  if (rpInferidas.length || rpFaltan.length) {
+    const bits = [];
+    if (rpInferidas.length) bits.push('<b>' + rpInferidas.length + '</b> deducidas de la columna Patenta (van con <i>*</i>)');
+    if (rpFaltan.length) {
+      const pvs = rpFaltan.slice(0, 12).map(c => escapeHtml(c.pv)).join(', ');
+      bits.push('<b>' + rpFaltan.length + '</b> sin cargar y sin poder deducir: ' + pvs + (rpFaltan.length > 12 ? '…' : ''));
+    }
+    html += '<div class="rp-aviso">↔ <b>Rev/Part</b> — ' + bits.join(' · ') + '</div>';
+  }
+
   // ----- KPIs principales + objetivo editable -----
   // Dos métricas distintas que conviene no mezclar:
   //   - Pendientes de patentar = cargadas - patentadas (cargadas con fecha pendiente)
@@ -9701,7 +9724,15 @@ function filaPatent(c, admMap) {
   h += '<td class="ctr" data-label="Patenta">' + patentaBadge + '</td>';
   h += '<td class="col-extra" data-label="Admin">' + escapeHtml(c.admin || '—') + '</td>';
   h += '<td class="col-extra" data-label="Tipo">' + escapeHtml(_tipoOperTxt(c, ov)) + '</td>';
-  h += '<td class="col-extra" data-label="Rev/Part">' + escapeHtml(c.reventaOParticular || '—') + '</td>';
+  // Rev/Part: si el backend lo dedujo de la columna Patenta (la adm no lo cargó)
+  // se marca con * para que se distinga de lo cargado a mano.
+  const rpTxt = c.reventaOParticular
+    ? (c.revPartInferido
+        ? '<span class="rp-inferido" title="Deducido de la columna Patenta — falta cargar Rev/Part en Adm. ventas">'
+          + escapeHtml(c.reventaOParticular) + ' *</span>'
+        : escapeHtml(c.reventaOParticular))
+    : '—';
+  h += '<td class="col-extra" data-label="Rev/Part">' + rpTxt + '</td>';
   h += '<td data-label="Vendedor">' + escapeHtml(c.vendedor || c.vendedorRaw || '—') + '</td>';
   h += '<td class="col-extra" data-label="Cliente">' + escapeHtml(c.cliente || '—') + '</td>';
   h += '<td data-label="Modelo">' + escapeHtml(c.modelo || '—') + '</td>';
