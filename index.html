@@ -2346,6 +2346,18 @@ async function loadAdmVentas(forzar) {
 }
 
 function _admKey(pv) { return String(pv).replace(/[^a-zA-Z0-9]/g, '_'); }
+
+// Rev/Part deducido de la columna Patenta. MISMA regla que el backend
+// (getPatentamientos en live/Código.js): RE ⇒ la operación es una reventa,
+// CL ⇒ patenta el cliente final ⇒ particular, TG ⇒ no se deduce (patentamos
+// nosotros tanto para particulares como para revendedores). Si las dos puntas
+// cambian, cambiarlas juntas. Es solo un default: lo que se elige a mano manda.
+function _revPartDeducido(patentaRaw) {
+  const p = String(patentaRaw || '').trim().toUpperCase();
+  if (p.indexOf('RE') === 0) return 'REVENTA';
+  if (p.indexOf('CL') === 0) return 'PARTICULAR';
+  return '';
+}
 // '2026-06-11' → '11/06/26' (día/mes/año corto — gana ancho en la grilla)
 function _fechaDMA(iso) {
   const s = String(iso || '').slice(0, 10);
@@ -2455,6 +2467,25 @@ function renderAdmVentas() {
     if (val && opciones.indexOf(val) === -1) s += '<option value="' + escapeHtml(val) + '" selected>' + escapeHtml(val) + '</option>';
     return s + '</select>';
   };
+  // Rev/Part: igual que sel(), pero cuando está vacío muestra en el "—" el valor
+  // que el sistema deduce de la columna Patenta (RE→reventa, CL→particular) con
+  // borde naranja. Es solo un default: elegir una opción a mano lo pisa siempre,
+  // y volver a la opción deducida (value="") lo devuelve al automático.
+  const selRevPart = (pv, key, val, ded) => {
+    const opciones = ['PARTICULAR', 'REVENTA'];
+    const auto_ = !val && ded;
+    let s = '<select id="adm_reventa_particular_' + key + '"' + auto(pv)
+          + ' title="' + (auto_
+              ? 'Deducido de Patenta: ' + ded + ' — elegí un valor si va otra cosa'
+              : 'Reventa o particular') + '"'
+          + ' style="width:112px;padding:3px 14px 3px 4px;border:1px solid '
+          + (auto_ ? '#cc6600' : 'var(--vw-grey-2)') + ';border-radius:5px;font-size:12px'
+          + (auto_ ? ';color:#cc6600;font-style:italic' : '') + '">';
+    s += '<option value=""' + (!val ? ' selected' : '') + '>' + (ded ? '(' + ded + ')' : '—') + '</option>';
+    for (const o of opciones) s += '<option value="' + o + '"' + (val === o ? ' selected' : '') + '>' + o + '</option>';
+    if (val && opciones.indexOf(val) === -1) s += '<option value="' + escapeHtml(val) + '" selected>' + escapeHtml(val) + '</option>';
+    return s + '</select>';
+  };
 
   for (const v of rows) {
     const key = _admKey(v.preventa);
@@ -2513,7 +2544,7 @@ function renderAdmVentas() {
          + alertaIco
        + '</td>'
        + '<td data-label="Créd. liq.">' + _admLiqCell(v, key) + '</td>'
-       + '<td data-label="Rev/Part">' + sel(v.preventa, key, 'reventa_particular', m.reventa_particular, ['PARTICULAR', 'REVENTA'], 90) + '</td>'
+       + '<td data-label="Rev/Part">' + selRevPart(v.preventa, key, m.reventa_particular, _revPartDeducido(m.patenta)) + '</td>'
        + '<td data-label="Notas">' + inp(v.preventa, key, 'notas', m.notas, 92) + '</td>'
        + '<td data-label="📅 Entrega" style="white-space:nowrap">'
          + (v.entregaFecha
@@ -9538,7 +9569,7 @@ function renderPatentamientos() {
   const rpFaltan    = delMes.filter(c => !c.reventaOParticular);
   if (rpInferidas.length || rpFaltan.length) {
     const bits = [];
-    if (rpInferidas.length) bits.push('<b>' + rpInferidas.length + '</b> deducidas de la columna Patenta (van con <i>*</i>)');
+    if (rpInferidas.length) bits.push('<b>' + rpInferidas.length + '</b> deducidas de la columna Patenta (van con <i>*</i>) — se cambian en <b>Adm. ventas</b>, columna Rev/Part');
     if (rpFaltan.length) {
       const pvs = rpFaltan.slice(0, 12).map(c => escapeHtml(c.pv)).join(', ');
       bits.push('<b>' + rpFaltan.length + '</b> sin cargar y sin poder deducir: ' + pvs + (rpFaltan.length > 12 ? '…' : ''));
@@ -9728,7 +9759,7 @@ function filaPatent(c, admMap) {
   // se marca con * para que se distinga de lo cargado a mano.
   const rpTxt = c.reventaOParticular
     ? (c.revPartInferido
-        ? '<span class="rp-inferido" title="Deducido de la columna Patenta — falta cargar Rev/Part en Adm. ventas">'
+        ? '<span class="rp-inferido" title="Deducido de la columna Patenta. Si va otra cosa, cambialo en la solapa Adm. ventas, columna Rev/Part — lo que se elige a mano manda.">'
           + escapeHtml(c.reventaOParticular) + ' *</span>'
         : escapeHtml(c.reventaOParticular))
     : '—';
