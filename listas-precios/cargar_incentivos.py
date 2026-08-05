@@ -8,27 +8,37 @@ catalogo (SE); tramos performance distintos de 90/100 se anotan en condicion;
 filas en $0 no se cargan.
 Circuito completo: skill circular-vw (C:\\proyectos\\.claude\\skills).
 
-Ultima corrida: 2026-07 circular 80/26 (whosale +2% salvo T-Cross Bi-Tono congelado;
-performance pierde Nivus High/Outfit; tramos 50/80 anotados en condicion)."""
+Ultima corrida: 2026-08 circular 89/26 (Fe de Erratas, es la circular completa).
+Agosto NO cambio un peso vs julio: VW CONSOLIDO el "tactico incremental Polo/Tera/
+Nivus" (lo que cargabamos como adicional1) DENTRO del tactico -> tactico agosto =
+tactico julio + incremental julio, verificado modelo por modelo. Por eso este mes
+NO se carga adicional1. Unico cambio real: whosale +1,00% en los 14 (ahora si
+incluye el T-Cross Bi-Tono, que en julio habia quedado congelado)."""
 import json, urllib.request, sys
 
-CIRC = "80/26"
+CIRC = "89/26"
+MES = "2026-08"
 R = []
 def add(codigo, nombre, tipo, siva, civa, cond):
     R.append((codigo, nombre, tipo, siva, civa, cond))
 
 T50 = "50% objetivo"
-# ---------------- TACTICO ----------------
-add("BZ31T4","Polo Track MSI MT","tactico",4131617,4999257,T50)
-add("BZ32D3","Polo COMFORTLINE 170TSI AT","tactico",1982767,2399148,T50)
-add("BZ33D3","Polo HIGHLINE 170TSI AT","tactico",425837,515263,T50)
-add("DF11T4","Tera Trend MSI MT","tactico",526860,637500,T50)
-add("DF11T4","Tera Trend MSI MT + Pack Safe I","tactico",526860,637500,T50)
-add("CH23R4","Nivus 170TSI MT","tactico",4863160,5884424,T50)
-add("CH22K3","Nivus Trendline 200TSI AT","tactico",4959511,6001008,T50)
-add("CH23K3","Nivus Comfortline 200TSI AT","tactico",3463117,4190372,T50)
-add("CH24K3","Nivus Highline 200TSI AT","tactico",3599273,4355120,T50)
-add("CH24K3","Nivus Outfit 200TSI AT","tactico",3699932,4476917,T50)
+# ---------------- TACTICO (ya incluye el ex-"incremental" de julio) ----------------
+add("BZ31T4","Polo Track MSI MT","tactico",5210129,6304256,T50)
+add("BZ32D3","Polo COMFORTLINE 170TSI AT","tactico",4441445,5374149,T50)
+add("BZ33D3","Polo HIGHLINE 170TSI AT","tactico",2884515,3490263,T50)
+add("DF11T4","Tera Trend MSI MT","tactico",1931819,2337500,T50)
+add("DF11T4","Tera Trend MSI MT + Pack Safe I","tactico",1931819,2337500,T50)
+add("DF13D3","Tera Comfort 170TSI AT","tactico",1404959,1700000,T50)
+add("DF13D3","Tera Comfort 170TSI AT + Pack Safe II","tactico",1404959,1700000,T50)
+add("DF14D3","Tera High 170TSI AT","tactico",1404959,1700000,T50)
+add("DF14D3","Tera Outfit 170TSI AT","tactico",1404959,1700000,T50)
+add("CH23R4","Nivus 170TSI MT","tactico",6268119,7584424,T50)
+add("CH22K3","Nivus Trendline 200TSI AT","tactico",6364470,7701008,T50)
+add("CH23K3","Nivus Comfortline 200TSI AT","tactico",4868076,5890372,T50)
+add("CH24K3","Nivus Highline 200TSI AT","tactico",5004232,6055120,T50)
+add("CH24K3","Nivus Outfit 200TSI AT","tactico",5104891,6176917,T50)
+# CH21R4 Nivus Sense figura en la circular en $0 -> no se carga.
 add("BF32D4","T-Cross Trendline 170TSI MT","tactico",6721099,8132530,T50)
 add("BF32K3","T-Cross Trendline 200TSI AT","tactico",6816460,8247917,T50)
 add("BF33K3","T-Cross Comfortline 200TSI AT","tactico",7882101,9537343,T50)
@@ -56,41 +66,29 @@ add("RM14M7","Tiguan R-Line 250TSI DSG","adicional2",3951418,4781216,"tactico ti
 add("BU59UZ","Vento GLI 350TSI DSG","adicional2",5748043,6955132,"tactico tiguan/vento")
 # ---------------- WHOSALE ----------------
 W = "compra whosale"
-add("BZ31T4","Polo Track MSI MT","whosale",1144276,1384574,W)
-add("BZ32D3","Polo COMFORTLINE 170TSI AT","whosale",1307482,1582053,W)
-add("BZ33D3","Polo HIGHLINE 170TSI AT","whosale",1389335,1681095,W)
-add("BF32D4","T-Cross Trendline 170TSI MT","whosale",1396564,1689842,W)
-add("BF32K3","T-Cross Trendline 200TSI AT","whosale",1467898,1776157,W)
-add("BF33K3","T-Cross Comfortline 200TSI AT","whosale",1586802,1920030,W)
-add("BF34K3","T-Cross Highline 200TSI AT","whosale",1750380,2117960,W)
-add("BF34K3","T-Cross Highline Bi Tono 200TSI AT","whosale",1714955,2075096,W)  # sin +2%, tal cual circular
-add("BF3XK3","T-Cross Extreme 200TSI AT","whosale",1783280,2157768,W)
-add("DF11T4","Tera Trend MSI MT","whosale",501642,606987,W)
-add("DF11T4","Tera Trend MSI MT + Pack Safe I","whosale",501642,606987,W)
-add("DF13D3","Tera Comfort 170TSI AT","whosale",567242,686363,W)
-add("DF13D3","Tera Comfort 170TSI AT + Pack Safe II","whosale",567242,686363,W)
-add("CH23K3","Nivus Comfortline 200TSI AT","whosale",1001377,1211666,W)
-add("CH24K3","Nivus Highline 200TSI AT","whosale",1081255,1308319,W)
-add("CH24K3","Nivus Outfit 200TSI AT","whosale",1106097,1338377,W)
-# ---------------- ADICIONAL1 (incremental Polo/Tera/Nivus, sin cambios) ----------------
-S = "sin condición"
-add("BZ31T4","Polo Track MSI MT","adicional1",1078512,1305000,S)
-add("BZ32D3","Polo COMFORTLINE 170TSI AT","adicional1",2458678,2975000,S)
-add("BZ33D3","Polo HIGHLINE 170TSI AT","adicional1",2458678,2975000,S)
-add("DF11T4","Tera Trend MSI MT","adicional1",1404959,1700000,S)
-add("DF11T4","Tera Trend MSI MT + Pack Safe I","adicional1",1404959,1700000,S)
-add("DF13D3","Tera Comfort 170TSI AT","adicional1",1404959,1700000,S)
-add("DF13D3","Tera Comfort 170TSI AT + Pack Safe II","adicional1",1404959,1700000,S)
-add("DF14D3","Tera High 170TSI AT","adicional1",1404959,1700000,S)
-add("DF14D3","Tera Outfit 170TSI AT","adicional1",1404959,1700000,S)
-add("CH23R4","Nivus 170TSI MT","adicional1",1404959,1700000,S)
-add("CH22K3","Nivus Trendline 200TSI AT","adicional1",1404959,1700000,S)
-add("CH23K3","Nivus Comfortline 200TSI AT","adicional1",1404959,1700000,S)
-add("CH24K3","Nivus Highline 200TSI AT","adicional1",1404959,1700000,S)
-add("CH24K3","Nivus Outfit 200TSI AT","adicional1",1404959,1700000,S)
+add("BZ31T4","Polo Track MSI MT","whosale",1155719,1398420,W)
+add("BZ32D3","Polo COMFORTLINE 170TSI AT","whosale",1320557,1597874,W)
+add("BZ33D3","Polo HIGHLINE 170TSI AT","whosale",1403228,1697906,W)
+add("BF32D4","T-Cross Trendline 170TSI MT","whosale",1410530,1706741,W)
+add("BF32K3","T-Cross Trendline 200TSI AT","whosale",1482577,1793918,W)
+add("BF33K3","T-Cross Comfortline 200TSI AT","whosale",1602670,1939231,W)
+add("BF34K3","T-Cross Highline 200TSI AT","whosale",1767884,2139139,W)
+add("BF34K3","T-Cross Highline Bi Tono 200TSI AT","whosale",1732105,2095847,W)  # agosto SI le dio el +1%
+add("BF3XK3","T-Cross Extreme 200TSI AT","whosale",1801113,2179346,W)
+add("DF11T4","Tera Trend MSI MT","whosale",506658,613057,W)
+add("DF11T4","Tera Trend MSI MT + Pack Safe I","whosale",506658,613057,W)
+add("DF13D3","Tera Comfort 170TSI AT","whosale",572914,693226,W)
+add("DF13D3","Tera Comfort 170TSI AT + Pack Safe II","whosale",572914,693226,W)
+add("CH23K3","Nivus Comfortline 200TSI AT","whosale",1011391,1223783,W)
+add("CH24K3","Nivus Highline 200TSI AT","whosale",1092068,1321402,W)
+add("CH24K3","Nivus Outfit 200TSI AT","whosale",1117158,1351761,W)
+# ---------------- ADICIONAL1: NO EXISTE EN AGOSTO ----------------
+# La circular 89/26 elimino la seccion "Incentivo Tactico Incremental Polo, Tera,
+# Nivus" y sumo esos montos DENTRO del tactico (verificado al peso). Cargarlo
+# aparte seria contarlo dos veces: el motor suma tactico+whosale+adicional1+
+# adicional2+cupo.
 # ---------------- PERFORMANCE (90%) y PERFORMANCE100 ----------------
-# Julio: tramos nuevos 50/80 para AGDA43, AGDC3X, BZ31T4, DF11T4 (mismo monto) -> se anota en condicion.
-# CH24K3 (Nivus High/Outfit) SALE del performance en julio. AGDC33 y AGDB8A en 0 -> no se cargan.
+# Identico a julio. AGDC33 y AGDB8A ya no figuran (en julio estaban en 0).
 P90D50 = "90% objetivo (cobra desde 50%)"
 P100D50 = "100% objetivo (cobra desde 50%)"
 P90, P100 = "90% objetivo", "100% objetivo"
@@ -115,7 +113,7 @@ add("DF11T4","Tera Trend MSI MT","performance100",1000000,1210000,P100D50)
 add("DF11T4","Tera Trend MSI MT + Pack Safe I","performance",1000000,1210000,P90D50)
 add("DF11T4","Tera Trend MSI MT + Pack Safe I","performance100",1000000,1210000,P100D50)
 
-print("filas julio: %d" % len(R))
+print("filas %s: %d" % (MES, len(R)))
 from collections import Counter
 print(dict(Counter(t for _,_,t,_,_,_ in R)))
 if "--go" not in sys.argv:
@@ -134,15 +132,15 @@ def sql(q):
                  "User-Agent": "gestion-tga-claude/1.0"})
     return json.load(urllib.request.urlopen(req))
 
-vals = ",".join("('2026-07','%s','%s','%s',%d,%d,'%s','%s')" %
-                (c, n.replace("'", "''"), t, s, v, cond.replace("'", "''"), CIRC)
+vals = ",".join("('%s','%s','%s','%s',%d,%d,'%s','%s')" %
+                (MES, c, n.replace("'", "''"), t, s, v, cond.replace("'", "''"), CIRC)
                 for c, n, t, s, v, cond in R)
-sql("delete from incentivos where mes='2026-07'")
+sql("delete from incentivos where mes='%s'" % MES)
 sql("insert into incentivos (mes,codigo,nombre_corto,tipo,monto_siva,monto_civa,condicion,circular) values " + vals)
 
 # verificacion
-chk = sql("select tipo, count(*) as n, sum(monto_siva)::bigint as total from incentivos where mes='2026-07' group by tipo order by tipo")
-print("DB 2026-07:", chk)
+chk = sql("select tipo, count(*) as n, sum(monto_siva)::bigint as total from incentivos where mes='%s' group by tipo order by tipo" % MES)
+print("DB %s:" % MES, chk)
 esp = {}
 tot = {}
 for _, _, t, s, _, _ in R:
