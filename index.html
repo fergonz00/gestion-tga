@@ -2319,6 +2319,18 @@ function renderAdmFinanciaciones() {
   cont.innerHTML = h;
 }
 
+// La data de Adm. ventas se quedaba pegada toda la sesión: se cargaba una vez y
+// no se volvía a pedir hasta apretar Actualizar, así que un cambio hecho en
+// Oversoft (titular, patentamiento, cobro) no aparecía. Al volver a entrar a la
+// solapa se repide si pasaron más de 5 min — mismo TTL que el cache del backend,
+// o sea que el pedido extra sale gratis salvo que ya haya data nueva.
+const ADM_VENTAS_TTL_MS = 5 * 60 * 1000;
+function _admVentasVencida() {
+  if (!admVentasData) return true;
+  const t = Date.parse(admVentasData.updatedAt || '');
+  return !t || (Date.now() - t) > ADM_VENTAS_TTL_MS;
+}
+
 async function loadAdmVentas(forzar) {
   if (APPS_SCRIPT_URL.indexOf('__APPS_SCRIPT_URL_PENDIENTE__') === 0) return;
   const cont = document.getElementById('admVentasContent');
@@ -2389,7 +2401,7 @@ function renderAdmVentas() {
     if (admVentasFiltro === 'pendientes' && v.dominio) return false;
     if (admVentasFiltro === 'patentadas' && !v.dominio) return false;
     if (admVentasFiltro === 'impagasVW' && !(v.pagoVW && v.pagoVW.impaga)) return false;
-    if (q && !(v.preventa + ' ' + v.cliente + ' ' + v.modelo + ' ' + v.serie + ' ' + v.vendedor + ' ' + v.dominio + ' ' + (v.comentario || '')).toLowerCase().includes(q)) return false;
+    if (q && !(v.preventa + ' ' + v.cliente + ' ' + (v.titularPv || '') + ' ' + v.modelo + ' ' + v.serie + ' ' + v.vendedor + ' ' + v.dominio + ' ' + (v.comentario || '')).toLowerCase().includes(q)) return false;
     return true;
   });
 
@@ -2517,7 +2529,7 @@ function renderAdmVentas() {
              ? '<div><button onclick="toggleAdmGasto(\'' + key + '\')" title="' + (gasto.bonificado ? 'Gastos bonificados — no se facturan (marcado a mano)' : (gasto.sinEmitir ? 'Gastos cargados en la preventa — a facturar (sin emitir todavía)' : 'Ver desglose de gastos por concepto')) + '" style="border:0;background:none;cursor:pointer;color:' + (gasto.bonificado ? '#0a7a30' : (gasto.sinEmitir ? '#b9770e' : '#0a66c2')) + ';font-weight:600;font-size:11px;padding:0">Gastos $' + _gMoney(gasto.total) + (gasto.bonificado ? ' · bonificado ✓' : (gasto.sinEmitir ? ' · a facturar' : '')) + (_gastoAdversas(gasto).length ? ' <span title="' + _gastoAdversas(gasto).length + ' a revisar (las diferencias a favor no se cuentan)" style="color:#c0392b">⚠</span>' : '') + ' ▸</button></div>'
              : '<div style="color:var(--vw-grey-3);font-size:11px">s/gastos</div>')
        + '</td>'
-       + '<td data-label="Cliente" title="' + escapeHtml(String(v.cliente) + (v.localidad ? ' — ' + v.localidad : '')) + '">' + escapeHtml(String(v.cliente).slice(0, 17)) + (v.localidad ? '<br><small style="color:var(--vw-grey-3)">' + escapeHtml(String(v.localidad).slice(0, 17)) + '</small>' : '') + '</td>'
+       + '<td data-label="Cliente" title="' + escapeHtml(String(v.cliente) + (v.localidad ? ' — ' + v.localidad : '') + (v.titularCambiado ? '\nTitular cambiado — la preventa está a nombre de ' + v.titularPv + ' y se facturó a ' + v.cliente : '')) + '">' + escapeHtml(String(v.cliente).slice(0, 17)) + (v.titularCambiado ? ' <span style="color:#b9770e" title="Titular cambiado respecto de la preventa">✎</span>' : '') + (v.localidad ? '<br><small style="color:var(--vw-grey-3)">' + escapeHtml(String(v.localidad).slice(0, 17)) + '</small>' : '') + '</td>'
        + '<td data-label="Vendedor">' + escapeHtml(v.vendedor) + '</td>'
        + '<td data-label="Serie">' + (v.serie
              ? '<button onclick="toggleAdmSerie(\'' + key + '\')" title="Ver chasis completo, motor y certificado" style="border:0;background:none;cursor:pointer;color:#0a66c2;font-weight:600;font-size:12px;padding:0">' + escapeHtml(v.serie) + ' ▸</button>'
@@ -4497,7 +4509,7 @@ function setTab(tab) {
   if (tab === 'ventasov'       && !ventasOvData) loadVentasOv(false);
   if (tab === 'precioslista'   && !preciosListaData) loadPreciosLista(false);
   if (tab === 'incentivos'     && !incentivosData) loadIncentivos(false);
-  if (tab === 'admventas'      && !admVentasData)  loadAdmVentas(false);
+  if (tab === 'admventas'      && _admVentasVencida()) loadAdmVentas(false);
   if (tab === 'reparto')                         { loadReparto(false); if (!facturacionData) loadFacturacion(false); }
   if (tab === 'industria') {
     // Industria depende de patentData para contar TGA patentadas
@@ -4514,7 +4526,7 @@ function setAdmSubtab(name) {
   document.getElementById('subpanelAdmVentasPatent').classList.toggle('active',    name === 'patentamientos');
   document.getElementById('subpanelAdmVentasTrimestre').classList.toggle('active', name === 'trimestre');
   document.getElementById('subpanelAdmVentasFin').classList.toggle('active',       name === 'financiaciones');
-  if (name === 'admventas'      && !admVentasData) loadAdmVentas(false);
+  if (name === 'admventas'      && _admVentasVencida()) loadAdmVentas(false);
   if (name === 'patentamientos' && !patentData)    loadPatentamientos(false);
   if (name === 'trimestre') {
     if (!patentData) loadPatentamientos(false);  // al llegar la data, el hook de
