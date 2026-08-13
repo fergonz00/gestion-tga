@@ -1821,6 +1821,13 @@ function saveVentaManual(body) {
     const sc = body.sin_comision;
     row.sin_comision = (sc === '' || sc == null || sc === 'pregunta') ? null : (sc === true || sc === 'true' || sc === 'no');
   }
+  if (body.hasOwnProperty('corporativo')) {
+    // Canal de la venta. null = automático (lo decide el comentario de la PV);
+    // true/false = forzado a mano y manda sobre la detección. Una corporativa NO
+    // cobra performance ni wholesale: solo el táctico corporativo (circular propia).
+    const cp = body.corporativo;
+    row.corporativo = (cp === '' || cp == null || cp === 'auto') ? null : (cp === true || cp === 'true' || cp === 'si');
+  }
   const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
   const res = UrlFetchApp.fetch(SUPA_URL + '/ventas_manual?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(row), muteHttpExceptions: true });
   if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200) };

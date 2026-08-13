@@ -3122,6 +3122,37 @@ function _comisionTGControl(v) {
   }
   return '<span onclick="guardarComision(\'' + pv + '\',\'pregunta\')" style="' + base + ';background:#eceff1;color:#455a64;cursor:pointer" title="Venta TG CON comisión (se cuenta como costo). Tocá para cambiar.">TG · c/comisión ✎</span>';
 }
+// Canal CORPORATIVO. VW manda una circular propia para este canal: la venta NO
+// cobra performance ni wholesale, solo el táctico corporativo (que ya trae el
+// wholesale adentro). Por eso una corporativa mal marcada infla la ganancia.
+// Estados: marcada a mano (violeta) · detectada por el comentario y sin confirmar
+// (ámbar, hay que responder) · normal (ícono tenue para marcarla).
+function _corpControl(v) {
+  const pv = String(v.preventaNum || '').replace(/'/g, '');
+  const base = 'display:inline-block;border-radius:8px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:4px';
+  if (v.corporativo && v.corpAuto) {
+    return '<span style="' + base + ';background:#fff3cd;color:#7a5b00;border:1px solid #e0c060" title="El comentario de la PV parece decir que fue por canal corporativo. ¿Lo fue? Una corporativa cobra solo el táctico corporativo, sin performance ni wholesale.">¿CORP? '
+      + '<a onclick="guardarCorporativo(\'' + pv + '\',\'si\')" style="cursor:pointer;text-decoration:underline;margin:0 2px">Sí</a>'
+      + '<a onclick="guardarCorporativo(\'' + pv + '\',\'no\')" style="cursor:pointer;text-decoration:underline;margin:0 2px">No</a></span>';
+  }
+  if (v.corporativo) {
+    return '<span onclick="guardarCorporativo(\'' + pv + '\',\'auto\')" style="' + base + ';background:#6a1b9a;color:#fff;cursor:pointer" title="Venta CORPORATIVA: cobra solo el táctico corporativo (sin performance ni wholesale). Tocá para volver a automático.">CORP ✎</span>';
+  }
+  return '<span onclick="guardarCorporativo(\'' + pv + '\',\'si\')" style="' + base + ';background:transparent;color:#b0bec5;cursor:pointer;font-weight:400" title="Marcar como venta CORPORATIVA (canal con circular propia de VW).">🏢</span>';
+}
+async function guardarCorporativo(preventa, valor) {
+  // valor: 'si' (corporativa), 'no' (tradicional), 'auto' (que lo decida el comentario)
+  try {
+    const corp = valor === 'si' ? true : (valor === 'no' ? false : 'auto');
+    const body = new URLSearchParams();
+    body.set('payload', JSON.stringify({ token: APPS_SCRIPT_TOKEN, accion: 'setventamanual',
+      preventa: preventa, corporativo: corp, usuario: window._tgaUser || '' }));
+    const res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    await loadVentasOv(true);   // recalcula la ganancia con los incentivos del canal
+  } catch (e) { alert('No se pudo guardar el canal de ' + preventa + ': ' + e.message); }
+}
 async function guardarComision(preventa, valor) {
   // valor: 'si' (lleva comisión → false), 'no' (no lleva → true), 'pregunta' (reset → null)
   try {
@@ -3247,7 +3278,7 @@ function renderVentasOv() {
       ? '<button onclick="toggleVentasOvCont(\'' + key + '\')" title="' + montoTitle.replace(/"/g, '&quot;') + '" style="border:0;background:none;cursor:pointer;color:inherit;font-weight:600;font-size:12px;padding:0">' + fmtPesos(v.montoFc) + (contPend ? ' <span style="color:#cc3300">●</span>' : ' <span style="color:#0a7a30">✓</span>') + _ar(contAbierto) + '</button>'
       : fmtPesos(v.montoFc);
     h += '<tr>'
-      + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + revBadge + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + _comisionTGControl(v) + '</td>'
+      + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + revBadge + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + _comisionTGControl(v) + _corpControl(v) + '</td>'
       + '<td>' + _fechaDMA(v.fechaPvIso) + '</td>'
       + '<td>' + escapeHtml(v.modelo) + '</td>'
       + '<td>' + escapeHtml(v.vendedor || '') + '</td>'
@@ -5086,6 +5117,16 @@ function _ventaDetHtml(v) {
   if (!b) h += '<div style="color:#888;font-size:12px">Mes sin BT — sin datos.</div>';
   else if (b.esAA) h += '<div style="color:#7a5b00;font-size:12px;max-width:230px">Autoahorro (G-O): no cobra condiciones comerciales → <b>$0</b>.</div>';
   else if (b.especial) h += '<div style="color:#6a1b9a;font-size:12px;max-width:230px">PV especial/abierta (excepción manual): no toma incentivos (precio inflado) → <b>$0</b>.</div>';
+  else if (b.corporativo) {
+    // Canal corporativo: circular propia de VW. El táctico corporativo YA incluye el
+    // wholesale, y este canal no cobra Performance Bonus ni esquema trimestral.
+    const i = b.incentivos;
+    h += '<div style="color:#6a1b9a;font-size:11px;max-width:230px;margin-bottom:4px">Venta <b>CORPORATIVA</b>: cobra solo el táctico corporativo (ya incluye el wholesale). Sin performance ni trimestral.</div>'
+      + '<table style="font-size:12px;border-collapse:collapse">'
+      + _gKv('Táctico corporativo', i.tactico)
+      + '<tr style="border-top:1px solid #ccc"><td style="padding:3px 14px 2px 0;font-weight:700">Total incentivos</td><td style="text-align:right;font-weight:700">$' + _gMoney(i.total) + '</td></tr>'
+      + '</table>';
+  }
   else {
     const i = b.incentivos;
     h += '<table style="font-size:12px;border-collapse:collapse">'
