@@ -2346,8 +2346,15 @@ async function loadAdmVentas(forzar) {
     admVentasData = data;
     const up = document.getElementById('updatedAtAdmVentas');
     if (up && data.updatedAt) up.textContent = data.total + ' carpetas desde ' + (data.desde || '').slice(0, 7) + ' · Oversoft en vivo · actualizado ' + new Date(data.updatedAt).toLocaleString('es-AR');
-    await loadGastosMap(forzar);             // factura + gasto real por PV (desglose clickeable)
+    // Pinto la grilla YA. El mapa de gastos (Apps Script) tarda hasta ~25s en
+    // frío y antes se esperaba acá: la solapa quedaba en "Cargando…" un minuto
+    // por una columna secundaria. Ahora llega después y repinta.
     renderAdmVentas();
+    loadGastosMap(forzar).then(() => {
+      const a = document.activeElement;
+      if (a && a.id && a.id.indexOf('adm') === 0) return;   // está editando algo: no le pises el campo
+      renderAdmVentas();
+    }).catch(() => {});
     // Si la subtab Financiaciones está abierta, repintarla con la data fresca.
     if (document.getElementById('subpanelAdmVentasFin') && document.getElementById('subpanelAdmVentasFin').classList.contains('active')) renderAdmFinanciaciones();
     // Patentamientos: el panel por administrativa usa esta data para los montos
@@ -2402,7 +2409,8 @@ function renderAdmVentas() {
     if (admVentasFiltro === 'patentadas' && !v.dominio) return false;
     if (admVentasFiltro === 'impagasVW' && !(v.pagoVW && v.pagoVW.impaga)) return false;
     if (admVentasFiltro === 'prioridad' && !_admPrioPedida(v)) return false;
-    if (q && !(v.preventa + ' ' + v.cliente + ' ' + (v.titularPv || '') + ' ' + v.modelo + ' ' + v.serie + ' ' + v.vendedor + ' ' + v.dominio + ' ' + (v.comentario || '')).toLowerCase().includes(q)) return false;
+    if (q && !(v.preventa + ' ' + v.cliente + ' ' + (v.titularPv || '') + ' ' + v.modelo + ' ' + v.serie + ' ' + v.vendedor + ' ' + v.dominio + ' ' + (v.comentario || '')
+        + (_admPrioPedida(v) ? ' prioridad certificado ' + ((v.manual || {}).prioridad_nota || '') : '')).toLowerCase().includes(q)) return false;
     return true;
   });
 
@@ -2529,7 +2537,7 @@ function renderAdmVentas() {
         + ' style="border:0;background:none;cursor:pointer;font-size:13px;padding:0 2px;vertical-align:middle">💬</button>'
       : '';
     h += '<tr id="admrow_' + key + '">'
-       + '<td data-label="PV"><b>' + escapeHtml(v.preventa) + '</b>' + btnCom + (extra.length ? '<br><small style="color:var(--vw-grey-3)">' + extra.join(' · ') + '</small>' : '') + '</td>'
+       + '<td data-label="PV"><b>' + escapeHtml(v.preventa) + '</b>' + btnCom + _admPrioEstrella(v, key) + (extra.length ? '<br><small style="color:var(--vw-grey-3)">' + extra.join(' · ') + '</small>' : '') + '</td>'
        + '<td data-label="Fecha">' + _fechaDMA(v.fechaPv) + '</td>'
        + '<td data-label="Modelo">' + escapeHtml(v.modelo) + '</td>'
        + '<td data-label="Factura / Gastos" style="text-align:right;white-space:nowrap">'
@@ -2598,7 +2606,10 @@ function renderAdmVentas() {
        + '<td colspan="20" style="background:#f5f8fc;border-left:3px solid #0a66c2;padding:8px 14px 12px 30px;text-align:left">'
        + _admSerieDetalleHtml(v) + '</td></tr>';
   }
-  if (!rows.length) h += '<tr><td colspan="20" class="empty">Sin carpetas para ese filtro.</td></tr>';
+  if (!rows.length) h += '<tr><td colspan="20" class="empty">'
+     + (admVentasFiltro === 'prioridad'
+         ? 'No hay ningún pedido de prioridad abierto. Para pedir uno, tocá la <b>☆</b> que está al lado del N° de PV (sale solo en las unidades que todavía no están pagadas a VW): escribís el motivo, Enter, y le llega a tesorería.'
+         : 'Sin carpetas para ese filtro.') + '</td></tr>';
   h += '</tbody></table></div></div>';
   h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio, fecha de patentamiento, la <b>entrega programada</b> (fecha y hora) y el <b>retiró ✓</b> salen de Oversoft en vivo (no se editan acá: la fecha/hora la programa la administrativa en Oversoft y el ✓ se prende cuando la unidad figura como entregada). El resto se completa acá y <b>se guarda solo al cambiar cada campo</b> (el ✓ de la fila se pone verde cuando guardó bien; si algo falla, avisa y podés reintentar con el ✓). El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes. El mes de cada carpeta (selector de arriba, mismo criterio que Patentamientos) = fecha real de Oversoft o, si aún no está patentada, el "Mes pat. ✔adm" — las ventas nuevas sin ninguno de los dos entran al mes en curso (cambiale el "Mes pat." si va para otro mes).</div>';
   // El re-render recrea el <input> de búsqueda y le saca el foco (antes había
@@ -2901,6 +2912,21 @@ function _admPrioCuando(ts) {
   if (isNaN(d.getTime())) return String(ts).slice(0, 10);
   return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
 }
+// Estrella al lado del N° de PV — el acceso PRINCIPAL al pedido (la columna
+// Pago VW queda lejos a la derecha y no se ve sin scrollear). Amarilla llena =
+// pedido abierto; contorno = se puede pedir; verde = ya la pagaron.
+function _admPrioEstrella(v, key) {
+  const abierta = (admPrioAbierto === v.preventa);
+  const form = abierta ? _admPrioForm(v, key, String((v.manual || {}).prioridad_nota || '')) : '';
+  if (_admPrioResuelta(v)) return ' <span title="Prioridad resuelta: tesorería ya la pagó" style="font-size:13px">✅</span>';
+  if (_admPrioPedida(v)) {
+    return ' <button onclick="abrirPrioridad(\'' + v.preventa + '\')" title="Prioridad pedida a tesorería — tocá para editar el motivo"'
+      + ' style="border:0;background:none;cursor:pointer;font-size:14px;padding:0;vertical-align:middle">⭐</button>' + form;
+  }
+  if (v.pagoVW && !v.pagoVW.impaga) return '';   // ya está paga a VW: no hay nada que pedir
+  return ' <button onclick="abrirPrioridad(\'' + v.preventa + '\')" title="Pedirle a tesorería que le pague esta unidad a VW ya (sin el pago no liberan el certificado)"'
+    + ' style="border:0;background:none;cursor:pointer;font-size:14px;padding:0;vertical-align:middle;opacity:.45">☆</button>' + form;
+}
 function _admPrioForm(v, key, nota) {
   const esc = "if(event.key==='Escape'){admPrioAbierto='';renderAdmVentas()}";
   return '<div style="margin-top:3px;display:flex;gap:3px;align-items:center;flex-wrap:wrap">'
@@ -2929,12 +2955,11 @@ function _admPrioCell(v, key) {
       + ' <button onclick="abrirPrioridad(\'' + v.preventa + '\')" title="Editar el motivo" style="border:0;background:none;cursor:pointer;font-size:10px;color:#0a66c2;padding:0">✎</button>'
       + ' <button onclick="savePrioridad(\'' + v.preventa + '\',false)" title="Sacar la prioridad" style="border:0;background:none;cursor:pointer;font-size:11px;color:var(--vw-grey-3);padding:0">✕</button>'
       + (nota ? '<div style="font-size:10px;color:#b9770e">' + escapeHtml(nota) + '</div>' : '')
-      + (admPrioAbierto === v.preventa ? _admPrioForm(v, key, nota) : '')
       + '</div>';
   }
   // Sin pedido: solo tiene sentido pedirlo si la unidad NO figura pagada a VW.
+  // (el formulario del motivo se abre en la columna PV, al lado de la estrella)
   if (v.pagoVW && !v.pagoVW.impaga) return '';
-  if (admPrioAbierto === v.preventa) return '<div style="margin-top:3px;white-space:normal">' + _admPrioForm(v, key, '') + '</div>';
   return '<div style="margin-top:3px">'
     + '<button onclick="abrirPrioridad(\'' + v.preventa + '\')" title="Pedirle a tesorería que pague esta unidad ya, para que VW libere el certificado"'
     + ' style="border:1px solid #e0b000;background:#fff8e6;color:#9a7d00;border-radius:9px;padding:1px 6px;cursor:pointer;font-size:10px;white-space:nowrap">⭐ pedir pago</button></div>';
