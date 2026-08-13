@@ -2927,14 +2927,18 @@ function _admPrioEstrella(v, key) {
   return ' <button onclick="abrirPrioridad(\'' + v.preventa + '\')" title="Pedirle a tesorería que le pague esta unidad a VW ya (sin el pago no liberan el certificado)"'
     + ' style="border:0;background:none;cursor:pointer;font-size:14px;padding:0;vertical-align:middle;opacity:.45">☆</button>' + form;
 }
+// Campito del motivo. Aparece DESPUÉS de que el pedido ya quedó guardado (un
+// clic en la estrella = pedido), así que si la adm lo ignora no se pierde nada.
+// Guarda al salir del campo (onchange) y con Enter (que hace blur).
 function _admPrioForm(v, key, nota) {
   const esc = "if(event.key==='Escape'){admPrioAbierto='';renderAdmVentas()}";
   return '<div style="margin-top:3px;display:flex;gap:3px;align-items:center;flex-wrap:wrap">'
     + '<input id="admprio_' + key + '" value="' + escapeHtml(nota) + '" placeholder="motivo (opcional)"'
-    + ' onkeydown="if(event.key===\'Enter\')savePrioridad(\'' + v.preventa + '\',true);' + esc + '"'
-    + ' style="width:104px;padding:2px 4px;border:1px solid #e0b000;border-radius:5px;font-size:11px">'
-    + '<button onclick="savePrioridad(\'' + v.preventa + '\',true)" title="Pedir prioridad" style="background:#b9770e;color:#fff;border:0;border-radius:5px;padding:2px 7px;cursor:pointer;font-size:10px">⭐</button>'
-    + '<button onclick="admPrioAbierto=\'\';renderAdmVentas()" style="background:none;border:0;cursor:pointer;font-size:11px">✕</button>'
+    + ' onchange="savePrioridad(\'' + v.preventa + '\',true,true)"'
+    + ' onkeydown="if(event.key===\'Enter\'){this.blur()}' + esc + '"'
+    + ' style="width:112px;padding:2px 4px;border:1px solid #e0b000;border-radius:5px;font-size:11px">'
+    + '<button onclick="savePrioridad(\'' + v.preventa + '\',true)" title="Listo" style="background:#b9770e;color:#fff;border:0;border-radius:5px;padding:2px 7px;cursor:pointer;font-size:10px">ok</button>'
+    + '<button onclick="savePrioridad(\'' + v.preventa + '\',false)" title="Sacar la prioridad" style="background:none;border:0;cursor:pointer;font-size:11px;color:var(--vw-grey-3)">✕</button>'
     + '</div>';
 }
 // Bloque que se cuelga abajo de la celda "Pago VW" de cada fila.
@@ -2964,13 +2968,19 @@ function _admPrioCell(v, key) {
     + '<button onclick="abrirPrioridad(\'' + v.preventa + '\')" title="Pedirle a tesorería que pague esta unidad ya, para que VW libere el certificado"'
     + ' style="border:1px solid #e0b000;background:#fff8e6;color:#9a7d00;border-radius:9px;padding:1px 6px;cursor:pointer;font-size:10px;white-space:nowrap">⭐ pedir pago</button></div>';
 }
-function abrirPrioridad(pv) {
+// UN CLIC = PEDIDO GUARDADO. Antes esto solo abría el campito del motivo y, si
+// la adm no tocaba el ✓, no se guardaba nada (pasó: se perdió el pedido de la
+// 8106/1). Ahora la estrella guarda al toque y el motivo se agrega después.
+async function abrirPrioridad(pv) {
+  const v = ((admVentasData && admVentasData.ventas) || []).find(x => x.preventa === pv);
   admPrioAbierto = pv;
-  renderAdmVentas();
+  if (!_admPrioPedida(v)) await savePrioridad(pv, true, true);   // guarda ya, deja el campito abierto
+  else renderAdmVentas();
   setTimeout(() => { const el = document.getElementById('admprio_' + _admKey(pv)); if (el) { el.focus(); el.select(); } }, 30);
 }
 // on=true pide (o edita) la prioridad; on=false la saca/archiva.
-async function savePrioridad(pv, on) {
+// dejarAbierto = no cerrar el campito del motivo después de guardar.
+async function savePrioridad(pv, on, dejarAbierto) {
   const v = ((admVentasData && admVentasData.ventas) || []).find(x => x.preventa === pv);
   const m = (v && v.manual) || {};
   const inp = document.getElementById('admprio_' + _admKey(pv));
@@ -3004,7 +3014,7 @@ async function savePrioridad(pv, on) {
     const data = await res.json();
     if (data && data.error) throw new Error(data.error);
     if (v) v.manual = Object.assign({}, v.manual, campos);
-    admPrioAbierto = '';
+    admPrioAbierto = (on && dejarAbierto) ? pv : '';
     renderAdmVentas();
   } catch (e) {
     alert('No se pudo guardar la prioridad de ' + pv + ': ' + e.message);
