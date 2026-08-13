@@ -2401,6 +2401,7 @@ function renderAdmVentas() {
     if (admVentasFiltro === 'pendientes' && v.dominio) return false;
     if (admVentasFiltro === 'patentadas' && !v.dominio) return false;
     if (admVentasFiltro === 'impagasVW' && !(v.pagoVW && v.pagoVW.impaga)) return false;
+    if (admVentasFiltro === 'prioridad' && !_admPrioPedida(v)) return false;
     if (q && !(v.preventa + ' ' + v.cliente + ' ' + (v.titularPv || '') + ' ' + v.modelo + ' ' + v.serie + ' ' + v.vendedor + ' ' + v.dominio + ' ' + (v.comentario || '')).toLowerCase().includes(q)) return false;
     return true;
   });
@@ -2433,6 +2434,14 @@ function renderAdmVentas() {
   h += '<button onclick="admVentasFiltro=\'impagasVW\';renderAdmVentas()" style="padding:6px 12px;border:1px solid ' + (admVentasFiltro === 'impagasVW' ? '#cc3300' : 'var(--vw-grey-2)') + ';border-radius:16px;cursor:pointer;font-size:13px;'
     + (admVentasFiltro === 'impagasVW' ? 'background:#cc3300;color:#fff;font-weight:700' : 'background:#fff;color:var(--vw-grey-3)') + '">Impagas VW'
     + (_impVW ? ' <span style="background:' + (admVentasFiltro === 'impagasVW' ? '#fff;color:#cc3300' : '#cc3300;color:#fff') + ';border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700">' + _impVW + '</span>' : '') + '</button>';
+  // ⭐ Prioridad: carpetas donde la adm pidió que tesorería pague la unidad a VW
+  // para que liberen el certificado. Se cuenta sobre TODOS los meses (el pedido
+  // no es cosa del mes que estés mirando) y filtra pisando el filtro de mes.
+  const _prio = admVentasData.ventas.filter(_admPrioPedida).length;
+  h += '<button onclick="admVentasFiltro=\'prioridad\';admVentasMes=\'__todos__\';renderAdmVentas()" title="Unidades que le pediste a tesorería que paguen ya (para que salga el certificado)"'
+    + ' style="padding:6px 12px;border:1px solid ' + (admVentasFiltro === 'prioridad' ? '#b9770e' : 'var(--vw-grey-2)') + ';border-radius:16px;cursor:pointer;font-size:13px;'
+    + (admVentasFiltro === 'prioridad' ? 'background:#b9770e;color:#fff;font-weight:700' : 'background:#fff;color:var(--vw-grey-3)') + '">⭐ Prioridad certificado'
+    + (_prio ? ' <span style="background:' + (admVentasFiltro === 'prioridad' ? '#fff;color:#b9770e' : '#b9770e;color:#fff') + ';border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700">' + _prio + '</span>' : '') + '</button>';
   h += '<input type="text" id="admBuscaInput" placeholder="🔍 PV, cliente, serie, dominio…" value="' + escapeHtml(admVentasBusca) + '" oninput="admVentasBusca=this.value;renderAdmVentas()" '
      + ' style="padding:7px 12px;border:1px solid var(--vw-grey-2);border-radius:8px;min-width:220px;font-size:13px">';
   h += '<span style="font-size:12px;color:var(--vw-grey-3)">' + rows.length + ' carpetas</span>';
@@ -2542,6 +2551,7 @@ function renderAdmVentas() {
                      ? '<b style="color:#0a7a30">paga</b><br><small style="color:var(--vw-grey-3)">por antigüedad</small>'
                      : '<b style="color:#0a7a30">' + escapeHtml(v.pagoVW.fecha || 'pagada') + '</b>'))
              : '<span style="color:var(--vw-grey-3)">s/d</span>')
+         + _admPrioCell(v, key)
        + '</td>'
        + '<td data-label="Dominio">' + (v.dominio ? '<b style="color:#0a7a30">' + escapeHtml(v.dominio) + '</b>' : '<span style="color:#cc6600">pend.</span>') + '</td>'
        + '<td data-label="F. patent.">' + (v.fechaPatentamiento ? _fechaDMA(v.fechaPatentamiento) : '<span style="color:var(--vw-grey-3)">—</span>') + '</td>'
@@ -2862,6 +2872,117 @@ async function saveLiq(pv, flag, fecha) {
     renderAdmFinanciaciones();    // repinta Financiaciones (no-op si no está montada)
   } catch (e) {
     alert('No se pudo guardar el crédito liquidado de ' + pv + ': ' + e.message);
+  }
+}
+
+// ============ ⭐ PRIORIDAD PARA PAGAR (CERTIFICADO) ============
+// Hasta que la unidad no está pagada a VW, fábrica no libera el certificado y no
+// se puede patentar. Con la estrella la adm (Mónica) le pide a tesorería que
+// pague ESA unidad primero; el pedido se guarda en adm_ventas (columnas
+// prioridad_*) y lo ve Valeria en la solapa Compras VW de
+// saldos.titogonzalez.online, que lo cierra sola al registrar el pago (o a mano
+// con "listo"). Se cruza por SERIE — por eso se guarda `prioridad_serie`.
+// Estados: pedida (prioridad_certificado sin listo_ts) → resuelta (con listo_ts,
+// lo sella tesorería) → archivada (la adm apaga la estrella).
+let admPrioAbierto = '';   // PV con el input de nota abierto
+
+function _admPrioPedida(v) {
+  const m = (v && v.manual) || {};
+  return !!m.prioridad_certificado && !m.prioridad_listo_ts;
+}
+function _admPrioResuelta(v) {
+  const m = (v && v.manual) || {};
+  return !!m.prioridad_certificado && !!m.prioridad_listo_ts;
+}
+// timestamp ISO (UTC) → "dd/mm hh:mm" en hora local
+function _admPrioCuando(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return String(ts).slice(0, 10);
+  return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+}
+function _admPrioForm(v, key, nota) {
+  const esc = "if(event.key==='Escape'){admPrioAbierto='';renderAdmVentas()}";
+  return '<div style="margin-top:3px;display:flex;gap:3px;align-items:center;flex-wrap:wrap">'
+    + '<input id="admprio_' + key + '" value="' + escapeHtml(nota) + '" placeholder="motivo (opcional)"'
+    + ' onkeydown="if(event.key===\'Enter\')savePrioridad(\'' + v.preventa + '\',true);' + esc + '"'
+    + ' style="width:104px;padding:2px 4px;border:1px solid #e0b000;border-radius:5px;font-size:11px">'
+    + '<button onclick="savePrioridad(\'' + v.preventa + '\',true)" title="Pedir prioridad" style="background:#b9770e;color:#fff;border:0;border-radius:5px;padding:2px 7px;cursor:pointer;font-size:10px">⭐</button>'
+    + '<button onclick="admPrioAbierto=\'\';renderAdmVentas()" style="background:none;border:0;cursor:pointer;font-size:11px">✕</button>'
+    + '</div>';
+}
+// Bloque que se cuelga abajo de la celda "Pago VW" de cada fila.
+function _admPrioCell(v, key) {
+  const m = v.manual || {};
+  const nota = String(m.prioridad_nota || '');
+  if (_admPrioResuelta(v)) {
+    return '<div style="margin-top:3px;white-space:normal">'
+      + '<span title="Tesorería lo dio por pagado ' + escapeHtml(_admPrioCuando(m.prioridad_listo_ts)) + (m.prioridad_listo_por ? ' · ' + escapeHtml(String(m.prioridad_listo_por)) : '') + '"'
+      + ' style="color:#0a7a30;font-weight:700;font-size:10.5px">⭐ prioridad resuelta</span>'
+      + ' <button onclick="savePrioridad(\'' + v.preventa + '\',false)" title="Archivar el pedido" style="border:0;background:none;cursor:pointer;font-size:11px;color:var(--vw-grey-3);padding:0">✕</button>'
+      + '</div>';
+  }
+  if (_admPrioPedida(v)) {
+    return '<div style="margin-top:3px;white-space:normal">'
+      + '<span title="Pedido a tesorería el ' + escapeHtml(_admPrioCuando(m.prioridad_ts)) + (m.prioridad_por ? ' por ' + escapeHtml(String(m.prioridad_por)) : '') + '"'
+      + ' style="display:inline-block;background:#b9770e;color:#fff;border-radius:9px;padding:1px 6px;font-size:10px;font-weight:700">⭐ prioridad</span>'
+      + ' <button onclick="abrirPrioridad(\'' + v.preventa + '\')" title="Editar el motivo" style="border:0;background:none;cursor:pointer;font-size:10px;color:#0a66c2;padding:0">✎</button>'
+      + ' <button onclick="savePrioridad(\'' + v.preventa + '\',false)" title="Sacar la prioridad" style="border:0;background:none;cursor:pointer;font-size:11px;color:var(--vw-grey-3);padding:0">✕</button>'
+      + (nota ? '<div style="font-size:10px;color:#b9770e">' + escapeHtml(nota) + '</div>' : '')
+      + (admPrioAbierto === v.preventa ? _admPrioForm(v, key, nota) : '')
+      + '</div>';
+  }
+  // Sin pedido: solo tiene sentido pedirlo si la unidad NO figura pagada a VW.
+  if (v.pagoVW && !v.pagoVW.impaga) return '';
+  if (admPrioAbierto === v.preventa) return '<div style="margin-top:3px;white-space:normal">' + _admPrioForm(v, key, '') + '</div>';
+  return '<div style="margin-top:3px">'
+    + '<button onclick="abrirPrioridad(\'' + v.preventa + '\')" title="Pedirle a tesorería que pague esta unidad ya, para que VW libere el certificado"'
+    + ' style="border:1px solid #e0b000;background:#fff8e6;color:#9a7d00;border-radius:9px;padding:1px 6px;cursor:pointer;font-size:10px;white-space:nowrap">⭐ pedir pago</button></div>';
+}
+function abrirPrioridad(pv) {
+  admPrioAbierto = pv;
+  renderAdmVentas();
+  setTimeout(() => { const el = document.getElementById('admprio_' + _admKey(pv)); if (el) { el.focus(); el.select(); } }, 30);
+}
+// on=true pide (o edita) la prioridad; on=false la saca/archiva.
+async function savePrioridad(pv, on) {
+  const v = ((admVentasData && admVentasData.ventas) || []).find(x => x.preventa === pv);
+  const m = (v && v.manual) || {};
+  const inp = document.getElementById('admprio_' + _admKey(pv));
+  let campos;
+  if (on) {
+    const yaPedida = _admPrioPedida(v);   // editar la nota no reinicia el reloj del pedido
+    campos = {
+      prioridad_certificado: true,
+      prioridad_nota: inp ? inp.value.trim() : String(m.prioridad_nota || ''),
+      prioridad_ts: (yaPedida && m.prioridad_ts) || new Date().toISOString(),
+      prioridad_por: (yaPedida && m.prioridad_por) || (window._tgaUser || ''),
+      prioridad_serie: (v && v.serie) || '',
+      prioridad_listo_ts: '', prioridad_listo_por: '',
+    };
+  } else {
+    campos = { prioridad_certificado: false, prioridad_nota: '', prioridad_ts: '', prioridad_por: '', prioridad_serie: '', prioridad_listo_ts: '', prioridad_listo_por: '' };
+  }
+  try {
+    let res;
+    if (MOTOR_NEXT) {
+      res = await fetch(GESTION_NEXT_URL + '/api/admventas?token=' + encodeURIComponent(GESTION_NEXT_TOKEN), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preventa: pv, campos: campos, usuario: window._tgaUser || '' }),
+      });
+    } else {
+      const body = new URLSearchParams();
+      body.set('payload', JSON.stringify({ token: APPS_SCRIPT_TOKEN, accion: 'setadmventa', preventa: pv, campos: campos, usuario: window._tgaUser || '' }));
+      res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+    }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    if (v) v.manual = Object.assign({}, v.manual, campos);
+    admPrioAbierto = '';
+    renderAdmVentas();
+  } catch (e) {
+    alert('No se pudo guardar la prioridad de ' + pv + ': ' + e.message);
   }
 }
 

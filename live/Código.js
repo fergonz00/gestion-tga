@@ -311,6 +311,37 @@ function _ntrim(s) {
   return s.replace(/[^a-z0-9]/g, '');
 }
 
+// _ntrim para descripciones que NO vienen de Oversoft (compras/reparto): pueden
+// traer el model-year con 4 dígitos pegado al final ("... V6 AT 4x4 G2 MY2026"),
+// que _ntrim no saca porque no hay borde de palabra entre "my" y "2026".
+function _ntrimDesc(d) { return _ntrim(String(d || '').replace(/\s+MY\s*\d{2,4}\s*$/i, '')); }
+
+// Descripción real por CHASIS (puente contra wjfgl). Se usa cuando el código de
+// compra NO alcanza para nombrar la unidad: model-year tan nuevo que Oversoft
+// todavía no lo describió Y código base ambiguo — CH24K3 = Nivus Highline/Outfit,
+// AGDD8A = Amarok Extreme/Hero/Black Style, DF14D3 = Tera High/Outfit, etc. Sin
+// esto la unidad cae en sinCatalogo (no la ve NADIE: ni el stock, ni ofertas, ni
+// baratito) o —peor— se cuelga del trim equivocado.
+// Fuentes: la carga de compras de Valeria (compras_vw.modelo_valeria, sale de la
+// factura de VW) y el reparto (reparto_vw.descripcion). Key = serie (últimos 8).
+function _descPorChasis() {
+  const out = {};
+  try {
+    (_repartoRead('/reparto_vw?select=vin,descripcion&limit=5000') || []).forEach(function (r) {
+      const s = String(r.vin || '').trim().toUpperCase().slice(-8);
+      if (s && r.descripcion) out[s] = String(r.descripcion);
+    });
+  } catch (e) {}
+  try {
+    // Compras pisa a reparto: es lo facturado, no lo prometido.
+    (_supaGet('/compras_vw?select=serie,modelo_valeria&limit=5000') || []).forEach(function (r) {
+      const s = String(r.serie || '').trim().toUpperCase();
+      if (s && r.modelo_valeria) out[s] = String(r.modelo_valeria);
+    });
+  } catch (e) {}
+  return out;
+}
+
 // Stock Y VENTAS por TRIM EXACTO desde Oversoft (todo genuino, sin la planilla).
 // Clave: los 6 dígitos del código NO distinguen High/Outfit, Highline/Bitono,
 // Extreme/Hero/Black Style (comparten código, distinto precio). La descripción
@@ -335,17 +366,25 @@ function _oversoftMotorData(catByNorm, catByBaseUnico) {
     if (ch.length < 1000) break;
     off += 1000;
   }
-  // 1º por descripción operativa (distingue trims que comparten código). Si el
-  // MY es tan nuevo que Oversoft todavía no lo catalogó (desc vacía), fallback
-  // por código base ("5URTT4 MY27" → "5URTT4") — SOLO si ese código identifica
-  // UN producto del catálogo (los ambiguos High/Outfit, Highline/Bitono,
-  // Extreme/Hero/Black Style comparten código y sin descripción no se pueden
-  // distinguir → siguen cayendo a sinCatalogo).
-  const ncDe = (codFull) => {
+  // Cadena para nombrar una unidad:
+  //  1º descripción operativa de Oversoft por código completo (distingue los
+  //     trims que comparten código: "CH24K3 PAR MY26" → Nivus Outfit).
+  //  2º si el MY es tan nuevo que Oversoft todavía no lo describió, la
+  //     descripción REAL de ese chasis (factura de VW / reparto). Es lo único que
+  //     desambigua los códigos base compartidos (Highline/Outfit, Extreme/Hero…).
+  //  3º código base ("5URTT4 MY27" → "5URTT4"), SOLO si identifica UN producto
+  //     del catálogo. Si el base es ambiguo y no hubo chasis → sinCatalogo (nunca
+  //     adivinar: colgarla del trim equivocado le cambia el precio al vendedor).
+  const descChasis = _descPorChasis();
+  const ncDe = (codFull, serie) => {
     const cod = String(codFull || '').trim();
     const d = desc[cod];
     const porDesc = d ? (catByNorm[_ntrim(d)] || null) : null;
-    return porDesc || (catByBaseUnico && catByBaseUnico[_baseCod(cod)]) || null;
+    if (porDesc) return porDesc;
+    const dc = serie ? descChasis[String(serie).trim().toUpperCase()] : null;
+    const porChasis = dc ? (catByNorm[_ntrimDesc(dc)] || null) : null;
+    if (porChasis) return porChasis;
+    return (catByBaseUnico && catByBaseUnico[_baseCod(cod)]) || null;
   };
   // Registro de lo que NO matchea, para que el front pueda mostrar cuáles son.
   const sinCat = {};
@@ -366,7 +405,7 @@ function _oversoftMotorData(catByNorm, catByBaseUnico) {
   const stockPorTrim = {}; const stockColorPorTrim = {}; const chasisPorTrim = {}; let stockTotal = 0;
   for (const u of us) {
     stockTotal++;
-    const nc = ncDe(u.modelo);
+    const nc = ncDe(u.modelo, u.serie);
     if (!nc) { anotarSinCat(u.modelo, 'stock'); continue; }
     stockPorTrim[nc] = (stockPorTrim[nc] || 0) + 1;
     const col = colorDe[String(u.color)] || ('color ' + u.color);
@@ -387,20 +426,24 @@ function _oversoftMotorData(catByNorm, catByBaseUnico) {
   // Color de las unidades vendidas: ya NO están en el stock (entregada/asignada),
   // así que su color se resuelve aparte (unidadid → color), en lotes de 100.
   const colorDeUid = {};
+  const serieDeUid = {};   // para nombrar por chasis las vendidas con código MY nuevo
   const uidSet = {};
   for (const pv of pvs) if (pv.unidadid) uidSet[pv.unidadid] = true;
   const uids = Object.keys(uidSet);
   for (let i = 0; i < uids.length; i += 100) {
     try {
-      const resU = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=unidadid,color&unidadid=in.(' + uids.slice(i, i + 100).join(',') + ')', h);
-      if (resU.getResponseCode() < 300) for (const u of JSON.parse(resU.getContentText())) colorDeUid[u.unidadid] = colorDe[String(u.color)] || ('color ' + u.color);
+      const resU = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=unidadid,color,serie&unidadid=in.(' + uids.slice(i, i + 100).join(',') + ')', h);
+      if (resU.getResponseCode() < 300) for (const u of JSON.parse(resU.getContentText())) {
+        colorDeUid[u.unidadid] = colorDe[String(u.color)] || ('color ' + u.color);
+        serieDeUid[u.unidadid] = String(u.serie || '').trim();
+      }
     } catch (e) {}
   }
   const ventasPorTrim = {};
   const ventasDet = {};   // nc → [{mes, monto, iva}] para la gcia real por venta
   const ventasColorPorTrim = {};   // nc → color → mes → cantidad (rotación por color)
   for (const pv of pvs) {
-    const nc = ncDe(pv.modelo);
+    const nc = ncDe(pv.modelo, pv.unidadid ? serieDeUid[pv.unidadid] : null);
     if (!nc) { anotarSinCat(pv.modelo, 'ventas'); continue; }
     if (!pv.fecha) continue;
     const mk = String(pv.fecha).slice(0, 7);
@@ -458,11 +501,11 @@ function _diasEnVenta(ncDe, colorDe, h) {
   const ini = new Date(hoy.getFullYear(), hoy.getMonth() - 12, 1);  // 1° de 12 meses atrás
   const iso = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-01';
   const dias0 = (desde, hasta) => Math.max(0, Math.round((hasta - new Date(String(desde).slice(0, 10))) / 86400000));
-  const res = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo,color,fechadepedido,fechaderecepcion,fechaasignacion&fechaasignacion=gte.' + iso(ini) + '&fechaasignacion=lt.' + iso(fin) + '&limit=5000', h);
+  const res = UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=modelo,color,serie,fechadepedido,fechaderecepcion,fechaasignacion&fechaasignacion=gte.' + iso(ini) + '&fechaasignacion=lt.' + iso(fin) + '&limit=5000', h);
   const us = (res.getResponseCode() < 300) ? JSON.parse(res.getContentText()) : [];
   const acc = {};   // nc → { sum, n, colores: { col → {sum,n} } }
   for (const u of us) {
-    const nc = ncDe(u.modelo);
+    const nc = ncDe(u.modelo, u.serie);
     if (!nc) continue;
     const desde = u.fechadepedido || u.fechaderecepcion;
     if (!desde || !u.fechaasignacion) continue;   // sin fecha de alta: no se puede medir
@@ -825,6 +868,14 @@ function getAdmVentas() {
         reventa_particular: m.reventa_particular || '',
         fecha_pago_vw:      m.fecha_pago_vw || '',
         notas:              m.notas || '',
+        // Pedido de pago prioritario a VW (para que liberen el certificado):
+        // lo prende la adm y lo ve tesorería en Compras VW de saldos-tga.
+        prioridad_certificado: !!m.prioridad_certificado,
+        prioridad_nota:     m.prioridad_nota || '',
+        prioridad_ts:       m.prioridad_ts || '',
+        prioridad_por:      m.prioridad_por || '',
+        prioridad_listo_ts: m.prioridad_listo_ts || '',   // lo sella tesorería (a mano o al pagar)
+        prioridad_listo_por: m.prioridad_listo_por || '',
       },
     };
   });
@@ -1798,7 +1849,8 @@ function _admCachePatch(pv, campos) {
 function saveAdmVenta(body) {
   const pv = String(body.preventa || '').trim();
   if (!pv) return { error: 'falta preventa' };
-  const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'credito_liquidado', 'credito_liquidado_ts', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'notas'];
+  const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'credito_liquidado', 'credito_liquidado_ts', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'notas',
+                      'prioridad_certificado', 'prioridad_nota', 'prioridad_ts', 'prioridad_por', 'prioridad_serie', 'prioridad_listo_ts', 'prioridad_listo_por'];
   const row = { preventa: pv, updated_at: new Date().toISOString(), updated_by: String(body.usuario || '') };
   const campos = body.campos || {};
   const guardados = {};
@@ -2312,12 +2364,20 @@ function getStockUnidades() {
   const cat = _supaGet('/catalogo_modelos?select=codigo,nombre_corto,nombre_bt,familia&activo=eq.true');
   const catByNorm = {};   // norm(desc operativa | nombre_bt | nombre_corto) → nombre_corto
   const btByNc = {};      // nombre_corto → nombre_bt
-  const catByBase = {};   // código base (sin sufijo MY/año) → nombre_corto — fallback para MY nuevos
+  // código base (sin sufijo MY/año) → nombre_corto — fallback para MY nuevos, SOLO
+  // si ese base identifica UN producto: CH24K3 es Nivus Highline Y Outfit, AGDD8A
+  // es Amarok Extreme/Hero/Black Style… adivinar le cambia el precio al vendedor.
+  const catByBase = {};
   for (const c of cat) {
     if (c.nombre_corto) { catByNorm[_ntrim(c.nombre_corto)] = c.nombre_corto; btByNc[c.nombre_corto] = c.nombre_bt || c.nombre_corto; }
     if (c.nombre_bt)    catByNorm[_ntrim(c.nombre_bt)] = c.nombre_corto;
-    if (c.codigo && c.nombre_corto) catByBase[_baseCod(c.codigo)] = c.nombre_corto;
+    if (c.codigo && c.nombre_corto) {
+      const b = _baseCod(c.codigo);
+      if (!(b in catByBase)) catByBase[b] = c.nombre_corto;
+      else if (catByBase[b] !== c.nombre_corto) catByBase[b] = null;   // ambiguo
+    }
   }
+  const descChasis = _descPorChasis();
   const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
   // descripción operativa por código de compra (paginado, igual que _oversoftMotorData)
   const desc = {};
@@ -2343,9 +2403,14 @@ function getStockUnidades() {
   const out = [];
   for (const u of us) {
     const d = desc[String(u.modelo || '').trim()];
-    // 1º por descripción operativa; si el MY es tan nuevo que Oversoft no lo describió
-    // todavía (desc vacía), fallback por código base (ej "5URTT4 MY27" → "5URTT4").
-    const nc = (d ? (catByNorm[_ntrim(d)] || null) : null) || (catByBase[_baseCod(u.modelo)] || null);
+    // 1º descripción operativa de Oversoft; 2º si el MY es tan nuevo que Oversoft
+    // todavía no lo describió, la descripción real del chasis (factura VW / reparto)
+    // — es lo único que desambigua los códigos base compartidos; 3º código base,
+    // solo si es único (ej "5URTT4 MY27" → "5URTT4"). Misma cadena que el motor.
+    const dc = descChasis[String(u.serie || '').trim().toUpperCase()];
+    const nc = (d ? (catByNorm[_ntrim(d)] || null) : null)
+            || (dc ? (catByNorm[_ntrimDesc(dc)] || null) : null)
+            || (catByBase[_baseCod(u.modelo)] || null);
     const fc = u.fechadepedido ? String(u.fechadepedido).slice(0, 10)
              : (u.fechaderecepcion ? String(u.fechaderecepcion).slice(0, 10) : null);
     let antig = null;
@@ -4672,6 +4737,11 @@ function getReparto() {
     var mm = motorByNorm[_repartoNtrim(r.descripcion)];
     var nc = mm ? mm.nombreCorto : null;
     var colorNom = colores[r.color_codigo] || r.color_codigo;
+    // Compras cargadas SIN color (el listado de facturacion de VW no lo trae): el
+    // color lo pone Oversoft cuando la unidad entra. No hay nada que comparar, asi
+    // que no se marca ⚠ ni se traba el auto-OK por un dato que nunca se cargo.
+    var sinColorCargado = !String(colorNom || '').trim();
+    if (sinColorCargado && ov && ov.color) colorNom = String(ov.color).trim();
     var chRaw = mm ? (mm.chasis || []) : [];
     var chasisStock = chRaw.map(function (c) {
       var d = c.fechaRecepcion ? Math.floor((now - new Date(c.fechaRecepcion).getTime()) / 86400000) : null;
@@ -4727,7 +4797,8 @@ function getReparto() {
         || _repartoNtrim(ov.modelo) === _repartoNtrim(r.descripcion)
         || incl(ov.modelo, r.descripcion)
       ) : null,
-      colorMatch: ov ? incl(ov.color, colorNom) : null,
+      colorMatch: ov ? (sinColorCargado ? true : incl(ov.color, colorNom)) : null,
+      colorDeOversoft: sinColorCargado && !!(ov && ov.color),
       chasisMatch: chasisMatch,
       // manual sin chasis: ni alerta ni "esperando" — falta que Valeria cargue el chasis
       alerta: r.estado_compra === 'comprado' && !esManual && !ov && dias !== null && dias >= 2
