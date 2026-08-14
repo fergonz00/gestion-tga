@@ -6879,6 +6879,58 @@ function _saldosACobrar() {
   return { ok: true, items: items, porFecha: porFecha, fechas: fechas, total: total, vencido: vencido, reproyectado: reproyectado, especial: especial };
 }
 
+// ---- DEUDA FLOOR PLAN · las impagas que YA ESTÁN VENDIDAS -----------------
+// De las unidades impagas (lo que le debemos a VW), las que Oversoft ya tiene con
+// preventa: el auto está vendido, así que la plata para pagarlo la tiene que
+// poner el cliente. Para cada una cruza el VENCIMIENTO del floor plan contra el
+// cuadro de cobros de esa PV (el mismo de Adm. ventas, ya viene en `c.pv`):
+// cuánto se cobró, cuánto falta y en qué fecha entra lo que falta.
+//   · `tarde`  → al cliente se le cobra DESPUÉS de que hay que pagarle a VW:
+//                ese pago hay que bancarlo con plata propia.
+// `pendientes` son las líneas del cuadro con saldo (>$1 para no arrastrar
+// centavos de redondeo), ordenadas por vto y las sin fecha al final.
+function _saldosFpVendidas(impagas) {
+  const hoy = _cvwHoyISO();
+  const items = (impagas || []).filter(c => c.pv).map(c => {
+    const p = c.pv;
+    const saldos = (p.cuadro || []).map(x => ({ concepto: String(x.concepto || ''), vto: String(x.vto || '').slice(0, 10), falta: Math.round((x.plan || 0) - (x.cobrado || 0)) }));
+    const pend = saldos.filter(x => x.falta > 1).sort((a, b) => (a.vto || '9999-99-99').localeCompare(b.vto || '9999-99-99'));
+    // NETEO INTRA-PREVENTA (igual que el flujo financiero): la NC se carga bajo
+    // el concepto que quiera el administrativo, no bajo el que tenía la deuda.
+    // El haber se imputa de la deuda más vieja a la más nueva.
+    let credito = saldos.filter(x => x.falta < -1).reduce((a, x) => a - x.falta, 0);
+    for (let i = 0; i < pend.length && credito > 0; i++) {
+      const usa = Math.min(credito, pend[i].falta);
+      pend[i].falta -= usa;
+      credito -= usa;
+    }
+    while (pend.length && pend[0].falta <= 1) pend.shift();
+    const falta = pend.reduce((a, x) => a + x.falta, 0);
+    const conVto = pend.filter(x => x.vto);
+    const ultimoCobro = conVto.length ? conVto[conVto.length - 1].vto : '';
+    const venceISO = _cvwToISO(c.vence) || '';
+    return {
+      serie: String(c.serie || ''), modelo: c.modeloOficial || c.modelo_valeria || c.modeloOversoft || '',
+      pv: p.numero || '', cliente: p.cliente || '',
+      venceISO: venceISO, deuda: _cvwBruto(c),
+      plan: p.totalPlan || 0, cobrado: p.totalCobrado || 0,
+      falta: falta, pendientes: pend,
+      proxima: pend.length ? pend[0].vto : '',
+      vencidoFp: !!(venceISO && venceISO < hoy),
+      tarde: !!(falta > 1 && venceISO && ultimoCobro && ultimoCobro > venceISO),
+    };
+  });
+  // el vto del floor plan manda: primero lo que hay que pagar antes
+  items.sort((a, b) => (a.venceISO || '9999-99-99').localeCompare(b.venceISO || '9999-99-99'));
+  return {
+    items: items,
+    deuda:   items.reduce((a, x) => a + x.deuda, 0),
+    cobrado: items.reduce((a, x) => a + x.cobrado, 0),
+    falta:   items.reduce((a, x) => a + x.falta, 0),
+    tarde:   items.filter(x => x.tarde).length,
+  };
+}
+
 // "Saldo Disponible VW Credit ..." con monto en col C = plata de VW todavía por
 // cobrar. Se suma aparte del disponible de hoy.
 function _saldosVWCredit() {
@@ -7191,9 +7243,14 @@ function renderResumen() {
            'planilla de tesorería', 'good',
            vwc.total ? ('<div style="font-size:14px;font-weight:700;color:var(--vw-grey-4);margin-top:2px">'
                         + '+ VW Credit → ' + fmtPesos(dispVWfuturo) + '</div>') : '');
+    const fpv = _saldosFpVendidas(impagasVW);   // impagas que ya tienen preventa
     h += _resSaldosCard('deudafp', 'Deuda Floor Plan', fmtPesos(deudaFP),
            impagasVW.length + ' unidad' + (impagasVW.length === 1 ? '' : 'es') + ' impaga' + (impagasVW.length === 1 ? '' : 's'),
-           'warn');
+           'warn',
+           fpv.items.length ? ('<div style="font-size:12px;font-weight:700;color:var(--vw-grey-4);margin-top:2px">'
+                        + '🧾 ' + fpv.items.length + ' ya vendida' + (fpv.items.length === 1 ? '' : 's') + ' → ' + fmtPesos(fpv.deuda) + '</div>'
+                        + '<div style="font-size:11px;font-weight:700;color:' + (fpv.falta > 1 ? '#cc3300' : '#0a7a30') + '">'
+                        + (fpv.falta > 1 ? 'falta cobrar ' + fmtPesos(fpv.falta) : 'ya cobradas al cliente') + '</div>') : '');
     h += '</div>';
 
     // ---- detalle desplegable (solo el de la card apretada) ----
@@ -7282,6 +7339,58 @@ function renderResumen() {
         b += _tot(fmtPesos(deudaFP));
       }
       h += _det('Deuda Floor Plan por vencimiento', b);
+
+      // ---- las impagas que YA están vendidas: cómo se cobra cada una --------
+      // Va abajo y más chico que el desglose por vencimiento: es el detalle fino
+      // (qué le falta pagar al cliente y cuándo) de las unidades que ya tienen PV.
+      const hoyISO = _cvwHoyISO();
+      let bv = '';
+      if (!fpv.items.length) {
+        bv = '<div style="font-size:12px;color:var(--vw-grey-3)">Ninguna de las unidades impagas tiene preventa todavía: son todas stock sin vender.</div>';
+      } else {
+        for (const it of fpv.items) {
+          bv += '<div style="padding:8px 0;border-bottom:1px solid #eef1f5">'
+             + '<div style="display:flex;align-items:baseline;gap:8px">'
+             + '<span style="flex:1;font-size:12.5px;font-weight:800">' + escapeHtml(it.modelo || it.serie)
+             + ' <span style="font-weight:600;font-size:10.5px;color:var(--vw-grey-3)">' + escapeHtml(it.serie) + '</span></span>'
+             + '<span style="font-size:11px;color:var(--vw-blue);font-weight:700;white-space:nowrap">PV ' + escapeHtml(String(it.pv).replace('PV ', '')) + '</span>'
+             + '<span style="font-weight:800;font-size:13.5px;white-space:nowrap;min-width:118px;text-align:right">'
+             + (it.deuda ? fmtPesos(it.deuda) : '<span style="font-size:11px;font-weight:600;color:var(--vw-grey-3)">s/factura</span>') + '</span>'
+             + '</div>'
+             + '<div style="font-size:11px;color:var(--vw-grey-4);margin-top:1px">'
+             + escapeHtml(it.cliente || 'sin cliente')
+             + ' · a VW ' + (it.venceISO
+                 ? ('<b style="color:' + (it.vencidoFp ? '#cc3300' : 'inherit') + '">' + escapeHtml(_cvwFechaDisp(it.venceISO)) + (it.vencidoFp ? ' ⚠ vencido' : '') + '</b>')
+                 : '<b>sin vto cargado</b>')
+             + '</div>'
+             + '<div style="font-size:11px;margin-top:2px;color:var(--vw-grey-4)">'
+             + 'cobrado <b style="color:#0a7a30">' + fmtPesos(it.cobrado) + '</b> de ' + fmtPesos(it.plan)
+             + ' · falta <b style="color:' + (it.falta > 1 ? '#cc3300' : '#0a7a30') + '">'
+             + (it.falta > 1 ? fmtPesos(it.falta) : '✓ todo cobrado') + '</b></div>';
+          for (const p of it.pendientes) {
+            const vencidoCobro = !!(p.vto && p.vto < hoyISO);
+            const post = !!(p.vto && it.venceISO && p.vto > it.venceISO);
+            bv += '<div style="display:flex;gap:8px;padding:1px 0 1px 12px;font-size:11px;color:var(--vw-grey-3)">'
+               + '<span style="flex:1">' + escapeHtml(p.concepto) + ' → cobrar '
+               + (p.vto ? escapeHtml(_cvwFechaDisp(p.vto)) : 'sin fecha')
+               + (vencidoCobro ? ' <b style="color:#cc3300">vencido</b>' : (post ? ' <b style="color:#cc6600">después de pagarle a VW</b>' : ''))
+               + '</span>'
+               + '<span style="white-space:nowrap;min-width:110px;text-align:right">' + fmtPesos(p.falta) + '</span></div>';
+          }
+          bv += '</div>';
+        }
+        bv += '<div style="display:flex;gap:10px;padding:9px 0 0;font-size:11.5px">'
+           + '<span style="flex:1;font-weight:800;color:var(--vw-grey-3)">TOTAL ' + fpv.items.length + ' vendida' + (fpv.items.length === 1 ? '' : 's') + '</span>'
+           + '<span style="font-weight:700">debemos ' + fmtPesos(fpv.deuda) + '</span>'
+           + '<span style="font-weight:800;color:' + (fpv.falta > 1 ? '#cc3300' : '#0a7a30') + ';white-space:nowrap;min-width:130px;text-align:right">'
+           + 'falta cobrar ' + fmtPesos(fpv.falta) + '</span></div>';
+        if (fpv.tarde) {
+          bv += '<div style="font-size:10.5px;color:#cc6600;margin-top:6px">⚠ ' + fpv.tarde + ' unidad'
+             + (fpv.tarde === 1 ? '' : 'es') + ' termina' + (fpv.tarde === 1 ? '' : 'n') + ' de cobrarse DESPUÉS del vencimiento del floor plan: '
+             + 'ese pago a VW hay que bancarlo con plata propia.</div>';
+        }
+      }
+      h += _det('Impagas ya vendidas · qué falta cobrarle al cliente y cuándo', bv);
     }
   } else {
     h += '<div class="resumen-loading">Cargando saldos...</div>';
