@@ -463,6 +463,38 @@ table.ventas-tbl.resumida .col-extra { display: none; }
   min-width: 220px;
 }
 .mes-row select:focus { border-color: var(--vw-blue); }
+/* Barra de chips de Patentamientos: Facturada / Retiro doc / Rev-Part, con
+   modo Filtrar (esconde el resto) o Resaltar (los pinta sin esconder nada). */
+.pat-chips {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: -6px 0 16px; padding: 10px 12px;
+  background: var(--vw-grey-1); border: 1px solid var(--vw-grey-2); border-radius: 10px;
+}
+.pat-chips .grp { display: flex; align-items: center; gap: 6px; }
+.pat-chips .grp-lab {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.5px; color: var(--vw-grey-3);
+}
+.pat-chips .sep { width: 1px; height: 24px; background: var(--vw-grey-2); margin: 0 3px; }
+.pat-chip {
+  padding: 5px 11px; border: 1px solid var(--vw-grey-2); border-radius: 14px;
+  background: #fff; color: var(--vw-grey-4); font-size: 12.5px; cursor: pointer;
+  white-space: nowrap; font-family: var(--font);
+}
+.pat-chip:hover { border-color: var(--vw-blue); color: var(--vw-blue); }
+.pat-chip.on { background: var(--vw-blue); border-color: var(--vw-blue); color: #fff; font-weight: 700; }
+.pat-chip .n { opacity: 0.65; font-weight: 400; margin-left: 3px; }
+.pat-chip.on .n { opacity: 0.85; }
+.pat-chip[disabled] { opacity: 0.45; cursor: default; }
+.pat-modo { display: inline-flex; border: 1px solid var(--vw-grey-2); border-radius: 14px; overflow: hidden; background: #fff; }
+.pat-modo button {
+  border: 0; background: #fff; color: var(--vw-grey-3); font-size: 12px;
+  padding: 6px 11px; cursor: pointer; font-family: var(--font);
+}
+.pat-modo button.on { background: var(--vw-blue); color: #fff; font-weight: 700; }
+/* Fila resaltada (modo Resaltar): amarillo + barrita al costado. */
+table.patent-tbl tbody tr.pat-hit > td { background: #FFF8D9 !important; }
+table.patent-tbl tbody tr.pat-hit > td:first-child { box-shadow: inset 3px 0 0 var(--orange); }
 table.ventas-tbl tbody td.gcia-pos { color: var(--green-dark); font-weight: 600; }
 table.ventas-tbl tbody td.gcia-neg { color: var(--orange-dark); font-weight: 600; }
 
@@ -1704,6 +1736,10 @@ let vistaResumidaPat = false;     // toggle vista resumida en patentamientos
 //   Retiró doc lo carga a mano la adm en la solapa Adm. ventas.
 let factFiltroPat = '';
 let docFiltroPat  = '';
+let revFiltroPat  = '';   // '' | 'REVENTA' | 'PARTICULAR' | 'SIN' (sin definir)
+// 'filtrar' esconde lo que no matchea; 'resaltar' no esconde nada y pinta lo que
+// matchea (pedido de Monica: ver el mes entero con lo buscado marcado).
+let modoFiltroPat = 'filtrar';
 
 // Trimestre — formato 'YYYY-Qn'. Default = trimestre calendario actual.
 let quarterSel = '';
@@ -9441,9 +9477,16 @@ function descartarPagosParseados() {
 function setMesPat(mesKey)       { mesSelPat = mesKey || ''; renderPatentamientos(); }
 function setVendedorFiltroPat(v) { vendedorFiltroPat = v || ''; renderPatentamientos(); }
 function setAdminFiltroPat(a)    { adminFiltroPat = a || ''; renderPatentamientos(); }
-// Facturada al cliente / retiro de la documentación: '' = todas, 'si', 'no'.
-function setFactFiltroPat(v)     { factFiltroPat = v || ''; renderPatentamientos(); }
-function setDocFiltroPat(v)      { docFiltroPat  = v || ''; renderPatentamientos(); }
+// Barra de chips: Facturada ('si'/'no'), Retiró doc ('si'/'no') y Rev/Part
+// ('REVENTA'/'PARTICULAR'/'SIN'). Clic en el chip activo lo apaga (toggle).
+function togglePatChip(dim, val) {
+  if (dim === 'fact') factFiltroPat = (factFiltroPat === val ? '' : val);
+  if (dim === 'doc')  docFiltroPat  = (docFiltroPat  === val ? '' : val);
+  if (dim === 'rev')  revFiltroPat  = (revFiltroPat  === val ? '' : val);
+  renderPatentamientos();
+}
+function setModoFiltroPat(m)  { modoFiltroPat = (m === 'resaltar' ? 'resaltar' : 'filtrar'); renderPatentamientos(); }
+function limpiarFiltrosPat()  { factFiltroPat = ''; docFiltroPat = ''; revFiltroPat = ''; renderPatentamientos(); }
 // Click en la fila de una administrativa del panel: filtra por ella, y si ya
 // estaba filtrada, limpia (toggle).
 function toggleAdminFiltroPat(a) { setAdminFiltroPat(adminFiltroPat === a ? '' : a); }
@@ -9905,28 +9948,56 @@ function renderPatentamientos() {
     html += '  <button class="calc-clear" onclick="setAdminFiltroPat(\'\')" title="Limpiar administrativa">✕</button>';
   }
 
-  // Filtros Facturada / Retiró doc (solo tabla). Los contadores se calculan sobre
-  // el mes ya filtrado por vendedor + administrativa, para que cierren con lo que
-  // se ve. Si la data de Adm. ventas todavía no llegó, salen deshabilitados.
-  const nFactSi = delMes.filter(c => _fact(c)).length;
-  const nDocSi  = delMes.filter(c => _doc(c)).length;
-  const disMap  = admMapDesg ? '' : ' disabled';
-  html += '  <select id="factFiltroPat" onchange="setFactFiltroPat(this.value)"' + disMap
-        + ' title="Factura del auto al cliente (sale sola de Oversoft)" style="min-width:180px">';
-  html += '    <option value=""' + (!factFiltroPat ? ' selected' : '') + '>Facturada: todas</option>';
-  html += '    <option value="si"' + (factFiltroPat === 'si' ? ' selected' : '') + '>Facturadas · ' + nFactSi + '</option>';
-  html += '    <option value="no"' + (factFiltroPat === 'no' ? ' selected' : '') + '>Sin facturar · ' + (delMes.length - nFactSi) + '</option>';
-  html += '  </select>';
-  html += '  <select id="docFiltroPat" onchange="setDocFiltroPat(this.value)"' + disMap
-        + ' title="Retiro de la documentación (cédula/título). Se carga a mano en Adm. ventas" style="min-width:195px">';
-  html += '    <option value=""' + (!docFiltroPat ? ' selected' : '') + '>Retiró doc: todas</option>';
-  html += '    <option value="si"' + (docFiltroPat === 'si' ? ' selected' : '') + '>Retiraron doc · ' + nDocSi + '</option>';
-  html += '    <option value="no"' + (docFiltroPat === 'no' ? ' selected' : '') + '>Sin retirar doc · ' + (delMes.length - nDocSi) + '</option>';
-  html += '  </select>';
-
   html += '  <label class="toggle-resumida">'
         + '    <input type="checkbox" ' + (vistaResumidaPat ? 'checked' : '') + ' onchange="toggleVistaResumidaPat()"> Vista resumida'
         + '  </label>';
+  html += '</div>';
+
+  // ----- Barra de chips: Facturada / Retiró doc / Rev-Part -----
+  // Los tres cortes que mira la adm al cerrar una carpeta. Se combinan entre sí
+  // (Y lógico) y cada chip trae su conteo sobre el mes YA filtrado por vendedor
+  // y administrativa, para que cierre con lo que se ve. Ojo: NO tocan los KPIs
+  // de arriba — el % contra el objetivo mide el mes entero, no el corte.
+  // dim/val viajan por data-attributes para no pelear con el escapeo de comillas.
+  const rpDe    = c => (c.reventaOParticular || '');
+  const nFactSi = delMes.filter(_fact).length;
+  const nDocSi  = delMes.filter(_doc).length;
+  const nRev    = delMes.filter(c => rpDe(c) === 'REVENTA').length;
+  const nPart   = delMes.filter(c => rpDe(c) === 'PARTICULAR').length;
+  const nSinRp  = delMes.filter(c => !rpDe(c)).length;
+  const sinAdm  = !admMapDesg;   // todavía no llegó la data de Adm. ventas
+  const chipPat = (dim, val, lbl, n, dis) => {
+    const activo = dim === 'fact' ? factFiltroPat : (dim === 'doc' ? docFiltroPat : revFiltroPat);
+    return '<button class="pat-chip' + (activo === val ? ' on' : '') + '"'
+      + ' data-dim="' + dim + '" data-val="' + val + '"'
+      + (dis ? ' disabled' : ' onclick="togglePatChip(this.dataset.dim, this.dataset.val)"')
+      + '>' + lbl + '<span class="n">' + n + '</span></button>';
+  };
+
+  html += '<div class="pat-chips">';
+  html += '  <div class="grp"><span class="grp-lab">Facturada</span>'
+        + chipPat('fact', 'si', 'Sí ', nFactSi, sinAdm)
+        + chipPat('fact', 'no', 'No ', delMes.length - nFactSi, sinAdm)
+        + '</div><div class="sep"></div>';
+  html += '  <div class="grp"><span class="grp-lab">Retiró doc</span>'
+        + chipPat('doc', 'si', 'Sí ', nDocSi, sinAdm)
+        + chipPat('doc', 'no', 'No ', delMes.length - nDocSi, sinAdm)
+        + '</div><div class="sep"></div>';
+  html += '  <div class="grp"><span class="grp-lab">Rev/Part</span>'
+        + chipPat('rev', 'REVENTA',    'Reventa ',     nRev)
+        + chipPat('rev', 'PARTICULAR', 'Particular ',  nPart)
+        + chipPat('rev', 'SIN',        'Sin definir ', nSinRp)
+        + '</div><div class="sep"></div>';
+  html += '  <div class="pat-modo" title="Filtrar esconde lo que no coincide. Resaltar deja todo el mes a la vista y pinta en amarillo lo que coincide.">'
+        + '<button data-m="filtrar" class="'  + (modoFiltroPat === 'filtrar'  ? 'on' : '') + '" onclick="setModoFiltroPat(this.dataset.m)">🔍 Filtrar</button>'
+        + '<button data-m="resaltar" class="' + (modoFiltroPat === 'resaltar' ? 'on' : '') + '" onclick="setModoFiltroPat(this.dataset.m)">🖍 Resaltar</button>'
+        + '</div>';
+  if (factFiltroPat || docFiltroPat || revFiltroPat) {
+    html += '  <button class="calc-clear" onclick="limpiarFiltrosPat()" title="Limpiar los tres cortes">✕ limpiar</button>';
+  }
+  if (sinAdm) {
+    html += '  <span style="font-size:11.5px;color:var(--vw-grey-3)">cargando Adm. ventas para Facturada / Retiró doc…</span>';
+  }
   html += '</div>';
 
   if (vendedorFiltroPat || adminFiltroPat) {
@@ -10058,25 +10129,39 @@ function renderPatentamientos() {
   html += panelAdminDetalle(delMesSinAdmin);
 
   // ----- Tabla -----
-  // La tabla es lo único que filtran Facturada / Retiró doc (los KPIs de arriba
-  // siguen mostrando el mes completo).
-  const delMesTabla = delMes.filter(c => {
+  // Los tres cortes de la barra de chips salen por acá y SOLO tocan la tabla
+  // (los KPIs de arriba siguen midiendo el mes completo). En modo "filtrar" se
+  // esconde lo que no coincide; en "resaltar" no se esconde nada y lo que
+  // coincide va pintado (clase pat-hit).
+  const _matchPat = c => {
     if (factFiltroPat === 'si' && !_fact(c)) return false;
     if (factFiltroPat === 'no' &&  _fact(c)) return false;
     if (docFiltroPat  === 'si' && !_doc(c))  return false;
     if (docFiltroPat  === 'no' &&  _doc(c))  return false;
+    if (revFiltroPat === 'REVENTA'    && rpDe(c) !== 'REVENTA')    return false;
+    if (revFiltroPat === 'PARTICULAR' && rpDe(c) !== 'PARTICULAR') return false;
+    if (revFiltroPat === 'SIN'        && rpDe(c))                  return false;
     return true;
-  });
+  };
+  const hayFiltroPat  = !!(factFiltroPat || docFiltroPat || revFiltroPat);
+  const resaltandoPat = hayFiltroPat && modoFiltroPat === 'resaltar';
+  const delMesTabla   = (hayFiltroPat && !resaltandoPat) ? delMes.filter(_matchPat) : delMes;
   const _filtrosTblTxt = [
     factFiltroPat === 'si' ? 'facturadas' : (factFiltroPat === 'no' ? 'sin facturar' : ''),
     docFiltroPat  === 'si' ? 'retiraron doc' : (docFiltroPat  === 'no' ? 'sin retirar doc' : ''),
+    revFiltroPat === 'REVENTA' ? 'reventa' : (revFiltroPat === 'PARTICULAR' ? 'particular' : (revFiltroPat === 'SIN' ? 'rev/part sin definir' : '')),
   ].filter(Boolean).join(' + ');
+  const nHitPat = resaltandoPat ? delMes.filter(_matchPat).length : 0;
 
   html += '<div class="table-wrap">'
         + '  <div class="table-head">'
         + '    <h3>Carpetas — ' + escapeHtml((meses.find(m => m.mesKey === mesSelPat)?.label) || 'Sin mes') + '</h3>'
-        + '    <div class="count">' + delMesTabla.length + ' visibles'
-        + (_filtrosTblTxt ? ' <span style="font-weight:400">(' + escapeHtml(_filtrosTblTxt) + ', de ' + delMes.length + ')</span>' : '')
+        + '    <div class="count">'
+        + (resaltandoPat
+            ? delMes.length + ' del mes · <span style="color:#B45309">' + nHitPat + ' resaltadas</span>'
+              + ' <span style="font-weight:400">(' + escapeHtml(_filtrosTblTxt) + ')</span>'
+            : delMesTabla.length + ' visibles'
+              + (_filtrosTblTxt ? ' <span style="font-weight:400">(' + escapeHtml(_filtrosTblTxt) + ', de ' + delMes.length + ')</span>' : ''))
         + '    </div>'
         + '  </div>'
         + '  <div class="table-scroll">'
@@ -10109,11 +10194,11 @@ function renderPatentamientos() {
     const admMapTbl = _admMapPorPv();
     if (pendList.length) {
       html += '<tr class="tbl-sep pend"><td colspan="14">Pendientes de patentar · ' + pendList.length + '</td></tr>';
-      for (const c of pendList) html += filaPatent(c, admMapTbl);
+      for (const c of pendList) html += filaPatent(c, admMapTbl, resaltandoPat && _matchPat(c));
     }
     if (patList.length) {
       html += '<tr class="tbl-sep pat"><td colspan="14">Patentadas · ' + patList.length + '</td></tr>';
-      for (const c of patList) html += filaPatent(c, admMapTbl);
+      for (const c of patList) html += filaPatent(c, admMapTbl, resaltandoPat && _matchPat(c));
     }
   }
   html += '</tbody></table></div></div>';
@@ -10135,7 +10220,7 @@ function _tipoOperTxt(c, ov) {
   return c.tipoCarpetaCanon || c.tipoCarpeta || '—';
 }
 
-function filaPatent(c, admMap) {
+function filaPatent(c, admMap, hit) {
   const ov = admMap ? admMap[_pvKey(c.pv)] : null;
   const patBadge = c.patentada
     ? '<span class="badge paga">' + escapeHtml(c.fechaPatStr || fmtFechaCorta(c.fechaPatIso)) + '</span>'
@@ -10144,7 +10229,7 @@ function filaPatent(c, admMap) {
     ? '<span class="badge ' + _patentaCls(c.patentaA) + '">' + escapeHtml(c.patentaA) + '</span>'
     : '<span class="muted">—</span>';
 
-  let h = '<tr>';
+  let h = '<tr' + (hit ? ' class="pat-hit"' : '') + '>';
   h += '<td class="ctr" data-label="#">' + (c.num || '—') + '</td>';
   h += '<td data-label="# PV">' + escapeHtml(c.pv) + '</td>';
   h += '<td class="col-extra" data-label="Serie"><span class="serie">' + escapeHtml(c.serie) + '</span></td>';
