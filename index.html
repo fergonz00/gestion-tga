@@ -2479,11 +2479,12 @@ function renderAdmVentas() {
      + '<th title="Pago de la unidad a VW (de Compras y Saldos, por serie): fecha o impaga">Pago VW</th>'
      + '<th style="text-align:left">Dominio</th><th style="text-align:left">F. patent.</th>'
      + '<th>Patenta</th><th>Admin</th><th title="La adm confirma el mes una vez pagado el patentamiento (aunque Oversoft ya tenga la fecha)">Mes pat. ✔adm</th>'
-     + '<th title="Forma de pago según Oversoft (formas de pago + recibos). 💵 abre el detalle">Tipo</th><th title="La adm anota la fecha exacta en que se liquidó el crédito, o marca NO LIQUIDADO">Créd. liq.</th><th>Rev/Part</th><th>Notas</th>'
-     + '<th title="Día y hora programada en Oversoft para que el cliente retire la unidad">📅 Entrega</th>'
-     + '<th title="✓ cuando la unidad figura como entregada en Oversoft">Retiró</th>'
+     + '<th title="Forma de pago según Oversoft (formas de pago + recibos). 💵 abre el detalle">Tipo</th><th title="La adm anota la fecha exacta en que se liquidó el crédito, o marca NO LIQUIDADO">Créd. liq.</th><th>Rev/Part</th>'
      + '<th title="Factura del auto al cliente (Oversoft, automático): NO si todavía no se facturó, o la fecha de la FC">Facturada</th>'
      + '<th title="Fecha en que el cliente retiró la documentación (cédula/título). Se carga a mano acá y se ve/filtra en Patentamientos">Retiró doc</th>'
+     + '<th>Notas</th>'
+     + '<th title="Día y hora programada en Oversoft para que el cliente retire la unidad">📅 Entrega</th>'
+     + '<th title="✓ cuando la unidad figura como entregada en Oversoft">Retiró</th>'
      + '<th></th>'
      + '</tr></thead><tbody>';
 
@@ -2582,6 +2583,11 @@ function renderAdmVentas() {
        + '</td>'
        + '<td data-label="Créd. liq.">' + _admLiqCell(v, key) + '</td>'
        + '<td data-label="Rev/Part">' + selRevPart(v.preventa, key, m.reventa_particular, _revPartDeducido(m.patenta)) + '</td>'
+       + '<td data-label="Facturada" style="text-align:center;white-space:nowrap">' + _admFactCell(v) + '</td>'
+       + '<td data-label="Retiró doc" style="white-space:nowrap">'
+         + inp(v.preventa, key, 'retiro_doc', m.retiro_doc, 104, 'date', m.retiro_doc ? null : '#cc6600')
+         + (m.retiro_doc ? '' : '<br><small style="color:#cc6600">NO</small>')
+       + '</td>'
        + '<td data-label="Notas">' + inp(v.preventa, key, 'notas', m.notas, 92) + '</td>'
        + '<td data-label="📅 Entrega" style="white-space:nowrap">'
          + (v.entregaFecha
@@ -2591,11 +2597,6 @@ function renderAdmVentas() {
        + '</td>'
        + '<td data-label="Retiró" style="text-align:center;white-space:nowrap">'
          + (v.entregada ? '<span style="color:#0a7a30;font-weight:700;font-size:13px">✓ retiró</span>' : '<span style="color:var(--vw-grey-3)">—</span>')
-       + '</td>'
-       + '<td data-label="Facturada" style="text-align:center;white-space:nowrap">' + _admFactCell(v) + '</td>'
-       + '<td data-label="Retiró doc" style="white-space:nowrap">'
-         + inp(v.preventa, key, 'retiro_doc', m.retiro_doc, 104, 'date', m.retiro_doc ? null : '#cc6600')
-         + (m.retiro_doc ? '' : '<br><small style="color:#cc6600">NO</small>')
        + '</td>'
        + '<td data-label="Guardado"><button onclick="guardarAdmVenta(\'' + v.preventa + '\')" id="admsave_' + key + '" title="Reintentar guardado de la fila" '
        + ' style="border:0;background:var(--vw-blue);color:#fff;border-radius:6px;padding:4px 9px;cursor:pointer">✓</button></td>'
@@ -10088,13 +10089,13 @@ function renderPatentamientos() {
         + '        <th class="col-extra">Admin</th>'
         + '        <th class="col-extra">Tipo</th>'
         + '        <th class="col-extra">Rev/Part</th>'
+        + '        <th class="ctr" title="Factura del auto al cliente (Oversoft, automático): NO, o la fecha de la factura">Facturada</th>'
+        + '        <th class="ctr" title="Fecha en que el cliente retiró la documentación. Se carga a mano en la solapa Adm. ventas">Retiró doc</th>'
         + '        <th>Vendedor</th>'
         + '        <th class="col-extra">Cliente</th>'
         + '        <th>Modelo</th>'
         + '        <th class="ctr">Fecha pat.</th>'
         + '        <th class="col-extra">Dominio</th>'
-        + '        <th class="ctr" title="Factura del auto al cliente (Oversoft, automático): NO, o la fecha de la factura">Facturada</th>'
-        + '        <th class="ctr" title="Fecha en que el cliente retiró la documentación. Se carga a mano en la solapa Adm. ventas">Retiró doc</th>'
         + '      </tr></thead><tbody>';
 
   if (!delMesTabla.length) {
@@ -10159,11 +10160,6 @@ function filaPatent(c, admMap) {
         : escapeHtml(c.reventaOParticular))
     : '—';
   h += '<td class="col-extra" data-label="Rev/Part">' + rpTxt + '</td>';
-  h += '<td data-label="Vendedor">' + escapeHtml(c.vendedor || c.vendedorRaw || '—') + '</td>';
-  h += '<td class="col-extra" data-label="Cliente">' + escapeHtml(c.cliente || '—') + '</td>';
-  h += '<td data-label="Modelo">' + escapeHtml(c.modelo || '—') + '</td>';
-  h += '<td class="ctr" data-label="Fecha pat.">' + patBadge + '</td>';
-  h += '<td class="col-extra" data-label="Dominio">' + escapeHtml(c.dominio || '—') + '</td>';
   // Facturada (Oversoft) y Retiró doc (carga manual de la adm) — los dos salen
   // de Adm. ventas; sin esa data todavía cargada van como s/d, no como NO.
   const fFact = _admFacturaFecha(ov);
@@ -10176,6 +10172,11 @@ function filaPatent(c, admMap) {
      + (!ov ? '<span class="muted">s/d</span>'
             : (fDoc ? '<span class="badge paga">' + escapeHtml(_fechaDMA(fDoc)) + '</span>'
                     : '<span class="badge impaga">NO</span>')) + '</td>';
+  h += '<td data-label="Vendedor">' + escapeHtml(c.vendedor || c.vendedorRaw || '—') + '</td>';
+  h += '<td class="col-extra" data-label="Cliente">' + escapeHtml(c.cliente || '—') + '</td>';
+  h += '<td data-label="Modelo">' + escapeHtml(c.modelo || '—') + '</td>';
+  h += '<td class="ctr" data-label="Fecha pat.">' + patBadge + '</td>';
+  h += '<td class="col-extra" data-label="Dominio">' + escapeHtml(c.dominio || '—') + '</td>';
   h += '</tr>';
   return h;
 }
