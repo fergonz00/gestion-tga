@@ -867,6 +867,9 @@ function getAdmVentas() {
         fecha_liquidacion:  m.fecha_liquidacion || '',
         reventa_particular: m.reventa_particular || '',
         fecha_pago_vw:      m.fecha_pago_vw || '',
+        // Fecha en que el cliente retiró la documentación (cédula/título).
+        // La carga a mano la adm; vacío = todavía no la retiró.
+        retiro_doc:         m.retiro_doc || '',
         notas:              m.notas || '',
         // Pedido de pago prioritario a VW (para que liberen el certificado):
         // lo prende la adm y lo ve tesorería en Compras VW de saldos-tga.
@@ -1856,7 +1859,7 @@ function _admCachePatch(pv, campos) {
 function saveAdmVenta(body) {
   const pv = String(body.preventa || '').trim();
   if (!pv) return { error: 'falta preventa' };
-  const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'credito_liquidado', 'credito_liquidado_ts', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'notas',
+  const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'credito_liquidado', 'credito_liquidado_ts', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'retiro_doc', 'notas',
                       'prioridad_certificado', 'prioridad_nota', 'prioridad_ts', 'prioridad_por', 'prioridad_serie', 'prioridad_listo_ts', 'prioridad_listo_por'];
   const row = { preventa: pv, updated_at: new Date().toISOString(), updated_by: String(body.usuario || '') };
   const campos = body.campos || {};
@@ -2062,18 +2065,39 @@ function migrarComprasVW() {
   try { _cacheDrop('comprasvw'); } catch (e) {}
   return { ok: true, candidatos: rows.length, conciliados: rows.filter(r => r.conciliado).length };
 }
-// Calendario VWFS PUNTUAL (lote facturado 24–31 jul 2026): fecha de factura →
-// vencimiento en VWFS. NO es una fórmula (VW lo publica por lote), por eso es un
-// mapa fijo y acotado a estas 6 fechas. Cuando Valeria carga una factura con una
-// de estas fechas, el vence se autocompleta solo (si no lo puso a mano). Para
-// otros lotes hay que pasar el nuevo mapa. Formato "DD-mmm" (como se guarda).
+// Calendario VWFS PUNTUAL: fecha de factura → vencimiento en VWFS. NO es una
+// fórmula (VW lo publica por lote en una circular; una factura más tarde puede
+// vencer antes), por eso es un mapa fijo, acotado a las fechas que la circular
+// difiere. Las fechas que la circular deja en "vencimiento habitual de 30 días"
+// quedan FUERA a propósito: esas las carga Valeria a mano. Cuando carga una
+// factura con una de estas fechas, el vence se autocompleta (si no lo puso ella).
+// Clave y valor en ISO yyyy-mm-dd (que es como guarda el front desde el 17-jun).
 const VWFS_VTO_PUNTUAL = {
-  '24-jul': '04-sep', '27-jul': '04-sep', '28-jul': '03-sep',
-  '29-jul': '02-sep', '30-jul': '01-sep', '31-jul': '24-ago',
+  // jul-2026
+  '2026-07-24': '2026-09-04', '2026-07-27': '2026-09-04', '2026-07-28': '2026-09-03',
+  '2026-07-29': '2026-09-02', '2026-07-30': '2026-09-01', '2026-07-31': '2026-08-24',
+  // ago-2026 — circular "Extensión de plazos de vencimiento" (facturas desde el 21/8).
+  // El 28/8 NO está: ese día la circular parte por modelo (solo Polo Track MSI MST
+  // BZ31T4 va al 01/10, el resto al habitual de 30 días) y el mapa es por fecha.
+  '2026-08-21': '2026-10-01', '2026-08-24': '2026-10-01', '2026-08-25': '2026-09-30',
+  '2026-08-31': '2026-09-23',
 };
+const _VWFS_MESAB = { ene: 1, feb: 2, mar: 3, abr: 4, may: 5, jun: 6, jul: 7, ago: 8, sep: 9, set: 9, oct: 10, nov: 11, dic: 12 };
+// Normaliza la fecha de factura a ISO: ya viene "2026-08-21" del selector, pero
+// las filas viejas guardan "21-ago" (sin año → 2026, toda la data migrada es 2026).
+function _vwfsISO(v) {
+  const s = String(v || '').trim().toLowerCase().replace(/\s+/g, '');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const p = s.split('-');
+  const d = parseInt(p[0], 10), m = _VWFS_MESAB[(p[1] || '').slice(0, 3)];
+  if (!d || !m) return '';
+  const y = p[2] ? (p[2].length === 2 ? 2000 + parseInt(p[2], 10) : parseInt(p[2], 10)) : 2026;
+  const pad = n => (String(n).length < 2 ? '0' + n : String(n));
+  return y + '-' + pad(m) + '-' + pad(d);
+}
 function _vwfsVtoPuntual(fechaFc) {
-  const k = String(fechaFc || '').trim().toLowerCase().replace(/\s+/g, '');
-  return VWFS_VTO_PUNTUAL[k] || null;
+  const k = _vwfsISO(fechaFc);
+  return (k && VWFS_VTO_PUNTUAL[k]) || null;
 }
 function saveCompraVW(body) {
   const serie = String(body.serie || '').trim().toUpperCase();

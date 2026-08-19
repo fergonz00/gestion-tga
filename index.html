@@ -1699,6 +1699,11 @@ let mesSelPat = '';
 let vendedorFiltroPat = '';       // filtro por vendedor (drill-down)
 let adminFiltroPat = '';          // filtro por administrativa (drill-down)
 let vistaResumidaPat = false;     // toggle vista resumida en patentamientos
+// Filtros de la tabla (NO tocan los KPIs del mes, que siguen midiendo todo):
+//   '' = todas | 'si' | 'no'. Facturada sale sola de Oversoft (FC del auto);
+//   Retiró doc lo carga a mano la adm en la solapa Adm. ventas.
+let factFiltroPat = '';
+let docFiltroPat  = '';
 
 // Trimestre — formato 'YYYY-Qn'. Default = trimestre calendario actual.
 let quarterSel = '';
@@ -2001,7 +2006,7 @@ function _admFinRow(key, v, fs) {
   const abierto = admVentasFinAbiertos.has(key);
   const up = v.usadoParte;
   let t = '<tr id="admfin_' + key + '"' + (abierto ? '' : ' style="display:none"') + '>'
-    + '<td colspan="20" style="background:#f0f6ff;border-left:3px solid #001e50;padding:10px 14px;text-align:left">'
+    + '<td colspan="22" style="background:#f0f6ff;border-left:3px solid #001e50;padding:10px 14px;text-align:left">'
     + '<div style="font-weight:700;font-size:12px;margin-bottom:6px">💵 Cuadro financiero · PV ' + escapeHtml(v.preventa)
     + (up ? ' · <span style="color:#7a5b00">usado en parte de pago (' + fmtPesosCompact(up.toma) + ')</span>' : '')
     + (v.creditoCobrado ? ' · <span style="color:' + (v.creditoCobrado.ok ? '#0a7a30' : '#cc6600') + '">' + (v.creditoCobrado.ok ? 'Crédito cobrado ' + _fechaDMA(v.creditoCobrado.fecha) : 'Crédito pendiente') + '</span>' : '')
@@ -2477,6 +2482,8 @@ function renderAdmVentas() {
      + '<th title="Forma de pago según Oversoft (formas de pago + recibos). 💵 abre el detalle">Tipo</th><th title="La adm anota la fecha exacta en que se liquidó el crédito, o marca NO LIQUIDADO">Créd. liq.</th><th>Rev/Part</th><th>Notas</th>'
      + '<th title="Día y hora programada en Oversoft para que el cliente retire la unidad">📅 Entrega</th>'
      + '<th title="✓ cuando la unidad figura como entregada en Oversoft">Retiró</th>'
+     + '<th title="Factura del auto al cliente (Oversoft, automático): NO si todavía no se facturó, o la fecha de la FC">Facturada</th>'
+     + '<th title="Fecha en que el cliente retiró la documentación (cédula/título). Se carga a mano acá y se ve/filtra en Patentamientos">Retiró doc</th>'
      + '<th></th>'
      + '</tr></thead><tbody>';
 
@@ -2585,33 +2592,38 @@ function renderAdmVentas() {
        + '<td data-label="Retiró" style="text-align:center;white-space:nowrap">'
          + (v.entregada ? '<span style="color:#0a7a30;font-weight:700;font-size:13px">✓ retiró</span>' : '<span style="color:var(--vw-grey-3)">—</span>')
        + '</td>'
+       + '<td data-label="Facturada" style="text-align:center;white-space:nowrap">' + _admFactCell(v) + '</td>'
+       + '<td data-label="Retiró doc" style="white-space:nowrap">'
+         + inp(v.preventa, key, 'retiro_doc', m.retiro_doc, 104, 'date', m.retiro_doc ? null : '#cc6600')
+         + (m.retiro_doc ? '' : '<br><small style="color:#cc6600">NO</small>')
+       + '</td>'
        + '<td data-label="Guardado"><button onclick="guardarAdmVenta(\'' + v.preventa + '\')" id="admsave_' + key + '" title="Reintentar guardado de la fila" '
        + ' style="border:0;background:var(--vw-blue);color:#fff;border-radius:6px;padding:4px 9px;cursor:pointer">✓</button></td>'
        + '</tr>';
     if (v.cuadro && v.cuadro.length) h += _admFinRow(key, v, fs);
     if (v.comentario) {
       h += '<tr id="admcom_' + key + '"' + (admVentasComAbiertos.has(key) ? '' : ' style="display:none"') + '>'
-         + '<td colspan="20" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">'
+         + '<td colspan="22" style="background:#fff8e1;border-left:3px solid #cc9a00;padding:8px 14px;font-size:12px;white-space:pre-wrap;text-align:left">'
          + '💬 <b>Comentario de la PV ' + escapeHtml(v.preventa) + ':</b> ' + escapeHtml(v.comentario) + '</td></tr>';
     }
     if (gasto) {
       h += '<tr id="admgasto_' + key + '"' + (admGastoAbiertos.has(key) ? '' : ' style="display:none"') + '>'
-         + '<td colspan="20" style="background:#fafbfc;border-left:3px solid ' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';padding:8px 14px 12px 30px;text-align:left">'
+         + '<td colspan="22" style="background:#fafbfc;border-left:3px solid ' + (gasto.sinEmitir ? '#b9770e' : '#0a66c2') + ';padding:8px 14px 12px 30px;text-align:left">'
          + '<div style="font-weight:700;font-size:12px;margin-bottom:4px">Gastos ' + (gasto.sinEmitir ? 'cargados en la preventa' : 'cobrados al cliente') + ' · PV ' + escapeHtml(v.preventa) + ' · total $' + _gMoney(gasto.total) + '</div>'
          + (gasto.sinEmitir ? _gastoAFacturarHtml(gasto) : _gastoDetalleHtml(gasto)) + '</td></tr>';
     }
     // Detalle de la unidad (se despliega al tocar la serie): chasis completo,
     // motor y certificado. El certificado suele faltar hasta que VW lo emite.
     h += '<tr id="admserie_' + key + '"' + (admSerieAbiertos.has(key) ? '' : ' style="display:none"') + '>'
-       + '<td colspan="20" style="background:#f5f8fc;border-left:3px solid #0a66c2;padding:8px 14px 12px 30px;text-align:left">'
+       + '<td colspan="22" style="background:#f5f8fc;border-left:3px solid #0a66c2;padding:8px 14px 12px 30px;text-align:left">'
        + _admSerieDetalleHtml(v) + '</td></tr>';
   }
-  if (!rows.length) h += '<tr><td colspan="20" class="empty">'
+  if (!rows.length) h += '<tr><td colspan="22" class="empty">'
      + (admVentasFiltro === 'prioridad'
          ? 'No hay ningún pedido de prioridad abierto. Para pedir uno, tocá la <b>☆</b> que está al lado del N° de PV (sale solo en las unidades que todavía no están pagadas a VW): escribís el motivo, Enter, y le llega a tesorería.'
          : 'Sin carpetas para ese filtro.') + '</td></tr>';
   h += '</tbody></table></div></div>';
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio, fecha de patentamiento, la <b>entrega programada</b> (fecha y hora) y el <b>retiró ✓</b> salen de Oversoft en vivo (no se editan acá: la fecha/hora la programa la administrativa en Oversoft y el ✓ se prende cuando la unidad figura como entregada). El resto se completa acá y <b>se guarda solo al cambiar cada campo</b> (el ✓ de la fila se pone verde cuando guardó bien; si algo falla, avisa y podés reintentar con el ✓). El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes. El mes de cada carpeta (selector de arriba, mismo criterio que Patentamientos) = fecha real de Oversoft o, si aún no está patentada, el "Mes pat. ✔adm" — las ventas nuevas sin ninguno de los dos entran al mes en curso (cambiale el "Mes pat." si va para otro mes).</div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio, fecha de patentamiento, la <b>entrega programada</b> (fecha y hora) y el <b>retiró ✓</b> salen de Oversoft en vivo (no se editan acá: la fecha/hora la programa la administrativa en Oversoft y el ✓ se prende cuando la unidad figura como entregada). El resto se completa acá y <b>se guarda solo al cambiar cada campo</b> (el ✓ de la fila se pone verde cuando guardó bien; si algo falla, avisa y podés reintentar con el ✓). La columna <b>Facturada</b> también es automática (factura del auto al cliente en Oversoft): <b>NO</b> mientras no se facturó, o la fecha de la factura. Al lado, <b>Retiró doc</b> es manual: poné la fecha en que el cliente se llevó la documentación (cédula/título) y queda en <b>NO</b> hasta que la cargues. Las dos se ven — y se pueden filtrar — en la subsolapa <b>Patentamientos</b>. El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes. El mes de cada carpeta (selector de arriba, mismo criterio que Patentamientos) = fecha real de Oversoft o, si aún no está patentada, el "Mes pat. ✔adm" — las ventas nuevas sin ninguno de los dos entran al mes en curso (cambiale el "Mes pat." si va para otro mes).</div>';
   // El re-render recrea el <input> de búsqueda y le saca el foco (antes había
   // que volver a clickear tras cada letra). Guardo si estaba enfocado + la
   // posición del cursor y lo restauro después de reescribir el HTML.
@@ -2776,7 +2788,7 @@ async function guardarAdmVenta(preventa) {
   const campos = {};
   // OJO: credito_liquidado / fecha_liquidacion NO se guardan acá — los maneja
   // saveLiq() (control compartido con la solapa Financiaciones).
-  for (const c of ['patenta', 'admin', 'tipo_carpeta', 'mes_patentamiento', 'reventa_particular', 'fecha_pago_vw', 'notas']) {
+  for (const c of ['patenta', 'admin', 'tipo_carpeta', 'mes_patentamiento', 'reventa_particular', 'fecha_pago_vw', 'retiro_doc', 'notas']) {
     const el = document.getElementById('adm_' + c + '_' + key);
     if (el) campos[c] = el.value.trim();
   }
@@ -2838,6 +2850,23 @@ function _liqInputs(v) {
 }
 
 // Celda "Créd. liquidado" de la grilla: control compartido + notas al pie.
+// ---- Facturada al cliente / Retiró documentación ------------------------
+// Dos datos que se piden juntos: si el auto ya se le facturó al cliente (sale
+// SOLO de Oversoft, la FC vigente de la PV — no se edita en ningún lado) y si
+// el cliente ya retiró la documentación (cédula/título), que la carga a mano la
+// adm en esta misma grilla. Los dos se muestran también en Patentamientos, con
+// filtro, y de ahí que los helpers sean compartidos: la fuente es siempre esta
+// solapa (admVentasData), así lo que se edita acá se ve allá sin recargar.
+function _admFacturaFecha(v) { return String((v && v.factura && v.factura.fecha) || ''); }
+function _admRetiroDoc(v)    { return String((v && v.manual && v.manual.retiro_doc) || ''); }
+
+function _admFactCell(v) {
+  const f = _admFacturaFecha(v);
+  if (!f) return '<span style="color:#cc6600;font-weight:700">NO</span>';
+  const nro = (v.factura && v.factura.numero) ? 'Factura ' + v.factura.numero : 'Facturada';
+  return '<b style="color:#0a7a30" title="' + escapeHtml(nro) + '">' + _fechaDMA(f) + '</b>';
+}
+
 function _admLiqCell(v, key) {
   const m = v.manual || {};
   const flag = String(m.credito_liquidado || '');
@@ -9411,6 +9440,9 @@ function descartarPagosParseados() {
 function setMesPat(mesKey)       { mesSelPat = mesKey || ''; renderPatentamientos(); }
 function setVendedorFiltroPat(v) { vendedorFiltroPat = v || ''; renderPatentamientos(); }
 function setAdminFiltroPat(a)    { adminFiltroPat = a || ''; renderPatentamientos(); }
+// Facturada al cliente / retiro de la documentación: '' = todas, 'si', 'no'.
+function setFactFiltroPat(v)     { factFiltroPat = v || ''; renderPatentamientos(); }
+function setDocFiltroPat(v)      { docFiltroPat  = v || ''; renderPatentamientos(); }
 // Click en la fila de una administrativa del panel: filtra por ella, y si ya
 // estaba filtrada, limpia (toggle).
 function toggleAdminFiltroPat(a) { setAdminFiltroPat(adminFiltroPat === a ? '' : a); }
@@ -9807,6 +9839,14 @@ function renderPatentamientos() {
   // Desgloses (% por grupo). El tipo de operación sale de Oversoft (Adm. ventas)
   // con respaldo en el tipo_carpeta manual — ver _tipoOperTxt.
   const admMapDesg = _admMapPorPv();
+  // "Facturada" y "Retiró doc" salen de Adm. ventas (admVentasData). Si esa data
+  // todavía no llegó la pedimos: al llegar, loadAdmVentas repinta esta subtab.
+  if (!admMapDesg) { try { loadAdmVentas(false); } catch (e) {} }
+  // Facturada = FC del auto al cliente (Oversoft, automática). Retiró doc = fecha
+  // que carga a mano la adm en Adm. ventas. Filtran SOLO la tabla de abajo: los
+  // KPIs siguen midiendo todas las carpetas del mes (que es lo que va al objetivo).
+  const _fact = c => _admFacturaFecha(admMapDesg ? admMapDesg[_pvKey(c.pv)] : null);
+  const _doc  = c => _admRetiroDoc(admMapDesg ? admMapDesg[_pvKey(c.pv)] : null);
   const porPatenta = _agruparCount(delMes, c => c.patentaA || '—');     // TG / CLIENTE / REVENTA
   const porTipo    = _agruparCount(delMes, c => _tipoOperTxt(c, admMapDesg ? admMapDesg[_pvKey(c.pv)] : null));
   const porRevPart = _agruparCount(delMes, c => c.reventaOParticular || '—');
@@ -9863,6 +9903,25 @@ function renderPatentamientos() {
   if (adminFiltroPat) {
     html += '  <button class="calc-clear" onclick="setAdminFiltroPat(\'\')" title="Limpiar administrativa">✕</button>';
   }
+
+  // Filtros Facturada / Retiró doc (solo tabla). Los contadores se calculan sobre
+  // el mes ya filtrado por vendedor + administrativa, para que cierren con lo que
+  // se ve. Si la data de Adm. ventas todavía no llegó, salen deshabilitados.
+  const nFactSi = delMes.filter(c => _fact(c)).length;
+  const nDocSi  = delMes.filter(c => _doc(c)).length;
+  const disMap  = admMapDesg ? '' : ' disabled';
+  html += '  <select id="factFiltroPat" onchange="setFactFiltroPat(this.value)"' + disMap
+        + ' title="Factura del auto al cliente (sale sola de Oversoft)" style="min-width:180px">';
+  html += '    <option value=""' + (!factFiltroPat ? ' selected' : '') + '>Facturada: todas</option>';
+  html += '    <option value="si"' + (factFiltroPat === 'si' ? ' selected' : '') + '>Facturadas · ' + nFactSi + '</option>';
+  html += '    <option value="no"' + (factFiltroPat === 'no' ? ' selected' : '') + '>Sin facturar · ' + (delMes.length - nFactSi) + '</option>';
+  html += '  </select>';
+  html += '  <select id="docFiltroPat" onchange="setDocFiltroPat(this.value)"' + disMap
+        + ' title="Retiro de la documentación (cédula/título). Se carga a mano en Adm. ventas" style="min-width:195px">';
+  html += '    <option value=""' + (!docFiltroPat ? ' selected' : '') + '>Retiró doc: todas</option>';
+  html += '    <option value="si"' + (docFiltroPat === 'si' ? ' selected' : '') + '>Retiraron doc · ' + nDocSi + '</option>';
+  html += '    <option value="no"' + (docFiltroPat === 'no' ? ' selected' : '') + '>Sin retirar doc · ' + (delMes.length - nDocSi) + '</option>';
+  html += '  </select>';
 
   html += '  <label class="toggle-resumida">'
         + '    <input type="checkbox" ' + (vistaResumidaPat ? 'checked' : '') + ' onchange="toggleVistaResumidaPat()"> Vista resumida'
@@ -9998,10 +10057,26 @@ function renderPatentamientos() {
   html += panelAdminDetalle(delMesSinAdmin);
 
   // ----- Tabla -----
+  // La tabla es lo único que filtran Facturada / Retiró doc (los KPIs de arriba
+  // siguen mostrando el mes completo).
+  const delMesTabla = delMes.filter(c => {
+    if (factFiltroPat === 'si' && !_fact(c)) return false;
+    if (factFiltroPat === 'no' &&  _fact(c)) return false;
+    if (docFiltroPat  === 'si' && !_doc(c))  return false;
+    if (docFiltroPat  === 'no' &&  _doc(c))  return false;
+    return true;
+  });
+  const _filtrosTblTxt = [
+    factFiltroPat === 'si' ? 'facturadas' : (factFiltroPat === 'no' ? 'sin facturar' : ''),
+    docFiltroPat  === 'si' ? 'retiraron doc' : (docFiltroPat  === 'no' ? 'sin retirar doc' : ''),
+  ].filter(Boolean).join(' + ');
+
   html += '<div class="table-wrap">'
         + '  <div class="table-head">'
         + '    <h3>Carpetas — ' + escapeHtml((meses.find(m => m.mesKey === mesSelPat)?.label) || 'Sin mes') + '</h3>'
-        + '    <div class="count">' + delMes.length + ' visibles</div>'
+        + '    <div class="count">' + delMesTabla.length + ' visibles'
+        + (_filtrosTblTxt ? ' <span style="font-weight:400">(' + escapeHtml(_filtrosTblTxt) + ', de ' + delMes.length + ')</span>' : '')
+        + '    </div>'
         + '  </div>'
         + '  <div class="table-scroll">'
         + '    <table class="patent-tbl responsive-cards ' + (vistaResumidaPat ? 'resumida' : '') + '">'
@@ -10018,23 +10093,25 @@ function renderPatentamientos() {
         + '        <th>Modelo</th>'
         + '        <th class="ctr">Fecha pat.</th>'
         + '        <th class="col-extra">Dominio</th>'
+        + '        <th class="ctr" title="Factura del auto al cliente (Oversoft, automático): NO, o la fecha de la factura">Facturada</th>'
+        + '        <th class="ctr" title="Fecha en que el cliente retiró la documentación. Se carga a mano en la solapa Adm. ventas">Retiró doc</th>'
         + '      </tr></thead><tbody>';
 
-  if (!delMes.length) {
-    html += '<tr><td colspan="12" class="empty">No hay carpetas para este filtro.</td></tr>';
+  if (!delMesTabla.length) {
+    html += '<tr><td colspan="14" class="empty">No hay carpetas para este filtro.</td></tr>';
   } else {
     // Pendientes arriba, patentadas todas juntas al final (no mezcladas)
-    const pendList = delMes.filter(c => !c.patentada);
-    const patList  = delMes.filter(c => c.patentada);
+    const pendList = delMesTabla.filter(c => !c.patentada);
+    const patList  = delMesTabla.filter(c => c.patentada);
     // Mapa de Adm. ventas (Oversoft) para la columna Tipo: el tipo_carpeta manual
     // suele estar vacío en el mes en curso.
     const admMapTbl = _admMapPorPv();
     if (pendList.length) {
-      html += '<tr class="tbl-sep pend"><td colspan="12">Pendientes de patentar · ' + pendList.length + '</td></tr>';
+      html += '<tr class="tbl-sep pend"><td colspan="14">Pendientes de patentar · ' + pendList.length + '</td></tr>';
       for (const c of pendList) html += filaPatent(c, admMapTbl);
     }
     if (patList.length) {
-      html += '<tr class="tbl-sep pat"><td colspan="12">Patentadas · ' + patList.length + '</td></tr>';
+      html += '<tr class="tbl-sep pat"><td colspan="14">Patentadas · ' + patList.length + '</td></tr>';
       for (const c of patList) html += filaPatent(c, admMapTbl);
     }
   }
@@ -10087,6 +10164,18 @@ function filaPatent(c, admMap) {
   h += '<td data-label="Modelo">' + escapeHtml(c.modelo || '—') + '</td>';
   h += '<td class="ctr" data-label="Fecha pat.">' + patBadge + '</td>';
   h += '<td class="col-extra" data-label="Dominio">' + escapeHtml(c.dominio || '—') + '</td>';
+  // Facturada (Oversoft) y Retiró doc (carga manual de la adm) — los dos salen
+  // de Adm. ventas; sin esa data todavía cargada van como s/d, no como NO.
+  const fFact = _admFacturaFecha(ov);
+  const fDoc  = _admRetiroDoc(ov);
+  h += '<td class="ctr" data-label="Facturada">'
+     + (!ov ? '<span class="muted">s/d</span>'
+            : (fFact ? '<span class="badge paga">' + escapeHtml(_fechaDMA(fFact)) + '</span>'
+                     : '<span class="badge impaga">NO</span>')) + '</td>';
+  h += '<td class="ctr" data-label="Retiró doc">'
+     + (!ov ? '<span class="muted">s/d</span>'
+            : (fDoc ? '<span class="badge paga">' + escapeHtml(_fechaDMA(fDoc)) + '</span>'
+                    : '<span class="badge impaga">NO</span>')) + '</td>';
   h += '</tr>';
   return h;
 }
