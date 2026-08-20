@@ -1329,6 +1329,9 @@ table.patent-tbl tr.tbl-sep.pat:hover td  { background: var(--green-soft); }
 .reparto-comprar:disabled { opacity: .4; cursor: not-allowed; }
 .reparto-stock-btn { background: none; border: 0; color: var(--vw-blue); font-weight: 600; cursor: pointer; font-size: 13px; padding: 0; }
 .reparto-stock-btn:hover { text-decoration: underline; }
+/* "Vend. mes" clickeable: despliega qué PV es cada venta, de qué color y con cuánta ganancia */
+.reparto-vend-btn { background: none; border: 0; border-bottom: 1px dashed var(--vw-blue); color: var(--vw-blue); font-weight: 700; cursor: pointer; font-size: 13px; padding: 0 1px; }
+.reparto-vend-btn:hover { background: #eef3fc; }
 .reparto-chev { font-size: 9px; }
 .reparto-detalle.hidden { display: none; }
 .reparto-detalle > td { background: var(--vw-grey-1); padding: 10px 14px !important; }
@@ -6229,7 +6232,7 @@ function repartoFiltrar() {
       ? '<span class="reparto-fam">s/d</span>'
       : '<button class="reparto-stock-btn" onclick="repartoToggleDetalle(\'' + it.vin + '\')" title="Ver stock por color y antigüedad por chasis">' + it.stockActual + (it.tieneAntiguedad ? ' <span class="reparto-antig-flag" title="Tenés unidad(es) con +90 días en stock">⏳</span>' : '') + ' <span class="reparto-chev">▾</span></button>';
     h += '<td class="num">' + stockCell + '</td>';
-    h += '<td class="num">' + (vendMes == null ? '<span class="reparto-fam">s/d</span>' : (vendMes > 0 ? '<strong>' + vendMes + '</strong>' : '<span class="reparto-fam">0</span>')) + '</td>';
+    h += '<td class="num">' + _repVendMesCell(vendMes, _repModKey(it), '', (it.descripcion || '').replace(/^VW /, '')) + '</td>';
     h += '<td class="num">' + (vend == null ? '<span class="reparto-fam">s/d</span>' : vend) + '</td>';
     h += '<td class="num">' + _rotMesesCell(_repMesesStock(it), it.stockActual) + '</td>';
     h += '<td class="num">' + _diasBadgeRep(it.diasVenta, it.diasVentaN, it.diasLentoN, it.diasLentoMax) + '</td>';
@@ -6437,7 +6440,7 @@ function repartoRotFiltrar() {
     h += '<td class="num">' + m.stock + '</td>';
     h += '<td class="num">' + (rMes > 0 ? '<strong class="rot-enrep">' + rMes + '</strong>' : '<span class="reparto-fam">—</span>') + '</td>';
     h += '<td class="num">' + (cMes > 0 ? '<strong>' + cMes + '</strong>' : '<span class="reparto-fam">0</span>') + '</td>';
-    h += '<td class="num">' + (vMes == null ? '<span class="reparto-fam">s/d</span>' : (vMes > 0 ? '<strong>' + vMes + '</strong>' : '<span class="reparto-fam">0</span>')) + '</td>';
+    h += '<td class="num">' + _repVendMesCell(vMes, mk, '', (m.modelo || '').replace(/^VW /, '')) + '</td>';
     h += '<td class="num">' + _rotFmt(m.ventaMes) + '</td>';
     h += '<td class="num">' + _rotMesesCell(m.mesesStock, m.stock) + '</td>';
     h += '<td class="num">' + _diasBadgeRep(m.diasVenta, m.diasVentaN, m.diasLentoN, m.diasLentoMax) + '</td></tr>';
@@ -6511,7 +6514,9 @@ function _rotColoresHtml(m, comp, mk, vend, enRep) {
       + '<td class="num">' + (rMes > 0 ? '<strong class="rot-enrep">' + rMes + ' en reparto</strong>' : '<span class="reparto-fam">—</span>') + '</td>'
       + '<td class="num">' + (cMes > 0 ? '<strong>+' + cMes + ' compr.</strong>' : '<span class="reparto-fam">—</span>') + '</td>'
       + '<td class="num">' + (vMesC == null ? '<span class="reparto-fam">—</span>'
-          : (vMesC > 0 ? '<strong>' + vMesC + ' vend.</strong>' : '<span class="reparto-fam">0 vend.</span>')) + '</td>'
+          : (vMesC > 0
+              ? _repVendMesCell(vMesC, mk, _rotColNorm(c.color), (m.modelo || '').replace(/^VW /, '') + ' · ' + c.color) + ' vend.'
+              : '<span class="reparto-fam">0 vend.</span>')) + '</td>'
       + '<td class="num">' + _rotMesesCell(c.mesesStock, c.stock) + '</td>'
       + '<td class="num">' + _diasBadgeRep(c.diasVenta, c.diasVentaN, c.diasLentoN, c.diasLentoMax) + '</td>'
       + '<td>' + (agotado ? '<span class="rot-agotado-lbl">⚠ se vendió todo · reponé este color</span>' : '') + '</td></tr>';
@@ -6523,6 +6528,114 @@ function repartoRotToggle(idx) {
   const el = document.getElementById('rotdet-' + idx);
   const ch = document.getElementById('rotchev-' + idx);
   if (el) { const hid = el.classList.toggle('hidden'); if (ch) ch.textContent = hid ? '▸' : '▾'; }
+}
+
+// =======================================================================
+// DESGLOSE DE "Vend. mes" — apretás el número y ves qué PV es cada venta,
+// de qué color y con cuánta ganancia se vendió.
+// =======================================================================
+// La lista sale del backend del reparto (`rotacion.ventasMes`, indexada por
+// modeloKey = la misma clave normalizada con la que ya se cruzan compradas y
+// stock), así que el desglose SIEMPRE da el mismo número que la columna: los
+// agrupó el motor, no un match de nombres hecho en el front.
+//
+// La ganancia viene en dos capas: el motor la calcula con _gciaVentaPct (misma
+// fórmula que el "prom. gcia" del Baratito) y, cuando la solapa Ventas está
+// cargada, se PISA con la de ahí — que es la buena, porque suma accesorios, el
+// tramo de performance real y la regla de incentivo por patentamiento. Sin ese
+// pisado, el mismo auto mostraría dos ganancias distintas según la solapa.
+
+function _repVentasMesDet(mk) {
+  const rot = (repartoData && repartoData.rotacion) || {};
+  const mapa = rot.ventasMes || null;
+  if (mapa && mapa[mk]) return mapa[mk];
+  if (mapa) return [];
+  // Backend viejo (sin `ventasMes`): si el motor está en memoria, sale de ahí.
+  const mm = ((preciosData && preciosData.modelos) || []).find(x => _rotModKey(x) === mk);
+  return (mm && mm.ventasMesDet) || [];
+}
+// Argumento seguro para un onclick inline (comillas/backslashes del modelo).
+function _repJsArg(s) { return escapeHtml(String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'")); }
+// Celda "Vend. mes": número clickeable si hay algo que mostrar.
+function _repVendMesCell(n, mk, colorNorm, titulo) {
+  if (n == null) return '<span class="reparto-fam">s/d</span>';
+  if (!n) return '<span class="reparto-fam">0</span>';
+  return '<button class="reparto-vend-btn" onclick="event.stopPropagation();repartoVerVendidas(\''
+    + _repJsArg(mk) + '\',\'' + _repJsArg(colorNorm || '') + '\',\'' + _repJsArg(titulo || '') + '\')"'
+    + ' title="Ver el detalle: qué PV es cada una, de qué color y con cuánta ganancia se vendió">' + n + '</button>';
+}
+
+async function repartoVerVendidas(mk, colorNorm, titulo) {
+  _repVendPintar(mk, colorNorm, titulo);
+  // La ganancia buena es la de Ventas; si no está cargada la traemos y repintamos.
+  if (!ventasOvData) {
+    try { await loadVentasOv(false); } catch (e) { /* si falla, queda la del motor */ }
+    if (document.getElementById('repVendOverlay')) _repVendPintar(mk, colorNorm, titulo);
+  }
+}
+function cerrarRepVend() { const o = document.getElementById('repVendOverlay'); if (o) o.remove(); }
+
+function _repVendPintar(mk, colorNorm, titulo) {
+  let lista = _repVentasMesDet(mk);
+  if (colorNorm) lista = lista.filter(v => _rotColNorm(v.color) === colorNorm);
+  // PV → fila de la solapa Ventas (la ganancia oficial), si está cargada.
+  const porPv = {};
+  const hayVentas = !!(ventasOvData && Array.isArray(ventasOvData.ventas));
+  if (hayVentas) for (const v of ventasOvData.ventas) porPv[_normPvKey(v.preventaNum)] = v;
+
+  const mesLbl = _mesLabel(_mesKeyHoy());
+  let total = 0, conGcia = 0;
+  let filas = '';
+  if (!lista.length) {
+    filas = '<tr><td colspan="6" class="empty">No hay detalle cargado. Apretá <b>Actualizar</b> en el Reparto para refrescar el motor.</td></tr>';
+  } else {
+    for (const v of lista) {
+      const vv = porPv[_normPvKey(v.pv)];
+      const gPesos = (vv && typeof vv.gciaVtaPesos === 'number') ? vv.gciaVtaPesos : v.gciaPesos;
+      const gPct   = (vv && vv.gciaVtaPct != null) ? vv.gciaVtaPct : v.gciaPct;
+      const oficial = !!(vv && typeof vv.gciaVtaPesos === 'number');
+      if (typeof gPesos === 'number') { total += gPesos; conGcia++; }
+      const col = (typeof gPesos === 'number') ? (gPesos >= 0 ? '#0a7a30' : '#cc3300') : 'var(--vw-grey-3)';
+      filas += '<tr>'
+        + '<td><strong>' + escapeHtml(v.pv || '—') + '</strong>'
+          + (v.esAA ? ' <span class="reparto-fam" title="Autoahorro: no cobra condiciones comerciales">AA</span>' : '')
+          + (vv && vv.vendedor ? '<div class="reparto-fam">' + escapeHtml(vv.vendedor) + '</div>' : '') + '</td>'
+        + '<td>' + _fmtFechaDMY(v.fecha) + '</td>'
+        + '<td>' + escapeHtml(v.color || '—') + '</td>'
+        + '<td class="reparto-vin">' + escapeHtml(v.serie || '—') + '</td>'
+        + '<td style="text-align:right">' + fmtPesos(v.monto) + '</td>'
+        + '<td style="text-align:right;color:' + col + ';font-weight:600">'
+          + (typeof gPesos === 'number' ? fmtPesos(gPesos) : 's/BT')
+          + (gPct != null ? '<div class="reparto-fam">' + (gPct * 100).toFixed(1) + '%</div>' : '')
+          + (oficial ? '' : ' <span class="reparto-fam" title="Calculada por el motor del Reparto (la solapa Ventas todavía no está cargada)">≈</span>')
+        + '</td></tr>';
+    }
+  }
+
+  cerrarRepVend();
+  const ov = document.createElement('div');
+  ov.id = 'repVendOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-start;justify-content:center;z-index:9999;padding:40px 16px;overflow:auto';
+  ov.onclick = function (e) { if (e.target === ov) cerrarRepVend(); };
+  ov.innerHTML = '<div style="background:#fff;border-radius:10px;padding:18px;max-width:900px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.3)">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">'
+    + '<div><h3 style="margin:0 0 4px">Vendidas en ' + escapeHtml(mesLbl) + ' · ' + escapeHtml(titulo || '') + '</h3>'
+    + '<div style="font-size:13px;color:#555">' + lista.length + ' unidad' + (lista.length === 1 ? '' : 'es')
+      + (conGcia ? ' · ganancia total <strong style="color:' + (total >= 0 ? '#0a7a30' : '#cc3300') + '">' + fmtPesos(total) + '</strong>'
+                   + (conGcia !== lista.length ? ' <span style="color:#888">(' + conGcia + ' con ganancia calculada)</span>' : '') : '')
+    + '</div></div>'
+    + '<button onclick="cerrarRepVend()" style="padding:6px 12px;border:1px solid #ccc;background:#fff;border-radius:6px;cursor:pointer">Cerrar</button>'
+    + '</div>'
+    + '<div class="table-wrap" style="margin-top:12px"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
+    + '<th>PV</th><th>Fecha</th><th>Color</th><th>Chasis</th>'
+    + '<th style="text-align:right">Monto</th><th style="text-align:right">Ganancia</th>'
+    + '</tr></thead><tbody>' + filas + '</tbody></table></div></div>'
+    + '<div class="reparto-fam" style="margin-top:10px">'
+    + (hayVentas
+        ? 'Ganancia = la misma que muestra la solapa <strong>Ventas</strong> (incluye accesorios, tramo de performance y la regla de incentivo por patentamiento).'
+        : 'Ganancia estimada por el motor del Reparto. Abrí la solapa <strong>Ventas</strong> para verla con accesorios e incentivos definitivos.')
+    + '</div></div>';
+  document.body.appendChild(ov);
 }
 
 // =======================================================================

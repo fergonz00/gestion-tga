@@ -442,6 +442,14 @@ function _oversoftMotorData(catByNorm, catByBaseUnico) {
   const ventasPorTrim = {};
   const ventasDet = {};   // nc → [{mes, monto, iva}] para la gcia real por venta
   const ventasColorPorTrim = {};   // nc → color → mes → cantidad (rotación por color)
+  // nc → [{pv, fecha, serie, color, monto, iva, esAA}] SOLO del mes en curso.
+  // Es el desglose de la columna "Vend. mes" del Reparto: qué PV es cada una,
+  // de qué color y (ya en getBaratitoMotor) con cuánta ganancia se vendió.
+  // Se arma acá y no desde ventasDet porque ventasDet descarta las de monto 0
+  // (PVs todavía sin precio cargado) y el desglose tiene que dar el MISMO
+  // número que la columna, que las cuenta.
+  const ventasMesPorTrim = {};
+  const _mesEnCurso = _yyyyMm(new Date());
   for (const pv of pvs) {
     const nc = ncDe(pv.modelo, pv.unidadid ? serieDeUid[pv.unidadid] : null);
     if (!nc) { anotarSinCat(pv.modelo, 'ventas'); continue; }
@@ -454,18 +462,31 @@ function _oversoftMotorData(catByNorm, catByBaseUnico) {
     if (!ventasColorPorTrim[nc][colNom]) ventasColorPorTrim[nc][colNom] = {};
     ventasColorPorTrim[nc][colNom][mk] = (ventasColorPorTrim[nc][colNom][mk] || 0) + 1;
     const monto = Number(pv.precioventa) || 0;
+    // Autoahorro (/8 con G-O en el comentario): NO cobra condiciones comerciales.
+    // Mismo criterio que getVentasV2; sin esto el prom. gcia real del motor
+    // valuaba las ventas AA con incentivos que no se cobran (las inflaba).
+    const _comAA = String(pv.comentario || '') + ' ' + String(pv.comentarioaux || '');
+    const esAA = String(pv.numero || '').split('/').pop().trim() === '8'
+      && (/\bG\s*-?\s*O\b/i.test(_comAA) || /grupo\s*y\s*orden/i.test(_comAA));
+    // IVA por tasadeivaid de Oversoft: 3 = 10,5% (pickups), resto 21%.
+    const ivaFr = (Number(pv.tasadeivaid) === 3 ? 0.105 : 0.21);
     if (monto > 0) {
       if (!ventasDet[nc]) ventasDet[nc] = [];
-      // Autoahorro (/8 con G-O en el comentario): NO cobra condiciones comerciales.
-      // Mismo criterio que getVentasV2; sin esto el prom. gcia real del motor
-      // valuaba las ventas AA con incentivos que no se cobran (las inflaba).
-      const _comAA = String(pv.comentario || '') + ' ' + String(pv.comentarioaux || '');
-      const esAA = String(pv.numero || '').split('/').pop().trim() === '8'
-        && (/\bG\s*-?\s*O\b/i.test(_comAA) || /grupo\s*y\s*orden/i.test(_comAA));
-      // IVA por tasadeivaid de Oversoft: 3 = 10,5% (pickups), resto 21%.
-      ventasDet[nc].push({ mes: mk, monto: monto, iva: (Number(pv.tasadeivaid) === 3 ? 0.105 : 0.21), esAA: esAA });
+      ventasDet[nc].push({ mes: mk, monto: monto, iva: ivaFr, esAA: esAA });
+    }
+    if (mk === _mesEnCurso) {
+      if (!ventasMesPorTrim[nc]) ventasMesPorTrim[nc] = [];
+      ventasMesPorTrim[nc].push({
+        pv: String(pv.numero || '').trim(),
+        fecha: String(pv.fecha).slice(0, 10),
+        serie: pv.unidadid ? (serieDeUid[pv.unidadid] || '') : '',
+        color: colNom, monto: monto, iva: ivaFr, esAA: esAA,
+      });
     }
   }
+  Object.keys(ventasMesPorTrim).forEach(function (k) {
+    ventasMesPorTrim[k].sort(function (a, b) { return String(a.fecha).localeCompare(String(b.fecha)); });
+  });
   // 4) ROTACIÓN REAL: días que tardó en venderse cada unidad que estuvo en stock
   let diasVentaPorTrim = {};
   try { diasVentaPorTrim = _diasEnVenta(ncDe, colorDe, h); } catch (e) {}
@@ -473,6 +494,7 @@ function _oversoftMotorData(catByNorm, catByBaseUnico) {
   return { stockPorTrim: stockPorTrim, stockColorPorTrim: stockColorPorTrim, stockTotal: stockTotal,
            chasisPorTrim: chasisPorTrim,
            ventasPorTrim: ventasPorTrim, ventasDet: ventasDet, ventasColorPorTrim: ventasColorPorTrim,
+           ventasMesPorTrim: ventasMesPorTrim,
            diasVentaPorTrim: diasVentaPorTrim,
            sinCatalogo: Object.values(sinCat) };
 }
@@ -2696,7 +2718,7 @@ function getBaratitoMotor() {
     }
   }
   // Stock Y ventas, ambos genuinos desde Oversoft (por trim exacto).
-  let stockPorTrim = {}, stockColorPorTrim = {}, chasisPorTrim = {}, stockTotalOversoft = 0, ventasNc = {}, ventasDet = {}, ventasColorPorTrim = {}, diasVentaNc = {}, sinCatalogo = [];
+  let stockPorTrim = {}, stockColorPorTrim = {}, chasisPorTrim = {}, stockTotalOversoft = 0, ventasNc = {}, ventasDet = {}, ventasColorPorTrim = {}, ventasMesPorTrim = {}, diasVentaNc = {}, sinCatalogo = [];
   try {
     const od = _oversoftMotorData(catByNorm, catByBaseUnico);
     stockPorTrim = od.stockPorTrim;
@@ -2706,6 +2728,7 @@ function getBaratitoMotor() {
     ventasNc = od.ventasPorTrim;
     ventasDet = od.ventasDet || {};
     ventasColorPorTrim = od.ventasColorPorTrim || {};
+    ventasMesPorTrim = od.ventasMesPorTrim || {};
     diasVentaNc = od.diasVentaPorTrim || {};
     sinCatalogo = od.sinCatalogo || [];
   } catch (e) {}
@@ -2753,6 +2776,30 @@ function getBaratitoMotor() {
       if (y === null) { gciaSinBt++; continue; }
       gciaSum += y; gciaN++;
     }
+
+    // Desglose de la columna "Vend. mes" del Reparto: cada venta del mes en
+    // curso con su PV, color y ganancia. Se valúa con la BT/incentivos del mes
+    // en curso (si todavía no están cargados, cae al último mes cargado, igual
+    // que el resto del motor). Es la MISMA fórmula que el prom. gcia de acá
+    // (_gciaVentaPct); la solapa Ventas puede dar un peso distinto porque suma
+    // accesorios y el tramo de performance real — el front, si tiene esa data
+    // cargada, la pisa con la de Ventas.
+    const btAct = (btPorMes[mesActual] && btPorMes[mesActual][c.nombre_corto]) || p;
+    const iiAct = (incPorMes[mesActual] && incPorMes[mesActual][c.nombre_corto]) || ii;
+    const listaAct = Number(btAct.precio_lista) || 0;
+    const costoAct = Number(btAct.costo_concesionario) || 0;
+    const ccAct = Number(iiAct.performance) || 0;
+    const otrosAct = (Number(iiAct.tactico)||0) + (Number(iiAct.whosale)||0) + (Number(iiAct.adicional1)||0) + (Number(iiAct.adicional2)||0) + (Number(iiAct.cupo)||0);
+    const ventasMesDet = (ventasMesPorTrim[c.nombre_corto] || []).map(function (v) {
+      const pct = _gciaVentaPct(v.monto, v.iva, listaAct, costoAct, v.esAA ? 0 : ccAct, v.esAA ? 0 : otrosAct);
+      return {
+        pv: v.pv, fecha: v.fecha, serie: v.serie, color: v.color, monto: v.monto,
+        esAA: v.esAA,
+        gciaPct: pct,
+        gciaPesos: pct === null ? null : Math.round(pct * listaAct * (1 - v.iva)),
+      };
+    });
+
     out.push({
       modelo:        c.nombre_bt || c.nombre_corto,
       lista:         lista,
@@ -2775,6 +2822,8 @@ function getBaratitoMotor() {
       ventasPorMes:  ventasNc[c.nombre_corto] || {},
       // ventas por color y por mes (rotación por color en el Reparto)
       ventasColorPorMes: ventasColorPorTrim[c.nombre_corto] || {},
+      // detalle PV x PV de las vendidas del mes en curso (desglose de "Vend. mes")
+      ventasMesDet:  ventasMesDet,
       // rotación REAL: días promedio en venderse desde que la unidad entra al
       // sistema (últimos 12 meses). Ver _diasEnVenta.
       diasVenta:     diasVentaNc[c.nombre_corto] || null,
@@ -4988,6 +5037,11 @@ function _repartoRotacion(motor, virt) {
   // Mes EN CURSO (parcial). refMeses son los 4 meses CERRADOS (para el promedio),
   // asi que las vendidas del mes corriente hay que sacarlas aparte.
   var mesAct = _yyyyMm(new Date());
+  // Desglose de "Vend. mes" (qué PV, qué color, con qué ganancia), indexado por
+  // la MISMA clave normalizada que usa el reparto para cruzar modelos
+  // (_repartoNtrim del nombre_corto = `modeloKey` de cada item). Lo consumen las
+  // dos tablas del panel: la de pendientes y la de rotación.
+  var ventasMes = {};
   ((motor && motor.modelos) || []).forEach(function (m) {
     var v4 = sum(m.ventasPorMes);
     var vMesAct = Number((m.ventasPorMes || {})[mesAct]) || 0;
@@ -5033,10 +5087,16 @@ function _repartoRotacion(motor, virt) {
       diasLentoN: (dv && dv.lentoN) || 0, diasLentoMax: (dv && dv.lentoMax) || 0,
       colores: colores
     });
+    // El detalle NO se cuelga del item (duplicaría el payload): va una sola vez
+    // en el mapa `ventasMes`, que las dos tablas leen por modeloKey.
+    if ((m.ventasMesDet || []).length) {
+      var kv = _repartoNtrim(m.nombreCorto || m.modelo) || (m.nombreCorto || m.modelo);
+      ventasMes[kv] = (ventasMes[kv] || []).concat(m.ventasMesDet);
+    }
   });
   // Orden = el del catalogo/baratito (motor.modelos ya viene Polo Track -> ... -> Amarok).
   // No se reordena por ventas, para que coincida con el panel de precios.
-  return { meses: refMeses, mesActual: mesAct, items: out };
+  return { meses: refMeses, mesActual: mesAct, items: out, ventasMes: ventasMes };
 }
 
 // =======================================================================
