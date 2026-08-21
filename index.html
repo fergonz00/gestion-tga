@@ -3223,7 +3223,7 @@ async function guardarAccesorios(preventa, valor) {
 // "venta gerencia" → no llevan comisión y NO debe contarse como costo. Solo se
 // muestra en ventas TG. Estados: sin responder (pregunta) / con comisión / sin.
 function _comisionTGControl(v) {
-  if (!v.esTG) return '';
+  if (!v.esTG || v.emplFabrica) return '';
   const pv = String(v.preventaNum || '').replace(/'/g, '');
   const base = 'display:inline-block;border-radius:8px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:4px';
   if (!v.comisionResp) {
@@ -3368,7 +3368,7 @@ function renderVentasOv() {
     const gColor = g ? (v.gciaVtaPesos >= 0 ? '#0a7a30' : '#cc3300') : 'var(--vw-grey-3)';
     const puedeDet = !!v.breakdown;
     // La Ganancia es clickeable: abre el desglose de incentivos y otros costos.
-    const gciaTxt = g ? fmtPesos(v.gciaVtaPesos) : 's/BT';
+    const gciaTxt = g ? fmtPesos(v.gciaVtaPesos) : (v.sinBt ? 's/BT' : 's/precio');
     const gciaCell = puedeDet
       ? '<button onclick="toggleVentasOvDet(\'' + key + '\')" title="Ver desglose de incentivos y costos" style="border:0;background:none;cursor:pointer;color:' + gColor + ';font-weight:600;font-size:12px;padding:0">' + gciaTxt + _ar(detAbierto) + '</button>'
       : '<span style="color:' + gColor + ';font-weight:600">' + gciaTxt + '</span>';
@@ -3392,7 +3392,7 @@ function renderVentasOv() {
       ? '<button onclick="toggleVentasOvCont(\'' + key + '\')" title="' + montoTitle.replace(/"/g, '&quot;') + '" style="border:0;background:none;cursor:pointer;color:inherit;font-weight:600;font-size:12px;padding:0">' + fmtPesos(v.montoFc) + (contPend ? ' <span style="color:#cc3300">●</span>' : ' <span style="color:#0a7a30">✓</span>') + _ar(contAbierto) + '</button>'
       : fmtPesos(v.montoFc);
     h += '<tr>'
-      + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + revBadge + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + _comisionTGControl(v) + _corpControl(v) + '</td>'
+      + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + revBadge + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + (v.emplFabrica ? ' <span title="Venta a empleado de fábrica: la unidad la factura VW. Suma al objetivo de patentamientos pero no deja ganancia (por eso va en $0). Se detecta por el comentario de la PV." style="background:#00437A;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">EMPL. FÁBRICA</span>' : '') + _comisionTGControl(v) + _corpControl(v) + '</td>'
       + '<td>' + _fechaDMA(v.fechaPvIso) + '</td>'
       + '<td>' + escapeHtml(v.modelo) + '</td>'
       + '<td style="font-size:12px;color:var(--vw-grey-3)">' + escapeHtml(v.color || '—') + '</td>'
@@ -3424,7 +3424,7 @@ function renderVentasOv() {
   }
   if (!rows.length) h += '<tr><td colspan="10" class="empty">Sin ventas.</td></tr>';
   h += '</tbody></table></div>';
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Ganancia = venta − costo de reposición (con incentivos) − comisión − IIBB + accesorios. Los badges <span style="background:#cc3300;color:#fff;border-radius:8px;padding:0 5px">FyF</span>/<span style="background:#cc3300;color:#fff;border-radius:8px;padding:0 5px">acc$</span> son el costo unidad del circuito que se concilia con saldos: rojo = pendiente de cobro · ámbar OK = Valeria confirmó (mover en Oversoft) · verde ✓ = completo · magenta ⚠ = reventa sin costo unidad. "s/BT" = mes sin BT cargada. <b>Gastos</b>: tocá el monto para ver el desglose por concepto (mismo dato que Adm. ventas); en ámbar "a fact." = cargado en la preventa, sin emitir todavía. (Versión nueva: sale de Oversoft, sin Sheet.)</div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Ganancia = venta − costo de reposición (con incentivos) − comisión − IIBB + accesorios. Los badges <span style="background:#cc3300;color:#fff;border-radius:8px;padding:0 5px">FyF</span>/<span style="background:#cc3300;color:#fff;border-radius:8px;padding:0 5px">acc$</span> son el costo unidad del circuito que se concilia con saldos: rojo = pendiente de cobro · ámbar OK = Valeria confirmó (mover en Oversoft) · verde ✓ = completo · magenta ⚠ = reventa sin costo unidad. "s/BT" = mes sin BT cargada · "s/precio" = la PV no tiene precio de venta cargado · <span style="background:#00437A;color:#fff;border-radius:8px;padding:0 5px">EMPL. FÁBRICA</span> = la factura VW: cuenta para el objetivo, ganancia $0. <b>Gastos</b>: tocá el monto para ver el desglose por concepto (mismo dato que Adm. ventas); en ámbar "a fact." = cargado en la preventa, sin emitir todavía. (Versión nueva: sale de Oversoft, sin Sheet.)</div>';
   cont.innerHTML = h;
   const u = document.getElementById('updatedAtVentasOv');
   if (u && ventasOvData.updatedAt) u.textContent = 'Actualizado: ' + new Date(ventasOvData.updatedAt).toLocaleString('es-AR');
