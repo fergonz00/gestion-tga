@@ -1432,6 +1432,7 @@ table.patent-tbl tr.tbl-sep.pat:hover td  { background: var(--green-soft); }
       <button class="tab" data-tab="incentivos" onclick="setTab('incentivos')">Incentivos</button>
       <button class="tab" data-tab="precioslista" onclick="setTab('precioslista')">Precios</button>
       <button class="tab" data-tab="industria" onclick="setTab('industria')">Industria</button>
+      <button class="tab" data-tab="marketing" onclick="setTab('marketing')">Marketing</button>
       <!-- Tab discreta: solo aparece entrando con #oversoft en la URL (revealOversoftTab) -->
       <button class="tab hidden" id="tabOversoft" data-tab="oversoft" onclick="setTab('oversoft')">⚙ Oversoft</button>
     </div>
@@ -1544,6 +1545,23 @@ table.patent-tbl tr.tbl-sep.pat:hover td  { background: var(--green-soft); }
         </div>
       </div>
       <div id="industriaContent"></div>
+    </section>
+
+    <!-- =================== MARKETING (pauta de Meta cruzada con el chat y el CRM) =================== -->
+    <section class="panel" id="panelMarketing">
+      <div class="toolbar">
+        <div class="updated" id="updatedAtMarketing">—</div>
+        <div class="actions">
+          <select id="marketingPeriodo" onchange="loadMarketing(true)"
+                  style="padding:6px 10px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px">
+            <option value="30">Últimos 30 días</option>
+            <option value="90" selected>Últimos 90 días</option>
+            <option value="365">Todo</option>
+          </select>
+          <button class="refresh" id="btnRefreshMarketing" onclick="loadMarketing(true)">Actualizar</button>
+        </div>
+      </div>
+      <div id="marketingContent"></div>
     </section>
 
     <!-- =================== ADM DE VENTAS (+ subtab Patentamientos) =================== -->
@@ -4776,6 +4794,7 @@ function setTab(tab) {
     precios:        'panelPrecios',
     precioslista:   'panelPreciosLista',
     industria:      'panelIndustria',
+    marketing:      'panelMarketing',
     admventas:      'panelAdmVentas',
     reparto:        'panelReparto',
     oversoft:       'panelOversoft',
@@ -4791,6 +4810,7 @@ function setTab(tab) {
   }
   if (tab === 'ventasov'       && !ventasOvData) loadVentasOv(false);
   if (tab === 'precioslista'   && !preciosListaData) loadPreciosLista(false);
+  if (tab === 'marketing'      && !marketingData) loadMarketing(false);
   if (tab === 'incentivos'     && !incentivosData) loadIncentivos(false);
   if (tab === 'admventas'      && _admVentasVencida()) loadAdmVentas(false);
   if (tab === 'reparto')                         { loadReparto(false); if (!facturacionData) loadFacturacion(false); }
@@ -7462,6 +7482,232 @@ function _resSaldosCard(key, label, value, sub, cls, extra) {
        + '</div>';
 }
 
+// =======================================================================
+// MARKETING — la pauta de Meta cruzada con el chat y el CRM
+// =======================================================================
+// El gasto sale de meta_ads_insights (cron diario de gestion-next contra la
+// Graph API). El resto lo calcula meta_analisis(desde, hasta) en wjfgl.
+//
+// Dos definiciones que ordenan todo y no existen en el panel de Meta:
+//   charla real   = el cliente mandó 3 mensajes o más (no el que toca y se va)
+//   lead comercial = se vendió, o cerró por una razón de negocio — precio,
+//                    financiación, se lo llevó otro. No cuenta "no contesta"
+//                    ni los datos erróneos o duplicados.
+let marketingData = null;
+
+function _mkPeriodo() {
+  const sel = document.getElementById('marketingPeriodo');
+  const dias = parseInt((sel && sel.value) || '90', 10);
+  const hasta = new Date();
+  const desde = new Date(hasta.getTime() - dias * 86400000);
+  const iso = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).format(d);
+  return { desde: iso(desde), hasta: iso(hasta) };
+}
+
+async function loadMarketing(forzar) {
+  const cont = document.getElementById('marketingContent');
+  const btn = document.getElementById('btnRefreshMarketing');
+  if (cont && (forzar || !marketingData)) cont.innerHTML = '<div class="resumen-loading">Cargando pauta...</div>';
+  if (btn) { btn.disabled = true; btn.textContent = 'Cargando...'; }
+  try {
+    const p = _mkPeriodo();
+    const url = GESTION_NEXT_URL + '/api/meta/analisis?desde=' + p.desde + '&hasta=' + p.hasta;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    marketingData = data;
+    renderMarketing();
+  } catch (e) {
+    if (cont) cont.innerHTML = '<div class="resumen-loading">No se pudo cargar la pauta: ' + escapeHtml(String(e.message || e)) + '</div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Actualizar'; }
+  }
+}
+
+function _mkPct(n) { return (n === null || n === undefined) ? '—' : Math.round(n) + '%'; }
+function _mkDiv(a, b) { return b ? Math.round(a / b) : null; }
+function _mkPesos(n) { return (n === null || n === undefined) ? '—' : fmtPesos(n); }
+
+function renderMarketing() {
+  const cont = document.getElementById('marketingContent');
+  if (!cont || !marketingData) return;
+  const d = marketingData;
+  const t = d.total || {};
+
+  const sello = document.getElementById('updatedAtMarketing');
+  if (sello) {
+    const s = d.sync;
+    sello.textContent = 'Pauta de Meta cruzada con el chat y el CRM · ' + d.desde + ' a ' + d.hasta
+      + (s && s.corrido_at ? ' · último sync ' + new Date(s.corrido_at).toLocaleString('es-AR') : '');
+  }
+
+  let h = '';
+
+  // ---- Cifras de arriba ----
+  h += '<div class="cards-resumen">';
+  h += kpi('Gasto', fmtPesos(t.spend || 0), 'en el período', '');
+  h += kpi('Conversaciones', t.convs || 0, 'abrieron el WhatsApp', '');
+  h += kpi('Charlas reales', t.charlas || 0, _mkPct(t.convs ? 100 * t.charlas / t.convs : null) + ' de las conversaciones', '');
+  h += kpi('Leads en el CRM', t.leads || 0, _mkPct(t.convs ? 100 * t.leads / t.convs : null) + ' de las conversaciones', '');
+  h += kpi('Leads comerciales', t.comercial || 0, 'hablaron de comprar', t.comercial ? 'good' : '');
+  h += kpi('Costo por lead comercial', _mkPesos(_mkDiv(t.spend, t.comercial)), 'el número que ordena', 'warn');
+  h += '</div>';
+
+  // ---- Anuncio por anuncio ----
+  h += '<div class="table-wrap" style="margin-top:16px"><div class="table-head"><h3>Anuncio por anuncio</h3></div>'
+     + '<div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:1000px">'
+     + '<thead><tr>'
+     + '<th style="text-align:left">Anuncio</th>'
+     + '<th style="text-align:right">Gasto</th>'
+     + '<th style="text-align:right">Conv.</th>'
+     + '<th style="text-align:right">$/conv</th>'
+     + '<th style="text-align:right">Charlas</th>'
+     + '<th style="text-align:right">$/charla</th>'
+     + '<th style="text-align:right">Leads</th>'
+     + '<th style="text-align:right">Comerc.</th>'
+     + '<th style="text-align:right">$/comerc.</th>'
+     + '<th style="text-align:right">Vend.</th>'
+     + '</tr></thead><tbody>';
+  for (const a of (d.anuncios || [])) {
+    const activo = String(a.effective_status || '').indexOf('ACTIVE') >= 0;
+    h += '<tr>'
+      + '<td data-label="Anuncio" style="max-width:280px">' + escapeHtml(a.ad_name || a.ad_id)
+      +   (activo ? ' <span style="font-size:10px;color:#0a7a30;font-weight:700">EN AIRE</span>' : '')
+      +   '<div style="font-size:10.5px;color:var(--vw-grey-3)">' + escapeHtml(a.campaign_name || '') + '</div></td>'
+      + '<td data-label="Gasto" style="text-align:right">' + fmtPesos(a.spend) + '</td>'
+      + '<td data-label="Conv." style="text-align:right">' + (a.convs || '—') + '</td>'
+      + '<td data-label="$/conv" style="text-align:right">' + _mkPesos(_mkDiv(a.spend, a.convs)) + '</td>'
+      + '<td data-label="Charlas" style="text-align:right">' + (a.charlas || '—')
+      +   (a.convs ? ' <span style="color:var(--vw-grey-3)">' + Math.round(100 * a.charlas / a.convs) + '%</span>' : '') + '</td>'
+      + '<td data-label="$/charla" style="text-align:right">' + _mkPesos(_mkDiv(a.spend, a.charlas)) + '</td>'
+      + '<td data-label="Leads" style="text-align:right">' + (a.leads || '—') + '</td>'
+      + '<td data-label="Comerciales" style="text-align:right;font-weight:700">' + (a.comercial || '—') + '</td>'
+      + '<td data-label="$/comercial" style="text-align:right;font-weight:700">' + _mkPesos(_mkDiv(a.spend, a.comercial)) + '</td>'
+      + '<td data-label="Vendidos" style="text-align:right">' + (a.vendidos || '—') + '</td>'
+      + '</tr>';
+  }
+  h += '</tbody></table></div></div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">Ordenado por gasto. <b>Charlas</b> = conversaciones donde el cliente mandó 3 mensajes o más; es la señal más temprana que no miente y está disponible sin esperar a que el lead madure. <b>Comerc.</b> = leads que se vendieron o que cerraron por una razón de negocio. Ojo con leer "conversación → lead": mide con qué ganas se cargan leads, no la calidad del anuncio.</div>';
+
+  // ---- Velocidad ----
+  h += '<div class="table-wrap" style="margin-top:20px"><div class="table-head"><h3>Cuánto tarda el vendedor en atender</h3></div>'
+     + '<div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:620px">'
+     + '<thead><tr><th style="text-align:left">Demora del 1er contacto</th><th style="text-align:right">Leads</th>'
+     + '<th style="text-align:right">Terminó en "no contesta"</th><th style="text-align:right">Tuvo charla comercial</th><th style="text-align:right">Vendidos</th></tr></thead><tbody>';
+  for (const v of (d.velocidad || [])) {
+    const bien = v.orden === 1;
+    h += '<tr' + (bien ? ' style="background:#eefaf1"' : '') + '>'
+      + '<td data-label="Demora">' + escapeHtml(v.tramo) + '</td>'
+      + '<td data-label="Leads" style="text-align:right">' + v.leads + '</td>'
+      + '<td data-label="No contesta" style="text-align:right">' + _mkPct(v.pct_no_contesta) + '</td>'
+      + '<td data-label="Comercial" style="text-align:right;font-weight:700;color:' + (v.pct_comercial >= 40 ? '#0a7a30' : (v.pct_comercial <= 20 ? '#cc3300' : 'inherit')) + '">' + _mkPct(v.pct_comercial) + '</td>'
+      + '<td data-label="Vendidos" style="text-align:right">' + (v.vendidos || '—') + '</td>'
+      + '</tr>';
+  }
+  h += '</tbody></table></div></div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">La caída es limpia y sin excepciones: atender dentro de la hora casi triplica la chance de tener una conversación comercial contra atender después de tres días.</div>';
+
+  // ---- Franja horaria ----
+  h += '<div class="table-wrap" style="margin-top:20px"><div class="table-head"><h3>A qué hora escribe la gente</h3></div>'
+     + '<div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:680px">'
+     + '<thead><tr><th style="text-align:left">Franja</th><th style="text-align:right">Conversaciones</th><th style="text-align:right">Leads</th>'
+     + '<th style="text-align:right">Horas hasta atender</th><th style="text-align:right">Atendido en 1 h</th><th style="text-align:right">Charla comercial</th></tr></thead><tbody>';
+  for (const x of (d.horario || [])) {
+    h += '<tr>'
+      + '<td data-label="Franja">' + escapeHtml(x.bloque) + '</td>'
+      + '<td data-label="Conversaciones" style="text-align:right">' + x.convs + '</td>'
+      + '<td data-label="Leads" style="text-align:right">' + x.leads + '</td>'
+      + '<td data-label="Horas" style="text-align:right;font-weight:700;color:' + (x.hs_1er_contacto >= 40 ? '#cc3300' : 'inherit') + '">' + (x.hs_1er_contacto === null ? '—' : x.hs_1er_contacto) + '</td>'
+      + '<td data-label="En 1 hora" style="text-align:right">' + _mkPct(x.pct_1h) + '</td>'
+      + '<td data-label="Comercial" style="text-align:right">' + _mkPct(x.pct_comercial) + '</td>'
+      + '</tr>';
+  }
+  h += '</tbody></table></div></div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">La franja de la noche suele ser la más grande del día y la peor atendida, porque entra con el salón cerrado. Es el bloque donde una guardia corta rinde más que cualquier cambio de creativo.</div>';
+
+  // ---- Vendedores ----
+  h += '<div class="table-wrap" style="margin-top:20px"><div class="table-head"><h3>Qué hace cada vendedor con los leads de pauta</h3></div>'
+     + '<div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:760px">'
+     + '<thead><tr><th style="text-align:left">Vendedor</th><th style="text-align:right">Leads</th><th style="text-align:right">Abiertos</th>'
+     + '<th style="text-align:right">Abiertos +60 días</th><th style="text-align:right">El más viejo</th>'
+     + '<th style="text-align:right">Horas hasta atender</th><th style="text-align:right">Charla comercial</th><th style="text-align:right">Vendidos</th></tr></thead><tbody>';
+  for (const v of (d.vendedores || [])) {
+    const alerta = (v.abiertos_60d || 0) > 0;
+    h += '<tr' + (alerta ? ' style="background:#fff4f0"' : '') + '>'
+      + '<td data-label="Vendedor">' + escapeHtml(v.vendedor) + '</td>'
+      + '<td data-label="Leads" style="text-align:right">' + v.leads + '</td>'
+      + '<td data-label="Abiertos" style="text-align:right">' + v.abiertos + ' <span style="color:var(--vw-grey-3)">' + _mkPct(v.pct_abiertos) + '</span></td>'
+      + '<td data-label="+60 días" style="text-align:right;font-weight:700;color:' + (alerta ? '#cc3300' : 'inherit') + '">' + (v.abiertos_60d || '—') + '</td>'
+      + '<td data-label="Más viejo" style="text-align:right">' + (v.dias_mas_viejo === null ? '—' : v.dias_mas_viejo + ' d') + '</td>'
+      + '<td data-label="Horas" style="text-align:right">' + (v.hs_1er_contacto === null ? '—' : v.hs_1er_contacto) + '</td>'
+      + '<td data-label="Comercial" style="text-align:right">' + _mkPct(v.pct_comercial) + '</td>'
+      + '<td data-label="Vendidos" style="text-align:right">' + (v.vendidos || '—') + '</td>'
+      + '</tr>';
+  }
+  h += '</tbody></table></div></div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">⚠️ Cuidado al comparar el % de charla comercial entre carteras: mientras un lead sigue abierto no cuenta como "no compra", así que una cartera con muchos leads sin cerrar <b>parece</b> la de mejor calidad. Mirá primero la columna de abiertos con más de 60 días — eso es pauta ya pagada que quedó parada.</div>';
+
+  // ---- Modelos ----
+  h += '<div class="table-wrap" style="margin-top:20px"><div class="table-head"><h3>Qué modelo piden</h3></div>'
+     + '<div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:520px">'
+     + '<thead><tr><th style="text-align:left">Modelo</th><th style="text-align:right">Leads</th><th style="text-align:right">Charla comercial</th><th style="text-align:right">Vendidos</th></tr></thead><tbody>';
+  for (const m of (d.modelos || [])) {
+    h += '<tr>'
+      + '<td data-label="Modelo">' + escapeHtml(m.modelo) + '</td>'
+      + '<td data-label="Leads" style="text-align:right">' + m.leads + '</td>'
+      + '<td data-label="Comercial" style="text-align:right;font-weight:700;color:' + (m.pct_comercial >= 45 ? '#0a7a30' : (m.pct_comercial <= 25 ? '#cc3300' : 'inherit')) + '">' + _mkPct(m.pct_comercial) + '</td>'
+      + '<td data-label="Vendidos" style="text-align:right">' + (m.vendidos || '—') + '</td>'
+      + '</tr>';
+  }
+  h += '</tbody></table></div></div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">El modelo más pedido no es el que mejor califica. Sirve para decidir sobre qué modelo pautar, no solo cuál genera más clics.</div>';
+
+  // ---- Fuga chat -> CRM ----
+  h += '<div class="table-wrap" style="margin-top:20px"><div class="table-head"><h3>Charlas que nunca llegaron al CRM</h3></div>'
+     + '<div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:520px">'
+     + '<thead><tr><th style="text-align:left">Semáforo de la IA</th><th style="text-align:right">Charlas reales</th><th style="text-align:right">Sin lead</th><th style="text-align:right">% perdido</th></tr></thead><tbody>';
+  for (const f of (d.fuga || [])) {
+    h += '<tr' + (f.pct_perdido >= 50 ? ' style="background:#fff4f0"' : '') + '>'
+      + '<td data-label="Semáforo">' + escapeHtml(f.score) + '</td>'
+      + '<td data-label="Charlas" style="text-align:right">' + f.charlas + '</td>'
+      + '<td data-label="Sin lead" style="text-align:right">' + f.sin_lead + '</td>'
+      + '<td data-label="% perdido" style="text-align:right;font-weight:700;color:' + (f.pct_perdido >= 50 ? '#cc3300' : 'inherit') + '">' + _mkPct(f.pct_perdido) + '</td>'
+      + '</tr>';
+  }
+  h += '</tbody></table></div></div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">Gente que mandó 3 mensajes o más y no figura en el CRM. El bot crea el lead prácticamente solo cuando el semáforo llega a verde: los amarillos se quedan en el chat. Buena parte es ruido (gente equivocada, insultos) y está bien filtrarla, pero ahí adentro también quedan clientes que preguntaron precio y nadie llamó.</div>';
+
+  // ---- Motivos ----
+  h += '<div class="table-wrap" style="margin-top:20px"><div class="table-head"><h3>Por qué no compran</h3></div>'
+     + '<div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:420px">'
+     + '<thead><tr><th style="text-align:left">Motivo</th><th style="text-align:right">Casos</th><th style="text-align:right">%</th></tr></thead><tbody>';
+  const totMot = (d.motivos || []).reduce((a, m) => a + m.n, 0);
+  for (const m of (d.motivos || [])) {
+    h += '<tr>'
+      + '<td data-label="Motivo">' + escapeHtml(m.motivo) + '</td>'
+      + '<td data-label="Casos" style="text-align:right">' + m.n + '</td>'
+      + '<td data-label="%" style="text-align:right">' + (totMot ? Math.round(100 * m.n / totMot) + '%' : '—') + '</td>'
+      + '</tr>';
+  }
+  h += '</tbody></table></div></div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">Motivo obligatorio que carga el vendedor al cerrar el lead. Los que arrancan con "No contesta" o "Dato" no son un rechazo comercial: son gente que no aparece o datos que nunca fueron un cliente.</div>';
+
+  cont.innerHTML = h;
+}
+
+// El Resumen muestra el bloque Marketing sin que haga falta abrir la solapa.
+// Silencioso: si el endpoint falla, la card queda en "Cargando" y no rompe nada.
+async function loadMarketingSilent(forzar) {
+  if (marketingData && !forzar) return marketingData;
+  try {
+    const p = _mkPeriodo();
+    const res = await fetch(GESTION_NEXT_URL + '/api/meta/analisis?desde=' + p.desde + '&hasta=' + p.hasta);
+    const data = await res.json();
+    if (data && !data.error) marketingData = data;
+  } catch (e) { /* silencioso */ }
+  return marketingData;
+}
+
 async function loadResumen() {
   renderResumen();  // pinta lo que haya en cache (si hay)
   // El Resumen sale TODO de Oversoft: stock (oversoftStockData), ventas
@@ -7476,6 +7722,7 @@ async function loadResumen() {
     loadSaldosInforme(false).catch(() => {}),
     loadDolarBlue(false).catch(() => {}),
     flujoData ? Promise.resolve() : loadFlujoSilent(false),
+    loadMarketingSilent(false),
   ]);
   renderResumen();  // re-pinta con datos frescos
 }
@@ -7506,6 +7753,7 @@ function refreshResumen() {
     loadSaldosInforme(true).catch(() => {}),
     loadDolarBlue(true).catch(() => {}),
     loadFlujoSilent(true),
+    loadMarketingSilent(true),
   ]).finally(() => {
     renderResumen();
     if (btn) { btn.disabled = false; btn.textContent = 'Actualizar todo'; }
@@ -7621,6 +7869,29 @@ function renderResumen() {
     h += '</div>';
   } else {
     h += '<div class="resumen-loading">Cargando patentamientos...</div>';
+  }
+  h += '</div>';
+
+  // ----- MARKETING -----
+  // Costo por lead comercial, que es el numero que ordena bien la pauta: el
+  // costo por conversacion que muestra Meta engaña (ver solapa Marketing).
+  h += '<div class="resumen-block">';
+  h += '  <div class="resumen-head"><h3>Marketing — pauta de Meta</h3>'
+     + '    <button class="resumen-link" onclick="setTab(\'marketing\')">Ver detalle →</button>'
+     + '  </div>';
+  if (marketingData && marketingData.total) {
+    const mt = marketingData.total;
+    const cLead = mt.comercial ? Math.round(mt.spend / mt.comercial) : 0;
+    const activos = (marketingData.anuncios || []).filter(a => String(a.effective_status || '').indexOf('ACTIVE') >= 0).length;
+    h += '<div class="cards-resumen">';
+    h += kpi('Gasto en pauta', fmtPesos(mt.spend || 0), activos + (activos === 1 ? ' anuncio en aire' : ' anuncios en aire'), '');
+    h += kpi('Conversaciones', mt.convs || 0, (mt.charlas || 0) + ' llegaron a charlar', '');
+    h += kpi('Leads comerciales', mt.comercial || 0, 'de ' + (mt.leads || 0) + ' leads', mt.comercial ? 'good' : '');
+    h += kpi('Costo por lead comercial', cLead ? fmtPesos(cLead) : '—', 'lo que cuesta un interesado real', cLead ? 'warn' : '');
+    h += '<div style="grid-column:1/-1;font-size:11px;color:var(--vw-grey-3)">' + escapeHtml(marketingData.desde + ' a ' + marketingData.hasta) + ' · lead comercial = habló de comprar, no "no contesta" ni dato erróneo</div>';
+    h += '</div>';
+  } else {
+    h += '<div class="resumen-loading">Cargando pauta...</div>';
   }
   h += '</div>';
 
