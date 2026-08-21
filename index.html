@@ -6375,11 +6375,24 @@ function _pedidoSumCols(it) {
   const c = (it && it.colores) || {};
   return Object.keys(c).reduce((a, k) => a + (Number(c[k]) || 0), 0);
 }
-// Cuántas pido del modelo, en total (columna "Pedir" de la fila).
+// Cuántas pido del modelo, en total (columna "Pedir" de la fila). Mientras
+// escribís NO se toca el número (si no, tipear "12" se comería el cursor al
+// normalizar en el "1"); el acomode va en pedidoZonalTotalFin, al salir del campo.
 function pedidoZonalTotal(mk, modelo, familia, el) {
   const it = _pedidoZonalItem(mk, modelo, familia);
   it.total = Math.max(0, Math.floor(Number(el.value) || 0));
   el.classList.toggle('on', it.total > 0);
+  _pedidoZonalTrasCambio(mk);
+}
+// Al salir del campo: no podés pedir menos de lo que ya detallaste por color.
+function pedidoZonalTotalFin(mk, el) {
+  const it = repartoPedido.items[mk];
+  if (it) {
+    const suma = _pedidoSumCols(it);
+    if (suma > it.total) it.total = suma;
+    el.value = it.total > 0 ? String(it.total) : '';
+    el.classList.toggle('on', it.total > 0);
+  }
   _pedidoZonalTrasCambio(mk);
 }
 // Cuántas de ESE color. Si el desglose por color pasa al total, el total sube solo.
@@ -6417,8 +6430,10 @@ function _pedidoZonalSyncFila(mk) {
   if (hint) hint.innerHTML = _pedidoHintHtml(it);
 }
 function _pedidoHintHtml(it) {
-  if (!it || !(it.total > 0)) return '';
+  if (!it) return '';
   const suma = _pedidoSumCols(it);
+  if (suma > it.total) return '<span class="ped-falta">por color: ' + suma + '</span>';
+  if (!(it.total > 0)) return '';
   if (!suma) return '<span class="ped-falta">falta color</span>';
   if (suma < it.total) return '<span class="ped-falta">' + (it.total - suma) + ' s/color</span>';
   return '<span class="ped-ok">✓ por color</span>';
@@ -6430,7 +6445,8 @@ function _pedidoInputModelo(mk, modelo, familia) {
   const a = [_repJsArg(mk), _repJsArg(modelo), _repJsArg(familia)].map(x => "'" + x + "'").join(',');
   return '<input type="number" min="0" step="1" class="ped-inp' + (v ? ' on' : '') + '" id="pedtot-' + _pedId(mk) + '"'
     + ' value="' + v + '" placeholder="0" title="Cuántas unidades de este modelo le pido al zonal"'
-    + ' onclick="event.stopPropagation()" oninput="pedidoZonalTotal(' + a + ',this)">'
+    + ' onclick="event.stopPropagation()" oninput="pedidoZonalTotal(' + a + ',this)"'
+    + ' onchange="pedidoZonalTotalFin(\'' + _repJsArg(mk) + '\',this)">'
     + '<div class="ped-hint" id="pedhint-' + _pedId(mk) + '">' + _pedidoHintHtml(it) + '</div>';
 }
 // Input de "Pedir" de una fila de color, dentro del detalle del modelo.
