@@ -5020,13 +5020,19 @@ function getFacturas(params) {
 // estuvo en stock, del motor: m.diasVenta). Todo sale del motor (Oversoft, ya
 // cacheado), no pega de nuevo.
 // =======================================================================
+// Ventana de la seccion Rotacion del Reparto: MES EN CURSO + los 3 anteriores.
+// Se incluye el mes corriente a proposito (antes eran los 4 CERRADOS): la compra
+// se decide mirando como viene el mes, no como venia hace 30 dias. Ojo: el mes en
+// curso es PARCIAL, asi que el promedio de un mes recien arrancado tira para abajo
+// (y "meses de stock" para arriba). Devuelve descendente; el front la da vuelta
+// para el titulo.
 function _rotMesesRef() {
   var out = [], now = new Date();
-  for (var i = 1; i <= 4; i++) {
+  for (var i = 0; i <= 3; i++) {
     var d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     out.push(d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2));
   }
-  return out;   // p.ej. ['2026-06','2026-05','2026-04','2026-03']
+  return out;   // p.ej. ['2026-08','2026-07','2026-06','2026-05']
 }
 function _repartoRotacion(motor, virt) {
   virt = virt || { byNc: {}, colorByNc: {} };
@@ -5034,8 +5040,9 @@ function _repartoRotacion(motor, virt) {
   var nMes = refMeses.length;
   var sum = function (vpm) { var s = 0; for (var i = 0; i < refMeses.length; i++) s += Number((vpm || {})[refMeses[i]]) || 0; return s; };
   var out = [];
-  // Mes EN CURSO (parcial). refMeses son los 4 meses CERRADOS (para el promedio),
-  // asi que las vendidas del mes corriente hay que sacarlas aparte.
+  // Mes EN CURSO (parcial). Desde ago-26 el mes corriente TAMBIEN entra en el
+  // promedio (refMeses), pero la columna "Vend. mes" lo sigue mostrando aparte:
+  // es el dato que se mira para saber como viene el mes.
   var mesAct = _yyyyMm(new Date());
   // Desglose de "Vend. mes" (qué PV, qué color, con qué ganancia), indexado por
   // la MISMA clave normalizada que usa el reparto para cruzar modelos

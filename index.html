@@ -1360,6 +1360,17 @@ table.patent-tbl tr.tbl-sep.pat:hover td  { background: var(--green-soft); }
 .rot-agotado-lbl { color: #1a7f37; font-weight: 600; font-size: 11px; }
 .rot-enrep { color: #0057a0; }                       /* lo que VW ofrece y todavía no compraste */
 .rot-col-tabla tr.rot-solorep { background: #f4f8fc; }  /* color que sólo existe en el reparto */
+/* Pedido al zonal: se marca desde la misma tabla de Rotación y se arma el texto */
+.ped-inp { width: 48px; padding: 2px 4px; font-size: 12px; text-align: right; border: 1px solid var(--vw-grey-2); border-radius: 5px; font-family: inherit; background: #fff; }
+.ped-inp:focus { border-color: var(--vw-blue); outline: none; }
+.ped-inp.on { border-color: var(--vw-blue); background: #eef3fc; font-weight: 700; color: var(--vw-blue); }
+.ped-hint { font-size: 10px; color: var(--vw-grey-3); margin-top: 2px; white-space: nowrap; }
+.ped-falta { color: #b06a00; }
+.ped-ok { color: #1a7f37; }
+.ped-danger { color: #b00020 !important; font-weight: 700; }
+.rep-zonal { background: #f4f8fc; border: 1px solid #c8dcf0; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.rep-zonal-ttl { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; font-weight: 700; color: #0057a0; margin-bottom: 6px; }
+.rep-zonal-cnt { font-weight: 500; font-size: 12px; color: var(--vw-grey-4); }
 </style>
 
 <!-- pdf.js para parsing client-side de los NCs -->
@@ -5740,14 +5751,14 @@ let repartoNombres = {};  // edición de nombres de color (codigo -> nombre)
 let repartoCopia = '';    // texto armado para mandar a VW
 let repartoMsg = '';      // mensaje del cargador
 
-// "Vendido" del reparto: ventas del modelo en los MISMOS 4 meses completos que
-// usa la sección Rotación (repartoData.rotacion.meses, los manda el backend).
-// Fallback local por si la rotación todavía no cargó.
+// "Vendido" del reparto: ventas del modelo en los MISMOS 4 meses que usa la
+// sección Rotación — mes EN CURSO + los 3 anteriores (repartoData.rotacion.meses,
+// los manda el backend). Fallback local por si la rotación todavía no cargó.
 function _repMeses4() {
   const rot = (repartoData && repartoData.rotacion && repartoData.rotacion.meses) || null;
   if (rot && rot.length) return rot;
   const out = []; const now = new Date();
-  for (let i = 1; i <= 4; i++) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); out.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')); }
+  for (let i = 0; i <= 3; i++) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); out.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')); }
   return out;
 }
 function _repVendido(v) { if (!v) return null; return _repMeses4().reduce((a, mk) => a + (Number(v[mk]) || 0), 0); }
@@ -6070,7 +6081,7 @@ function repartoElegidasSec(items) {
   const vinsJson = JSON.stringify(eleg.map(i => i.vin));
   h += '<div class="reparto-row" style="margin-bottom:8px"><button class="refresh reparto-comprar" onclick=\'repartoComprarElegidas(' + vinsJson + ')\'>Marcar todas compradas (' + eleg.length + ')</button></div>';
   h += '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
-    + '<th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num" title="Meses de stock = stock ÷ venta mensual promedio (mismos 4 meses que la sección Rotación)">Meses stock</th><th class="num">Acción</th></tr></thead><tbody>';
+    + '<th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num" title="Meses de stock = stock ÷ venta mensual promedio (misma ventana que la sección Rotación: mes en curso + los 3 anteriores)">Meses stock</th><th class="num">Acción</th></tr></thead><tbody>';
   eleg.forEach(it => {
     h += '<tr>';
     h += '<td><div class="reparto-modelo">' + escapeHtml((it.descripcion || '').replace(/^VW /, '')) + '</div><div class="reparto-fam">' + escapeHtml(it.familia || '') + '</div></td>';
@@ -6200,8 +6211,8 @@ function repartoFiltrar() {
   let h = '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
     + '<th></th><th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th>'
     + '<th class="num" title="Unidades de este modelo vendidas en el mes en curso (' + _mesLabel(_mesKeyHoy()) + ', parcial). Ventas desde Oversoft.">Vend. mes</th>'
-    + '<th class="num" title="Ventas del modelo en los últimos 4 meses completos (misma ventana que Meses stock y la Rotación)">Vendido (4m)</th>'
-    + '<th class="num" title="Meses de stock = stock ÷ venta mensual promedio (mismos 4 meses que la sección Rotación)">Meses stock</th>'
+    + '<th class="num" title="Ventas del modelo en los últimos 4 meses: el mes en curso (parcial) + los 3 anteriores. Misma ventana que Meses stock y la Rotación.">Vendido (4m)</th>'
+    + '<th class="num" title="Meses de stock = stock ÷ venta mensual promedio (misma ventana que la sección Rotación: mes en curso + los 3 anteriores)">Meses stock</th>'
     + '<th class="num" title="Rotación real: días promedio entre que la unidad entró al sistema y se vendió (últimos 12 meses). Mismo dato que la sección Rotación.">Días en venderse</th>'
     + '<th class="num" title="Unidades de este modelo que YA marcaste compradas/confirmadas en el reparto de este mes.">Comp. mes</th>'
     + '<th>Estado</th><th class="num">Acción</th></tr></thead><tbody>';
@@ -6322,17 +6333,205 @@ function _rotMesesCell(ms, stock) {
   const cls = ms < 1 ? 'rot-rapido' : (ms <= 3 ? 'rot-ok' : 'rot-sobra');
   return '<span class="' + cls + '">' + v + ' m</span>';
 }
+// =======================================================================
+// PEDIDO AL ZONAL — marcar desde la misma tabla de Rotación qué unidades pedir
+// =======================================================================
+// Se marca donde se decide: en la fila del modelo va CUÁNTAS pido (columna
+// "Pedir") y, abriendo el modelo, cuántas de cada COLOR. Con eso se arma solo un
+// texto plano listo para copiar y pegarle al zonal (mail/WhatsApp).
+//
+// Vive en localStorage y es POR MES: al cambiar de mes arranca vacío (el pedido
+// de agosto no se arrastra a septiembre). No toca el backend ni el reparto de VW:
+// esto es la lista que le pedís al zonal, no lo que ya compraste.
+//
+// Forma: { mes:'YYYY-MM', items: { modeloKey: { modelo, familia, total, colores:{nombre:n} } } }
+// `total` = cuántas pido del modelo. `colores` = el desglose. Si el desglose suma
+// más que el total, el total sube solo (nunca podés pedir menos de lo que detallaste).
+const PEDIDO_ZONAL_LS = 'gestion_pedido_zonal';
+let repartoPedido = _pedidoZonalLoad();
+let _repZonalConfirm = false;
+
+function _pedidoZonalLoad() {
+  try {
+    const d = JSON.parse(localStorage.getItem(PEDIDO_ZONAL_LS) || 'null');
+    if (d && d.items && d.mes === _mesKeyHoy()) return d;
+  } catch (e) {}
+  return { mes: _mesKeyHoy(), items: {} };
+}
+function _pedidoZonalSave() {
+  repartoPedido.mes = _mesKeyHoy();
+  try { localStorage.setItem(PEDIDO_ZONAL_LS, JSON.stringify(repartoPedido)); } catch (e) {}
+}
+// id de DOM seguro a partir del modeloKey (que puede traer espacios y símbolos)
+function _pedId(mk) { return String(mk).replace(/[^a-zA-Z0-9]/g, '_'); }
+function _pedidoZonalItem(mk, modelo, familia) {
+  let it = repartoPedido.items[mk];
+  if (!it) it = repartoPedido.items[mk] = { modelo: modelo || mk, familia: familia || '', total: 0, colores: {} };
+  if (modelo) it.modelo = modelo;
+  if (familia) it.familia = familia;
+  return it;
+}
+function _pedidoSumCols(it) {
+  const c = (it && it.colores) || {};
+  return Object.keys(c).reduce((a, k) => a + (Number(c[k]) || 0), 0);
+}
+// Cuántas pido del modelo, en total (columna "Pedir" de la fila).
+function pedidoZonalTotal(mk, modelo, familia, el) {
+  const it = _pedidoZonalItem(mk, modelo, familia);
+  it.total = Math.max(0, Math.floor(Number(el.value) || 0));
+  el.classList.toggle('on', it.total > 0);
+  _pedidoZonalTrasCambio(mk);
+}
+// Cuántas de ESE color. Si el desglose por color pasa al total, el total sube solo.
+function pedidoZonalColor(mk, modelo, familia, color, el) {
+  const it = _pedidoZonalItem(mk, modelo, familia);
+  const n = Math.max(0, Math.floor(Number(el.value) || 0));
+  el.classList.toggle('on', n > 0);
+  if (n > 0) it.colores[color] = n; else delete it.colores[color];
+  const suma = _pedidoSumCols(it);
+  if (suma > it.total) it.total = suma;
+  _pedidoZonalTrasCambio(mk);
+}
+function _pedidoZonalTrasCambio(mk) {
+  // limpieza: los modelos que quedaron en cero no ensucian el texto ni el storage
+  Object.keys(repartoPedido.items).forEach(k => {
+    const it = repartoPedido.items[k];
+    if (!(it.total > 0) && !_pedidoSumCols(it)) delete repartoPedido.items[k];
+  });
+  _pedidoZonalSave();
+  _pedidoZonalSyncFila(mk);
+  repartoPedidoBoxRender();
+}
+// Repinta SOLO la fila del modelo (el input del total, que puede haber subido
+// solo, y el cartelito de cuántas quedan sin color). No redibuja la tabla, así no
+// se cierran los modelos abiertos ni se pierde el foco mientras vas marcando.
+function _pedidoZonalSyncFila(mk) {
+  const it = repartoPedido.items[mk];
+  const inp = document.getElementById('pedtot-' + _pedId(mk));
+  if (inp && document.activeElement !== inp) {
+    const v = (it && it.total > 0) ? String(it.total) : '';
+    if (inp.value !== v) inp.value = v;
+  }
+  if (inp) inp.classList.toggle('on', !!(it && it.total > 0));
+  const hint = document.getElementById('pedhint-' + _pedId(mk));
+  if (hint) hint.innerHTML = _pedidoHintHtml(it);
+}
+function _pedidoHintHtml(it) {
+  if (!it || !(it.total > 0)) return '';
+  const suma = _pedidoSumCols(it);
+  if (!suma) return '<span class="ped-falta">falta color</span>';
+  if (suma < it.total) return '<span class="ped-falta">' + (it.total - suma) + ' s/color</span>';
+  return '<span class="ped-ok">✓ por color</span>';
+}
+// Input de la columna "Pedir" (fila del modelo).
+function _pedidoInputModelo(mk, modelo, familia) {
+  const it = repartoPedido.items[mk];
+  const v = (it && it.total > 0) ? it.total : '';
+  const a = [_repJsArg(mk), _repJsArg(modelo), _repJsArg(familia)].map(x => "'" + x + "'").join(',');
+  return '<input type="number" min="0" step="1" class="ped-inp' + (v ? ' on' : '') + '" id="pedtot-' + _pedId(mk) + '"'
+    + ' value="' + v + '" placeholder="0" title="Cuántas unidades de este modelo le pido al zonal"'
+    + ' onclick="event.stopPropagation()" oninput="pedidoZonalTotal(' + a + ',this)">'
+    + '<div class="ped-hint" id="pedhint-' + _pedId(mk) + '">' + _pedidoHintHtml(it) + '</div>';
+}
+// Input de "Pedir" de una fila de color, dentro del detalle del modelo.
+function _pedidoInputColor(mk, modelo, familia, color) {
+  const it = repartoPedido.items[mk];
+  const v = (it && Number(it.colores[color]) > 0) ? it.colores[color] : '';
+  const a = [_repJsArg(mk), _repJsArg(modelo), _repJsArg(familia), _repJsArg(color)].map(x => "'" + x + "'").join(',');
+  return '<input type="number" min="0" step="1" class="ped-inp' + (v ? ' on' : '') + '"'
+    + ' value="' + v + '" placeholder="0" title="Cuántas de este color le pido al zonal"'
+    + ' onclick="event.stopPropagation()" oninput="pedidoZonalColor(' + a + ',this)">';
+}
+// Texto plano para copiar y pegar. Los modelos salen en el orden en que los fuiste
+// marcando; los colores, del que más pedís al que menos.
+function pedidoZonalTexto() {
+  const items = repartoPedido.items || {};
+  const keys = Object.keys(items);
+  if (!keys.length) return '';
+  let tot = 0;
+  const lineas = [];
+  keys.forEach(k => {
+    const it = items[k];
+    const suma = _pedidoSumCols(it);
+    const n = Math.max(Number(it.total) || 0, suma);
+    if (!n) return;
+    tot += n;
+    lineas.push('• ' + it.modelo + ' — ' + n + (n === 1 ? ' unidad' : ' unidades'));
+    Object.keys(it.colores)
+      .sort((a, b) => it.colores[b] - it.colores[a] || a.localeCompare(b))
+      .forEach(c => lineas.push('     ' + c + ': ' + it.colores[c]));
+    if (n > suma) lineas.push('     (' + (n - suma) + ' sin color definido)');
+  });
+  if (!lineas.length) return '';
+  return 'PEDIDO AL ZONAL - ' + _mesLabel(_mesKeyHoy()) + ' - ' + tot + (tot === 1 ? ' unidad' : ' unidades')
+    + '\n\n' + lineas.join('\n');
+}
+// El cuadrito con el texto. Se repinta solo (no toca la tabla).
+function repartoPedidoBoxRender() {
+  const body = document.getElementById('repZonalBody'); if (!body) return;
+  const items = repartoPedido.items || {};
+  let tot = 0, mods = 0;
+  Object.keys(items).forEach(k => {
+    const n = Math.max(Number(items[k].total) || 0, _pedidoSumCols(items[k]));
+    if (n > 0) { tot += n; mods++; }
+  });
+  const cnt = document.getElementById('repZonalCount');
+  if (cnt) cnt.textContent = tot
+    ? (tot + (tot === 1 ? ' unidad' : ' unidades') + ' · ' + mods + (mods === 1 ? ' modelo' : ' modelos'))
+    : 'todavía no marcaste nada';
+  const txt = pedidoZonalTexto();
+  if (!txt) {
+    body.innerHTML = '<p class="reparto-hint" style="margin:0">Poné <strong>cuántas pedís</strong> en la columna <strong>Pedir</strong> de cada modelo y, tocando el modelo, cuántas de cada <strong>color</strong>. Acá se arma solo el texto para pasarle al zonal.</p>';
+    return;
+  }
+  body.innerHTML = '<textarea id="repZonalTa" readonly rows="' + Math.min(18, txt.split('\n').length + 1) + '" class="reparto-textarea">' + escapeHtml(txt) + '</textarea>'
+    + '<div class="reparto-row"><button id="repZonalBtnCopiar" class="refresh" onclick="repartoPedidoCopiar()">Copiar</button>'
+    + '<button class="reparto-link" onclick="repartoPedidoLimpiar(this)">Vaciar el pedido</button></div>';
+}
+function repartoPedidoCopiar() {
+  const ta = document.getElementById('repZonalTa'); if (!ta) return;
+  ta.select();
+  try { navigator.clipboard.writeText(ta.value); } catch (e) { try { document.execCommand('copy'); } catch (e2) {} }
+  const b = document.getElementById('repZonalBtnCopiar');
+  if (b) { b.textContent = '✓ Copiado'; setTimeout(() => { if (b.isConnected) b.textContent = 'Copiar'; }, 2000); }
+}
+// Vaciar pide un segundo toque (nada de confirm() nativo, que traba la pestaña).
+function repartoPedidoLimpiar(btn) {
+  if (!_repZonalConfirm) {
+    _repZonalConfirm = true;
+    if (btn) { btn.textContent = 'Tocá de nuevo para vaciar'; btn.classList.add('ped-danger'); }
+    setTimeout(() => {
+      _repZonalConfirm = false;
+      if (btn && btn.isConnected) { btn.textContent = 'Vaciar el pedido'; btn.classList.remove('ped-danger'); }
+    }, 3500);
+    return;
+  }
+  _repZonalConfirm = false;
+  repartoPedido = { mes: _mesKeyHoy(), items: {} };
+  _pedidoZonalSave();
+  repartoRotFiltrar();   // redibuja la tabla con los inputs en blanco
+}
+
 function repartoRotacionSec() {
   const rot = (repartoData && repartoData.rotacion) || null;
   if (!rot || !rot.items || !rot.items.length) return '';
-  const lbl = (rot.meses || []).slice().reverse().map(_mesLabelCorto).join('–');
+  // La ventana la manda el backend (mes EN CURSO + los 3 anteriores), así que el
+  // título se mueve solo mes a mes. El mes corriente va marcado con * porque es
+  // parcial: recién empezado tira el promedio para abajo.
+  const mesesLbl = (rot.meses || []).slice().reverse();
+  const mesAct = _mesKeyHoy();
+  const hayAct = mesesLbl.indexOf(mesAct) >= 0;
+  const lbl = mesesLbl.map(mk => _mesLabelCorto(mk) + (mk === mesAct ? '*' : '')).join('–');
   let h = '<div class="reparto-card"><button class="reparto-toggle" onclick="repartoToggleBox(\'repartoRotBox\', this)">▸ 📊 Rotación por modelo y color · promedio mensual (' + lbl + ')</button>';
   h += '<div id="repartoRotBox" class="reparto-box hidden">';
+  h += '<div class="rep-zonal"><div class="rep-zonal-ttl"><span>📋 Pedido al zonal</span><span class="rep-zonal-cnt" id="repZonalCount"></span></div><div id="repZonalBody"></div></div>';
   h += '<p class="reparto-hint">Cuántas se venden por mes y cuántos <strong>meses de stock</strong> tenés al ritmo actual (stock ÷ venta mensual). '
     + '<span class="rot-rapido">Verde</span> = rota rápido, poco stock → reponer · <span class="rot-sobra">gris</span> = sobra stock · <span class="rot-norota">rojo</span> = no se vende. '
     + 'El <strong>Stock</strong> ya incluye lo que compraste este mes en el reparto aunque todavía no haya entrado a Oversoft (columna <strong>Compr. mes</strong>): si tenías 10 y compraste 2, dice 12. '
     + '<strong class="rot-enrep">En reparto</strong> es lo que VW te ofrece este mes y todavía NO compraste — eso NO está en el Stock. '
-    + 'Tocá un modelo para ver el detalle por color, con los colores que hay en el reparto.</p>';
+    + 'Tocá un modelo para ver el detalle por color, con los colores que hay en el reparto. '
+    + (hayAct ? 'La ventana son <strong>4 meses: el que está corriendo (' + _mesLabelCorto(mesAct) + '*, todavía <strong>parcial</strong>) y los 3 anteriores</strong>, así que a principio de mes el promedio baja un poco. ' : '')
+    + 'En la columna <strong>Pedir</strong> marcás cuántas le pedís al zonal de cada modelo, y adentro del modelo cuántas de cada color: se arma solo el texto de arriba para copiar y pegar.</p>';
   h += '<input type="search" id="repartoRotBusq" placeholder="Buscar modelo o familia..." oninput="repartoRotFiltrar()" class="reparto-search" style="margin-bottom:8px">';
   h += '<div id="repartoRotWrap"></div></div></div>';
   return h;
@@ -6413,6 +6612,7 @@ function _rotModKey(m) { return _repNtrimFront(m.nombreCorto || m.modelo) || (m.
 
 function repartoRotFiltrar() {
   const wrap = document.getElementById('repartoRotWrap'); if (!wrap) return;
+  repartoPedidoBoxRender();   // el cuadro del pedido no depende del filtro de búsqueda
   const rot = (repartoData && repartoData.rotacion) || { items: [] };
   const qEl = document.getElementById('repartoRotBusq');
   const q = (qEl ? qEl.value : '').trim().toLowerCase();
@@ -6425,6 +6625,7 @@ function repartoRotFiltrar() {
   const mesLbl = _mesLabel(_mesKeyHoy());
   let h = '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla rot-tabla"><thead><tr>'
     + '<th>Modelo</th>'
+    + '<th class="num" title="Cuántas unidades de este modelo le pedís al zonal. Abrí el modelo para repartirlas por color. Queda guardado en esta compu y se vacía solo al cambiar de mes.">Pedir</th>'
     + '<th class="num" title="Stock disponible. Ya INCLUYE las unidades que compraste este mes en el reparto y todavía no entraron a Oversoft (si tenías 10 y compraste 2, dice 12).">Stock</th>'
     + '<th class="num" title="Unidades de este modelo que VW te ofrece en el reparto de ' + mesLbl + ' y todavía NO compraste (pendientes + elegidas). Tocá la fila para ver de qué colores son. NO están sumadas en el Stock: todavía no son tuyas.">En reparto</th>'
     + '<th class="num" title="Unidades de este modelo que ya marcaste compradas/confirmadas en el reparto de ' + mesLbl + '. Están sumadas en la columna Stock.">Compr. mes</th>'
@@ -6438,6 +6639,7 @@ function repartoRotFiltrar() {
     const vMes = (m.ventaMesActual != null) ? Number(m.ventaMesActual) : vend.porModelo[mk];
     h += '<tr class="rot-row" onclick="repartoRotToggle(' + idx + ')">';
     h += '<td><span class="reparto-chev" id="rotchev-' + idx + '">▸</span> <span class="reparto-modelo">' + escapeHtml((m.modelo || '').replace(/^VW /, '')) + '</span><div class="reparto-fam">' + escapeHtml(m.familia || '') + '</div></td>';
+    h += '<td class="num" onclick="event.stopPropagation()">' + _pedidoInputModelo(mk, (m.modelo || '').replace(/^VW /, ''), m.familia || '') + '</td>';
     h += '<td class="num">' + m.stock + '</td>';
     h += '<td class="num">' + (rMes > 0 ? '<strong class="rot-enrep">' + rMes + '</strong>' : '<span class="reparto-fam">—</span>') + '</td>';
     h += '<td class="num">' + (cMes > 0 ? '<strong>' + cMes + '</strong>' : '<span class="reparto-fam">0</span>') + '</td>';
@@ -6445,7 +6647,7 @@ function repartoRotFiltrar() {
     h += '<td class="num">' + _rotFmt(m.ventaMes) + '</td>';
     h += '<td class="num">' + _rotMesesCell(m.mesesStock, m.stock) + '</td>';
     h += '<td class="num">' + _diasBadgeRep(m.diasVenta, m.diasVentaN, m.diasLentoN, m.diasLentoMax) + '</td></tr>';
-    h += '<tr id="rotdet-' + idx + '" class="reparto-detalle hidden"><td colspan="8">' + _rotColoresHtml(m, comp, mk, vend, enRep) + '</td></tr>';
+    h += '<tr id="rotdet-' + idx + '" class="reparto-detalle hidden"><td colspan="9">' + _rotColoresHtml(m, comp, mk, vend, enRep) + '</td></tr>';
   });
   h += '</tbody></table></div></div>';
   wrap.innerHTML = h;
@@ -6499,7 +6701,8 @@ function _rotColoresHtml(m, comp, mk, vend, enRep) {
   });
   if (!cols.length) return '<div class="reparto-fam">Sin datos por color.</div>';
   const totRep = Object.keys(enRep.porColor).reduce((a, ck) => a + (ck.split('||')[0] === mk ? enRep.porColor[ck] : 0), 0);
-  let h = '<div class="reparto-det-ttl">Por color · vta/mes · stock · en reparto · compradas y vendidas del mes · meses de stock · días en venderse'
+  const modLbl = (m.modelo || '').replace(/^VW /, '');
+  let h = '<div class="reparto-det-ttl">Por color · <strong>pedir al zonal</strong> · vta/mes · stock · en reparto · compradas y vendidas del mes · meses de stock · días en venderse'
         + (totRep ? ' <span class="rot-enrep">· ' + totRep + ' en el reparto de este mes</span>' : '') + ':</div>';
   h += '<table class="rot-col-tabla"><tbody>';
   cols.forEach(c => {
@@ -6510,6 +6713,7 @@ function _rotColoresHtml(m, comp, mk, vend, enRep) {
     const vMesC = (c.ventaMesActual != null) ? c.ventaMesActual : vend.porColor[ck];
     h += '<tr' + (agotado ? ' class="rot-agotado"' : (c.soloReparto ? ' class="rot-solorep"' : '')) + '>'
       + '<td><strong>' + escapeHtml(c.color) + '</strong>' + (c.soloReparto ? ' <span class="reparto-fam">(sin stock ni ventas)</span>' : '') + '</td>'
+      + '<td class="num">' + _pedidoInputColor(mk, modLbl, m.familia || '', c.color) + '</td>'
       + '<td class="num">' + _rotFmt(c.ventaMes) + '/mes</td>'
       + '<td class="num">stock ' + c.stock + '</td>'
       + '<td class="num">' + (rMes > 0 ? '<strong class="rot-enrep">' + rMes + ' en reparto</strong>' : '<span class="reparto-fam">—</span>') + '</td>'
