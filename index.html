@@ -1554,8 +1554,9 @@ table.patent-tbl tr.tbl-sep.pat:hover td  { background: var(--green-soft); }
         <div class="actions">
           <select id="marketingPeriodo" onchange="loadMarketing(true)"
                   style="padding:6px 10px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px">
+            <option value="mes" selected>Mes en curso</option>
             <option value="30">Últimos 30 días</option>
-            <option value="90" selected>Últimos 90 días</option>
+            <option value="90">Últimos 90 días</option>
             <option value="365">Todo</option>
           </select>
           <button class="refresh" id="btnRefreshMarketing" onclick="loadMarketing(true)">Actualizar</button>
@@ -7495,13 +7496,11 @@ function _resSaldosCard(key, label, value, sub, cls, extra) {
 //                    ni los datos erróneos o duplicados.
 let marketingData = null;
 
+// Ventana de la solapa. 'mes' = del 1 a hoy; el resto, dias hacia atras.
 function _mkPeriodo() {
   const sel = document.getElementById('marketingPeriodo');
-  const dias = parseInt((sel && sel.value) || '90', 10);
-  const hasta = new Date();
-  const desde = new Date(hasta.getTime() - dias * 86400000);
-  const iso = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).format(d);
-  return { desde: iso(desde), hasta: iso(hasta) };
+  const v = (sel && sel.value) || 'mes';
+  return v === 'mes' ? _mkMes() : _mkRango(parseInt(v, 10));
 }
 
 async function loadMarketing(forzar) {
@@ -7510,14 +7509,13 @@ async function loadMarketing(forzar) {
   if (cont && (forzar || !marketingData)) cont.innerHTML = '<div class="resumen-loading">Cargando pauta...</div>';
   if (btn) { btn.disabled = true; btn.textContent = 'Cargando...'; }
   try {
-    const [full, sem, inv] = await Promise.all([
-      _mkFetch(_mkPeriodo()),
-      _mkFetch(_mkRango(7)).catch(() => null),   // la ventana de 7d es para el Resumen
-      _mkFetchInv(_mkPeriodo()).catch(() => null),
+    const rango = _mkPeriodo();
+    const [full, inv] = await Promise.all([
+      _mkFetch(rango),
+      _mkFetchInv(rango).catch(() => null),
     ]);
     marketingData = full;
-    if (sem) marketingData7 = sem;
-    if (inv) marketingInv = inv;
+    marketingInv = inv;
     renderMarketing();
   } catch (e) {
     if (cont) cont.innerHTML = '<div class="resumen-loading">No se pudo cargar la pauta: ' + escapeHtml(String(e.message || e)) + '</div>';
@@ -7546,7 +7544,8 @@ function renderMarketing() {
   let h = '';
 
   // ---- Cifras de arriba ----
-  const tt = _mkTotales();
+  const tt = _mkTotales(marketingData, marketingInv);
+  const refCom = tt.comercial ? Math.round(tt.gasto / tt.comercial) : 0;
   h += '<div class="cards-resumen">';
   h += kpi('Inversión total', fmtPesos(tt.gasto), 'Meta + canales por lead', '');
   h += kpi('Gasto en Meta', fmtPesos(t.spend || 0), 'en el período', '');
@@ -7572,9 +7571,11 @@ function renderMarketing() {
      + '<th style="text-align:right">$/comerc.</th>'
      + '<th style="text-align:right">Vend.</th>'
      + '</tr></thead><tbody>';
-  for (const a of (d.anuncios || [])) {
-    const activo = String(a.effective_status || '').indexOf('ACTIVE') >= 0;
-    h += '<tr>'
+  // Lo que esta EN AIRE primero: es la plata que todavia se puede corregir.
+  const _ordenados = (d.anuncios || []).slice().sort((x, y) => (_mkEnAire(y) - _mkEnAire(x)) || (y.spend - x.spend));
+  for (const a of _ordenados) {
+    const activo = _mkEnAire(a);
+    h += '<tr' + (activo ? '' : ' style="opacity:.62"') + '>'
       + '<td data-label="Anuncio" style="max-width:280px">' + escapeHtml(a.ad_name || a.ad_id)
       +   (activo ? ' <span style="font-size:10px;color:#0a7a30;font-weight:700">EN AIRE</span>' : '')
       +   '<div style="font-size:10.5px;color:var(--vw-grey-3)">' + escapeHtml(a.campaign_name || '') + '</div></td>'
@@ -7594,7 +7595,9 @@ function renderMarketing() {
   h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">Ordenado por gasto. <b>Charlas</b> = conversaciones donde el cliente mandó 3 mensajes o más; es la señal más temprana que no miente y está disponible sin esperar a que el lead madure. <b>Comerc.</b> = leads que se vendieron o que cerraron por una razón de negocio. Ojo con leer "conversación → lead": mide con qué ganas se cargan leads, no la calidad del anuncio.</div>';
 
   // ---- Canales que cobran por lead ----
-  h += _mkTablaInversiones(false);
+  h += _mkTablaInversiones(marketingInv, refCom, false);
+  h += _mkTablaMeses(marketingInv);
+  h += _mkTablaMesesMeta(d);
 
   // ---- Velocidad ----
   h += '<div class="table-wrap" style="margin-top:20px"><div class="table-head"><h3>Cuánto tarda el vendedor en atender</h3></div>'
@@ -7702,95 +7705,25 @@ function renderMarketing() {
   cont.innerHTML = h;
 }
 
-// Otras inversiones = canales que cobran por lead (hoy El Cero KM: USD 15 + IVA).
-// No hay que cargar importes: el contrato esta en mkt_canales_costo y la plata
-// sale de contar los leads reales, cada uno valuado al dolar del dia que entro.
-let marketingInv = null;
+// ── Otras inversiones: canales que cobran por lead ──────────────────────────
+// Hoy es El Cero KM (USD 15 + IVA). No hay que cargar importes: el contrato
+// vive en mkt_canales_costo y la plata sale de contar los leads reales, cada
+// uno valuado al dolar oficial del dia que entro.
+let marketingInv = null;      // inversiones del periodo elegido en la solapa
+let marketingMes = null;      // analisis del MES EN CURSO (lo que mira el Resumen)
+let marketingInvMes = null;   // inversiones del mes en curso
 
-async function _mkFetchInv(rango) {
-  const res = await fetch(GESTION_NEXT_URL + '/api/marketing/inversiones?desde=' + rango.desde + '&hasta=' + rango.hasta);
-  const data = await res.json();
-  if (!data || data.error) throw new Error((data && data.error) || 'sin datos');
-  return data;
+const _mkIso = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).format(d);
+
+/** Del 1 del mes hasta hoy. Es la ventana del Resumen: la plata del mes. */
+function _mkMes() {
+  const hoy = _mkIso(new Date());
+  return { desde: hoy.slice(0, 8) + '01', hasta: hoy };
 }
-
-// Totales de marketing = Meta + los canales por lead. No hay doble conteo: son
-// origenes distintos en el CRM.
-function _mkTotales() {
-  const m = (marketingData && marketingData.total) || {};
-  const o = (marketingInv && marketingInv.total) || {};
-  const sem = ((marketingData7 && marketingData7.total) || {}).spend || 0;
-  const semOtros = ((marketingInv && marketingInv.canales) || []).reduce((a, c) => a + (c.costo_ars_7d || 0), 0);
-  return {
-    gasto: (m.spend || 0) + (o.costo_ars || 0),
-    gasto7: sem + semOtros,
-    leads: (m.leads || 0) + (o.leads || 0),
-    comercial: (m.comercial || 0) + (o.comercial || 0),
-    vendidos: (m.vendidos || 0) + (o.vendidos || 0),
-  };
-}
-
-// Tabla de canales por lead. `compacta` = la version del Resumen (sin USD).
-function _mkTablaInversiones(compacta) {
-  const canales = (marketingInv && marketingInv.canales) || [];
-  if (!canales.length) return '';
-  const tot = _mkTotales();
-  const refCom = tot.comercial ? Math.round(tot.gasto / tot.comercial) : 0;
-
-  let h = '<div class="table-wrap" style="margin-top:' + (compacta ? '14' : '20') + 'px">'
-        + (compacta ? '' : '<div class="table-head"><h3>Otras inversiones (se paga por lead)</h3></div>')
-        + '<div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:' + (compacta ? '900' : '1000') + 'px">'
-        + '<thead><tr>'
-        + '<th style="text-align:left">' + (compacta ? 'Otras inversiones' : 'Canal') + '</th>'
-        + '<th style="text-align:right">Leads 7d</th>'
-        + '<th style="text-align:right">Gasto 7d</th>'
-        + '<th style="text-align:right">Leads período</th>'
-        + '<th style="text-align:right">Gasto período</th>'
-        + (compacta ? '' : '<th style="text-align:right">En USD</th>')
-        + '<th style="text-align:right">$/lead</th>'
-        + '<th style="text-align:right">Comerc.</th>'
-        + '<th style="text-align:right">$/comerc.</th>'
-        + '<th style="text-align:right">Vendidos</th>'
-        + '</tr></thead><tbody>';
-  for (const c of canales) {
-    const cpl = c.leads ? Math.round(c.costo_ars / c.leads) : 0;
-    const cCom = c.comercial ? Math.round(c.costo_ars / c.comercial) : 0;
-    h += '<tr>'
-      + '<td data-label="Canal">' + escapeHtml(c.canal)
-      +   '<div style="font-size:10.5px;color:var(--vw-grey-3)">' + escapeHtml(c.moneda + ' ' + c.costo_unitario + ' + ' + c.iva_pct + '% IVA por lead') + '</div></td>'
-      + '<td data-label="Leads 7d" style="text-align:right">' + (c.leads_7d || '—') + '</td>'
-      + '<td data-label="Gasto 7d" style="text-align:right;font-weight:700">' + (c.costo_ars_7d ? fmtPesos(c.costo_ars_7d) : '—') + '</td>'
-      + '<td data-label="Leads período" style="text-align:right">' + (c.leads || '—') + '</td>'
-      + '<td data-label="Gasto período" style="text-align:right">' + fmtPesos(c.costo_ars) + '</td>'
-      + (compacta ? '' : '<td data-label="En USD" style="text-align:right">u$s ' + fmt(Math.round(c.costo_usd)) + '</td>')
-      + '<td data-label="$/lead" style="text-align:right">' + (cpl ? fmtPesos(cpl) : '—') + '</td>'
-      + '<td data-label="Comerciales" style="text-align:right;font-weight:700">' + (c.comercial || '—')
-      +   (c.pct_comercial === null || c.pct_comercial === undefined ? '' : ' <span style="color:var(--vw-grey-3)">' + c.pct_comercial + '%</span>') + '</td>'
-      + '<td data-label="$/comercial" style="text-align:right;font-weight:700;color:'
-      +   (cCom && refCom && cCom > refCom * 1.5 ? '#cc3300' : (cCom && refCom && cCom < refCom * 0.7 ? '#0a7a30' : 'inherit')) + '">'
-      +   (cCom ? fmtPesos(cCom) : '—') + '</td>'
-      + '<td data-label="Vendidos" style="text-align:right">' + (c.vendidos || '—') + '</td>'
-      + '</tr>';
-  }
-  h += '</tbody></table></div></div>';
-  const cot = (marketingInv && marketingInv.cotizacion) || {};
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">'
-     + 'Se calcula solo: leads reales del período × el precio pactado × IVA, y cada lead se valúa al dólar oficial del día en que entró '
-     + (cot.venta ? '(último guardado: $' + fmt(cot.venta) + ' del ' + escapeHtml(String(cot.fecha)) + ')' : '')
-     + '. Nadie carga importes a mano. Para cambiar el precio de un contrato se toca la fila del canal en <span class="mono">mkt_canales_costo</span>.</div>';
-  return h;
-}
-
-// El Resumen muestra la tabla de anuncios en aire sin que haga falta abrir la
-// solapa. Trae dos ventanas: el período elegido (contexto) y los últimos 7 días
-// (la plata de esta semana, que es la que se puede corregir a tiempo).
-// Silencioso: si el endpoint falla, la card queda en "Cargando" y no rompe nada.
-let marketingData7 = null;
 
 function _mkRango(dias) {
-  const iso = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).format(d);
   const hasta = new Date();
-  return { desde: iso(new Date(hasta.getTime() - dias * 86400000)), hasta: iso(hasta) };
+  return { desde: _mkIso(new Date(hasta.getTime() - dias * 86400000)), hasta: _mkIso(hasta) };
 }
 
 async function _mkFetch(rango) {
@@ -7800,19 +7733,159 @@ async function _mkFetch(rango) {
   return data;
 }
 
+async function _mkFetchInv(rango) {
+  const res = await fetch(GESTION_NEXT_URL + '/api/marketing/inversiones?desde=' + rango.desde + '&hasta=' + rango.hasta);
+  const data = await res.json();
+  if (!data || data.error) throw new Error((data && data.error) || 'sin datos');
+  return data;
+}
+
+/** Marketing = Meta + los canales por lead. Sin doble conteo: origenes distintos. */
+function _mkTotales(meta, inv) {
+  const m = (meta && meta.total) || {};
+  const o = (inv && inv.total) || {};
+  return {
+    gasto: (m.spend || 0) + (o.costo_ars || 0),
+    gastoMeta: m.spend || 0,
+    gastoOtros: o.costo_ars || 0,
+    leads: (m.leads || 0) + (o.leads || 0),
+    convs: m.convs || 0,
+    comercial: (m.comercial || 0) + (o.comercial || 0),
+    vendidos: (m.vendidos || 0) + (o.vendidos || 0),
+  };
+}
+
+/** Un anuncio esta EN AIRE si entrego en los ultimos 3 dias. */
+function _mkEnAire(a) {
+  if (!a || !a.ultimo_dia) return false;
+  const hoy = new Date(_mkIso(new Date()) + 'T00:00:00');
+  const ult = new Date(a.ultimo_dia + 'T00:00:00');
+  return (hoy - ult) / 86400000 <= 3;
+}
+
+// Tabla de canales por lead. `compacta` = la del Resumen (sin la columna USD).
+function _mkTablaInversiones(inv, refCom, compacta) {
+  const canales = (inv && inv.canales) || [];
+  if (!canales.length) return '';
+  let h = '<div class="table-wrap" style="margin-top:' + (compacta ? '14' : '20') + 'px">'
+        + (compacta ? '' : '<div class="table-head"><h3>Otras inversiones (se paga por lead)</h3></div>')
+        + '<div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:' + (compacta ? '820' : '900') + 'px">'
+        + '<thead><tr>'
+        + '<th style="text-align:left">' + (compacta ? 'Otras inversiones del mes' : 'Canal') + '</th>'
+        + '<th style="text-align:right">Leads</th>'
+        + '<th style="text-align:right">Inversión</th>'
+        + (compacta ? '' : '<th style="text-align:right">En USD</th>')
+        + '<th style="text-align:right">$/lead</th>'
+        + '<th style="text-align:right">Comerc.</th>'
+        + '<th style="text-align:right">$/comerc.</th>'
+        + '<th style="text-align:right">Abiertos</th>'
+        + '<th style="text-align:right">Vendidos</th>'
+        + '<th style="text-align:right">Últimos 7d</th>'
+        + '</tr></thead><tbody>';
+  for (const c of canales) {
+    const cpl = c.leads ? Math.round(c.costo_ars / c.leads) : 0;
+    const cCom = c.comercial ? Math.round(c.costo_ars / c.comercial) : 0;
+    h += '<tr>'
+      + '<td data-label="Canal">' + escapeHtml(c.canal)
+      +   '<div style="font-size:10.5px;color:var(--vw-grey-3)">' + escapeHtml(c.moneda + ' ' + c.costo_unitario + ' + ' + c.iva_pct + '% IVA por lead') + '</div></td>'
+      + '<td data-label="Leads" style="text-align:right;font-weight:700">' + (c.leads || '—') + '</td>'
+      + '<td data-label="Inversión" style="text-align:right;font-weight:700">' + fmtPesos(c.costo_ars) + '</td>'
+      + (compacta ? '' : '<td data-label="En USD" style="text-align:right">u$s ' + fmt(Math.round(c.costo_usd)) + '</td>')
+      + '<td data-label="$/lead" style="text-align:right">' + (cpl ? fmtPesos(cpl) : '—') + '</td>'
+      + '<td data-label="Comerciales" style="text-align:right">' + (c.comercial || '—')
+      +   (c.pct_comercial === null || c.pct_comercial === undefined ? '' : ' <span style="color:var(--vw-grey-3)">' + c.pct_comercial + '%</span>') + '</td>'
+      + '<td data-label="$/comercial" style="text-align:right;font-weight:700;color:'
+      +   (cCom && refCom && cCom > refCom * 1.5 ? '#cc3300' : (cCom && refCom && cCom < refCom * 0.7 ? '#0a7a30' : 'inherit')) + '">'
+      +   (cCom ? fmtPesos(cCom) : '—') + '</td>'
+      + '<td data-label="Abiertos" style="text-align:right">' + (c.abiertos || '—') + '</td>'
+      + '<td data-label="Vendidos" style="text-align:right">' + (c.vendidos || '—') + '</td>'
+      + '<td data-label="Últimos 7d" style="text-align:right;color:' + (c.leads_7d ? 'inherit' : '#cc3300') + '">'
+      +   (c.leads_7d ? c.leads_7d + ' leads' : 'sin leads') + '</td>'
+      + '</tr>';
+  }
+  h += '</tbody></table></div></div>';
+  const cot = (inv && inv.cotizacion) || {};
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">'
+     + 'Se calcula solo: leads reales × el precio pactado × IVA, cada lead al dólar oficial del día en que entró'
+     + (cot.venta ? ' (último guardado: $' + fmt(cot.venta) + ' del ' + escapeHtml(String(cot.fecha)) + ')' : '')
+     + '. Nadie carga importes. <b>Abiertos</b> = todavía sin cerrar, así que su costo por lead comercial puede mejorar. '
+     + 'La última columna avisa si el canal dejó de traer.</div>';
+  return h;
+}
+
+/** Mes a mes de un canal por lead: lo que entró y lo que costó. */
+function _mkTablaMeses(inv) {
+  const meses = (inv && inv.meses) || [];
+  if (!meses.length) return '';
+  let h = '<div class="table-wrap" style="margin-top:20px"><div class="table-head"><h3>Mes a mes de los canales por lead</h3></div>'
+        + '<div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:760px">'
+        + '<thead><tr><th style="text-align:left">Mes</th><th style="text-align:left">Canal</th>'
+        + '<th style="text-align:right">Leads</th><th style="text-align:right">Inversión</th><th style="text-align:right">En USD</th>'
+        + '<th style="text-align:right">$/lead</th><th style="text-align:right">Comerc.</th><th style="text-align:right">$/comerc.</th>'
+        + '<th style="text-align:right">Abiertos</th><th style="text-align:right">Vendidos</th></tr></thead><tbody>';
+  for (const m of meses) {
+    const cpl = m.leads ? Math.round(m.costo_ars / m.leads) : 0;
+    const cCom = m.comercial ? Math.round(m.costo_ars / m.comercial) : 0;
+    h += '<tr>'
+      + '<td data-label="Mes">' + escapeHtml(m.mes) + '</td>'
+      + '<td data-label="Canal">' + escapeHtml(m.canal) + '</td>'
+      + '<td data-label="Leads" style="text-align:right;font-weight:700">' + m.leads + '</td>'
+      + '<td data-label="Inversión" style="text-align:right">' + fmtPesos(m.costo_ars) + '</td>'
+      + '<td data-label="En USD" style="text-align:right">u$s ' + fmt(Math.round(m.costo_usd)) + '</td>'
+      + '<td data-label="$/lead" style="text-align:right">' + (cpl ? fmtPesos(cpl) : '—') + '</td>'
+      + '<td data-label="Comerciales" style="text-align:right">' + (m.comercial || '—') + '</td>'
+      + '<td data-label="$/comercial" style="text-align:right">' + (cCom ? fmtPesos(cCom) : '—') + '</td>'
+      + '<td data-label="Abiertos" style="text-align:right">' + (m.abiertos || '—') + '</td>'
+      + '<td data-label="Vendidos" style="text-align:right">' + (m.vendidos || '—') + '</td>'
+      + '</tr>';
+  }
+  h += '</tbody></table></div></div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">Todo lo que entró cada mes con lo que costó. Los meses recientes tienen más leads abiertos, así que su costo por lead comercial todavía va a bajar.</div>';
+  return h;
+}
+
+/** Mes a mes de Meta, para comparar contra lo de arriba. */
+function _mkTablaMesesMeta(data) {
+  const meses = (data && data.meses) || [];
+  if (!meses.length) return '';
+  let h = '<div class="table-wrap" style="margin-top:20px"><div class="table-head"><h3>Mes a mes de Meta</h3></div>'
+        + '<div class="table-scroll"><table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:700px">'
+        + '<thead><tr><th style="text-align:left">Mes</th><th style="text-align:right">Gasto</th><th style="text-align:right">Conversaciones</th>'
+        + '<th style="text-align:right">Charlas</th><th style="text-align:right">$/charla</th><th style="text-align:right">Leads</th>'
+        + '<th style="text-align:right">Comerc.</th><th style="text-align:right">$/comerc.</th><th style="text-align:right">Vendidos</th></tr></thead><tbody>';
+  for (const m of meses) {
+    const cc = m.charlas ? Math.round(m.spend / m.charlas) : 0;
+    const co = m.comercial ? Math.round(m.spend / m.comercial) : 0;
+    h += '<tr>'
+      + '<td data-label="Mes">' + escapeHtml(m.mes) + '</td>'
+      + '<td data-label="Gasto" style="text-align:right;font-weight:700">' + fmtPesos(m.spend) + '</td>'
+      + '<td data-label="Conversaciones" style="text-align:right">' + (m.convs || '—') + '</td>'
+      + '<td data-label="Charlas" style="text-align:right">' + (m.charlas || '—') + '</td>'
+      + '<td data-label="$/charla" style="text-align:right">' + (cc ? fmtPesos(cc) : '—') + '</td>'
+      + '<td data-label="Leads" style="text-align:right">' + (m.leads || '—') + '</td>'
+      + '<td data-label="Comerciales" style="text-align:right">' + (m.comercial || '—') + '</td>'
+      + '<td data-label="$/comercial" style="text-align:right;font-weight:700">' + (co ? fmtPesos(co) : '—') + '</td>'
+      + '<td data-label="Vendidos" style="text-align:right">' + (m.vendidos || '—') + '</td>'
+      + '</tr>';
+  }
+  h += '</tbody></table></div></div>';
+  return h;
+}
+
+// El Resumen mira SIEMPRE el mes en curso, sin importar el filtro de la solapa.
+// Silencioso: si el endpoint falla, la card queda en "Cargando" y no rompe nada.
 async function loadMarketingSilent(forzar) {
-  if (marketingData && marketingData7 && marketingInv && !forzar) return marketingData;
+  if (marketingMes && marketingInvMes && !forzar) return marketingMes;
+  const mes = _mkMes();
   try {
-    const [full, sem, inv] = await Promise.all([
-      _mkFetch(_mkPeriodo()).catch(() => null),
-      _mkFetch(_mkRango(7)).catch(() => null),
-      _mkFetchInv(_mkPeriodo()).catch(() => null),
+    const [m, i] = await Promise.all([
+      _mkFetch(mes).catch(() => null),
+      _mkFetchInv(mes).catch(() => null),
     ]);
-    if (full) marketingData = full;
-    if (sem) marketingData7 = sem;
-    if (inv) marketingInv = inv;
+    if (m) marketingMes = m;
+    if (i) marketingInvMes = i;
   } catch (e) { /* silencioso */ }
-  return marketingData;
+  return marketingMes;
 }
 
 async function loadResumen() {
@@ -7980,93 +8053,84 @@ function renderResumen() {
   h += '</div>';
 
   // ----- MARKETING -----
-  // No alcanza con el total: lo que hay que ver todos los días es cómo viene
-  // rindiendo cada anuncio que está EN AIRE hoy, porque es la plata que se está
-  // gastando ahora. El acumulado del período va al lado para tener contexto.
+  // El Resumen mira el MES EN CURSO: la plata que se está gastando ahora y qué
+  // trajo. El análisis largo (velocidad, vendedores, fuga) vive en la solapa.
   h += '<div class="resumen-block">';
-  h += '  <div class="resumen-head"><h3>Marketing — lo que está corriendo</h3>'
-     + '    <button class="resumen-link" onclick="setTab(\'marketing\')">Ver todo el análisis →</button>'
-     + '  </div>';
-  if (marketingData && marketingData.total) {
-    const mt = marketingData.total;
-    // Referencia = TODA la inversion de marketing (Meta + los canales por lead),
-    // asi cada anuncio y cada canal se compara contra el mismo numero.
-    const tt = _mkTotales();
-    const cLead = tt.comercial ? Math.round(tt.gasto / tt.comercial) : 0;
+  {
+    const mesNom = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+    const hoyIso = _mkIso(new Date());
+    const etiqueta = mesNom[parseInt(hoyIso.slice(5, 7), 10) - 1] + '-' + hoyIso.slice(2, 4);
+    h += '  <div class="resumen-head"><h3>Marketing — ' + escapeHtml(etiqueta) + '</h3>'
+       + '    <button class="resumen-link" onclick="setTab(\'marketing\')">Ver todo el análisis →</button>'
+       + '  </div>';
 
-    // "En aire" = gastó en los últimos 7 días. Es el criterio que no miente:
-    // un anuncio puede figurar ACTIVE y no estar entregando hace semanas.
-    const sem = {};
-    for (const a of ((marketingData7 && marketingData7.anuncios) || [])) sem[a.ad_id] = a;
-    let activos = (marketingData.anuncios || []).filter(a => sem[a.ad_id] && sem[a.ad_id].spend > 0);
-    let criterio = 'gastaron en los últimos 7 días';
-    if (!activos.length) {
-      activos = (marketingData.anuncios || []).filter(a => String(a.effective_status || '').indexOf('ACTIVE') >= 0);
-      criterio = 'marcados como activos en Meta (ninguno gastó esta semana)';
-    }
-    activos.sort((x, y) => ((sem[y.ad_id] || {}).spend || 0) - ((sem[x.ad_id] || {}).spend || 0));
+    if (marketingMes && marketingMes.total) {
+      const tt = _mkTotales(marketingMes, marketingInvMes);
+      const cLead = tt.comercial ? Math.round(tt.gasto / tt.comercial) : 0;
+      const dia = parseInt(hoyIso.slice(8, 10), 10);
 
-    const gasto7 = activos.reduce((s, a) => s + ((sem[a.ad_id] || {}).spend || 0), 0);
+      h += '<div class="cards-resumen">';
+      h += kpi('Invertido en el mes', fmtPesos(tt.gasto),
+               'Meta ' + fmtPesos(tt.gastoMeta) + (tt.gastoOtros ? ' + otros ' + fmtPesos(tt.gastoOtros) : ''), '');
+      h += kpi('Ritmo por día', fmtPesos(Math.round(tt.gasto / Math.max(dia, 1))),
+               'proyección del mes ' + fmtPesos(Math.round(tt.gasto / Math.max(dia, 1) * 30)), '');
+      h += kpi('Leads comerciales', tt.comercial || 0, 'de ' + (tt.leads || 0) + ' leads del mes', tt.comercial ? 'good' : '');
+      h += kpi('Costo por lead comercial', cLead ? fmtPesos(cLead) : '—', 'toda la inversión de marketing', cLead ? 'warn' : '');
+      h += '</div>';
 
-    const otros = ((marketingInv && marketingInv.canales) || []).length;
-    h += '<div class="cards-resumen">';
-    h += kpi('Invertido esta semana', fmtPesos(tt.gasto7), activos.length + (activos.length === 1 ? ' anuncio en aire' : ' anuncios en aire') + (otros ? ' + ' + otros + ' canal' + (otros === 1 ? '' : 'es') + ' por lead' : ''), tt.gasto7 ? '' : 'warn');
-    h += kpi('Invertido en el período', fmtPesos(tt.gasto), 'Meta ' + fmtPesos(mt.spend || 0) + (marketingInv && marketingInv.total ? ' + otros ' + fmtPesos(marketingInv.total.costo_ars || 0) : ''), '');
-    h += kpi('Leads comerciales', tt.comercial || 0, 'de ' + (tt.leads || 0) + ' leads en total', tt.comercial ? 'good' : '');
-    h += kpi('Costo por lead comercial', cLead ? fmtPesos(cLead) : '—', 'toda la inversión de marketing', cLead ? 'warn' : '');
-    h += '</div>';
-
-    if (activos.length) {
-      h += '<div class="table-wrap" style="margin-top:12px"><div class="table-scroll">'
-         + '<table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:1040px">'
-         + '<thead><tr>'
-         + '<th style="text-align:left">Anuncio en aire</th>'
-         + '<th style="text-align:right">Gasto 7d</th>'
-         + '<th style="text-align:right">Por día</th>'
-         + '<th style="text-align:right">Conv. 7d</th>'
-         + '<th style="text-align:right">Charlas 7d</th>'
-         + '<th style="text-align:right">Gasto período</th>'
-         + '<th style="text-align:right">Conv.</th>'
-         + '<th style="text-align:right">Charlas</th>'
-         + '<th style="text-align:right">$/charla</th>'
-         + '<th style="text-align:right">Comerc.</th>'
-         + '<th style="text-align:right">$/comerc.</th>'
-         + '</tr></thead><tbody>';
-      for (const a of activos) {
-        const s7 = sem[a.ad_id] || {};
-        const pctCharla = a.convs ? Math.round(100 * a.charlas / a.convs) : null;
-        const cCharla = a.charlas ? Math.round(a.spend / a.charlas) : null;
-        const cCom = a.comercial ? Math.round(a.spend / a.comercial) : null;
-        h += '<tr>'
-          + '<td data-label="Anuncio" style="max-width:250px">' + escapeHtml(a.ad_name || a.ad_id)
-          +   '<div style="font-size:10.5px;color:var(--vw-grey-3)">' + escapeHtml(a.campaign_name || '') + '</div></td>'
-          + '<td data-label="Gasto 7d" style="text-align:right;font-weight:700">' + (s7.spend ? fmtPesos(s7.spend) : '—') + '</td>'
-          + '<td data-label="Por día" style="text-align:right">' + (s7.spend && s7.dias ? fmtPesos(Math.round(s7.spend / s7.dias)) + ' <span style="color:var(--vw-grey-3)">' + s7.dias + 'd</span>' : '—') + '</td>'
-          + '<td data-label="Conv. 7d" style="text-align:right">' + (s7.convs || '—') + '</td>'
-          + '<td data-label="Charlas 7d" style="text-align:right">' + (s7.charlas || '—') + '</td>'
-          + '<td data-label="Gasto período" style="text-align:right">' + fmtPesos(a.spend) + '</td>'
-          + '<td data-label="Conv." style="text-align:right">' + (a.convs || '—') + '</td>'
-          + '<td data-label="Charlas" style="text-align:right">' + (a.charlas || '—')
-          +   (pctCharla === null ? '' : ' <span style="color:var(--vw-grey-3)">' + pctCharla + '%</span>') + '</td>'
-          + '<td data-label="$/charla" style="text-align:right">' + (cCharla ? fmtPesos(cCharla) : '—') + '</td>'
-          + '<td data-label="Comerciales" style="text-align:right;font-weight:700">' + (a.comercial || '—') + '</td>'
-          + '<td data-label="$/comercial" style="text-align:right;font-weight:700;color:'
-          +   (cCom && cLead && cCom > cLead * 1.5 ? '#cc3300' : (cCom && cLead && cCom < cLead * 0.7 ? '#0a7a30' : 'inherit')) + '">'
-          +   (cCom ? fmtPesos(cCom) : '—') + '</td>'
-          + '</tr>';
+      // Anuncios de Meta con gasto en el mes, los que están en aire primero.
+      const anuncios = (marketingMes.anuncios || []).slice()
+        .sort((x, y) => (_mkEnAire(y) - _mkEnAire(x)) || (y.spend - x.spend));
+      if (anuncios.length) {
+        h += '<div class="table-wrap" style="margin-top:12px"><div class="table-scroll">'
+           + '<table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:980px">'
+           + '<thead><tr>'
+           + '<th style="text-align:left">Anuncio de Meta</th>'
+           + '<th style="text-align:right">Gasto del mes</th>'
+           + '<th style="text-align:right">Por día</th>'
+           + '<th style="text-align:right">Conv.</th>'
+           + '<th style="text-align:right">Charlas</th>'
+           + '<th style="text-align:right">$/charla</th>'
+           + '<th style="text-align:right">Leads</th>'
+           + '<th style="text-align:right">Comerc.</th>'
+           + '<th style="text-align:right">$/comerc.</th>'
+           + '<th style="text-align:right">Último día</th>'
+           + '</tr></thead><tbody>';
+        for (const a of anuncios) {
+          const aire = _mkEnAire(a);
+          const cCharla = a.charlas ? Math.round(a.spend / a.charlas) : 0;
+          const cCom = a.comercial ? Math.round(a.spend / a.comercial) : 0;
+          h += '<tr' + (aire ? '' : ' style="opacity:.62"') + '>'
+            + '<td data-label="Anuncio" style="max-width:250px">' + escapeHtml(a.ad_name || a.ad_id)
+            +   (aire ? ' <span style="font-size:10px;color:#0a7a30;font-weight:700">EN AIRE</span>' : '')
+            +   '<div style="font-size:10.5px;color:var(--vw-grey-3)">' + escapeHtml(a.campaign_name || '') + '</div></td>'
+            + '<td data-label="Gasto del mes" style="text-align:right;font-weight:700">' + fmtPesos(a.spend) + '</td>'
+            + '<td data-label="Por día" style="text-align:right">' + (a.dias ? fmtPesos(Math.round(a.spend / a.dias)) + ' <span style="color:var(--vw-grey-3)">' + a.dias + 'd</span>' : '—') + '</td>'
+            + '<td data-label="Conv." style="text-align:right">' + (a.convs || '—') + '</td>'
+            + '<td data-label="Charlas" style="text-align:right">' + (a.charlas || '—')
+            +   (a.convs ? ' <span style="color:var(--vw-grey-3)">' + Math.round(100 * a.charlas / a.convs) + '%</span>' : '') + '</td>'
+            + '<td data-label="$/charla" style="text-align:right">' + (cCharla ? fmtPesos(cCharla) : '—') + '</td>'
+            + '<td data-label="Leads" style="text-align:right">' + (a.leads || '—') + '</td>'
+            + '<td data-label="Comerciales" style="text-align:right">' + (a.comercial || '—') + '</td>'
+            + '<td data-label="$/comercial" style="text-align:right;font-weight:700;color:'
+            +   (cCom && cLead && cCom > cLead * 1.5 ? '#cc3300' : (cCom && cLead && cCom < cLead * 0.7 ? '#0a7a30' : 'inherit')) + '">'
+            +   (cCom ? fmtPesos(cCom) : '—') + '</td>'
+            + '<td data-label="Último día" style="text-align:right;color:var(--vw-grey-3)">' + escapeHtml(String(a.ultimo_dia || '—')) + '</td>'
+            + '</tr>';
+        }
+        h += '</tbody></table></div></div>';
+        h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">'
+           + 'Todo lo que gastó Meta este mes; los que están <b>EN AIRE</b> (entregaron en los últimos 3 días) van arriba y los apagados quedan atenuados. '
+           + '<b>Charlas</b> = el cliente mandó 3 mensajes o más. <b>Comerc.</b> = leads que se vendieron o cerraron por una razón de negocio. '
+           + 'El $/comercial se pinta rojo si es 50% peor que el promedio de toda la inversión y verde si es 30% mejor.</div>';
+      } else {
+        h += '<div class="resumen-loading">Meta no gastó nada este mes.</div>';
       }
-      h += '</tbody></table></div></div>';
-      h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">En aire = ' + criterio + '. '
-         + '<b>Charlas</b> = el cliente mandó 3 mensajes o más; es la señal más temprana y no hay que esperar a que el lead madure. '
-         + '<b>Comerc.</b> = leads que se vendieron o cerraron por una razón de negocio (no "no contesta" ni dato erróneo). '
-         + 'El $/comercial se pinta rojo si es 50% peor que el promedio de la cuenta y verde si es 30% mejor. '
-         + 'Las columnas de 7 días son plata de esta semana (el "por día" divide por los días que el anuncio realmente entregó, no por 7); las del período, el acumulado del anuncio.</div>';
+
+      h += _mkTablaInversiones(marketingInvMes, cLead, true);
     } else {
-      h += '<div class="resumen-loading">Ningún anuncio de Meta en aire.</div>';
+      h += '<div class="resumen-loading">Cargando pauta...</div>';
     }
-    h += _mkTablaInversiones(true);
-  } else {
-    h += '<div class="resumen-loading">Cargando pauta...</div>';
   }
   h += '</div>';
 
