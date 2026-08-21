@@ -7714,6 +7714,7 @@ let marketingMes = null;      // analisis del MES EN CURSO (lo que mira el Resum
 let marketingInvMes = null;   // inversiones del mes en curso
 
 const _mkIso = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).format(d);
+const _mkNum = n => (n === null || n === undefined || isNaN(n)) ? '—' : Number(n).toLocaleString('es-AR');
 
 /** Del 1 del mes hasta hoy. Es la ventana del Resumen: la plata del mes. */
 function _mkMes() {
@@ -7790,7 +7791,7 @@ function _mkTablaInversiones(inv, refCom, compacta) {
       +   '<div style="font-size:10.5px;color:var(--vw-grey-3)">' + escapeHtml(c.moneda + ' ' + c.costo_unitario + ' + ' + c.iva_pct + '% IVA por lead') + '</div></td>'
       + '<td data-label="Leads" style="text-align:right;font-weight:700">' + (c.leads || '—') + '</td>'
       + '<td data-label="Inversión" style="text-align:right;font-weight:700">' + fmtPesos(c.costo_ars) + '</td>'
-      + (compacta ? '' : '<td data-label="En USD" style="text-align:right">u$s ' + fmt(Math.round(c.costo_usd)) + '</td>')
+      + (compacta ? '' : '<td data-label="En USD" style="text-align:right">u$s ' + _mkNum(Math.round(c.costo_usd)) + '</td>')
       + '<td data-label="$/lead" style="text-align:right">' + (cpl ? fmtPesos(cpl) : '—') + '</td>'
       + '<td data-label="Comerciales" style="text-align:right">' + (c.comercial || '—')
       +   (c.pct_comercial === null || c.pct_comercial === undefined ? '' : ' <span style="color:var(--vw-grey-3)">' + c.pct_comercial + '%</span>') + '</td>'
@@ -7807,7 +7808,7 @@ function _mkTablaInversiones(inv, refCom, compacta) {
   const cot = (inv && inv.cotizacion) || {};
   h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">'
      + 'Se calcula solo: leads reales × el precio pactado × IVA, cada lead al dólar oficial del día en que entró'
-     + (cot.venta ? ' (último guardado: $' + fmt(cot.venta) + ' del ' + escapeHtml(String(cot.fecha)) + ')' : '')
+     + (cot.venta ? ' (último guardado: $' + _mkNum(cot.venta) + ' del ' + escapeHtml(String(cot.fecha)) + ')' : '')
      + '. Nadie carga importes. <b>Abiertos</b> = todavía sin cerrar, así que su costo por lead comercial puede mejorar. '
      + 'La última columna avisa si el canal dejó de traer.</div>';
   return h;
@@ -7831,7 +7832,7 @@ function _mkTablaMeses(inv) {
       + '<td data-label="Canal">' + escapeHtml(m.canal) + '</td>'
       + '<td data-label="Leads" style="text-align:right;font-weight:700">' + m.leads + '</td>'
       + '<td data-label="Inversión" style="text-align:right">' + fmtPesos(m.costo_ars) + '</td>'
-      + '<td data-label="En USD" style="text-align:right">u$s ' + fmt(Math.round(m.costo_usd)) + '</td>'
+      + '<td data-label="En USD" style="text-align:right">u$s ' + _mkNum(Math.round(m.costo_usd)) + '</td>'
       + '<td data-label="$/lead" style="text-align:right">' + (cpl ? fmtPesos(cpl) : '—') + '</td>'
       + '<td data-label="Comerciales" style="text-align:right">' + (m.comercial || '—') + '</td>'
       + '<td data-label="$/comercial" style="text-align:right">' + (cCom ? fmtPesos(cCom) : '—') + '</td>'
@@ -7945,6 +7946,10 @@ function renderResumen() {
   if (!wrap) return;
 
   let h = '';
+  // Un error en cualquier bloque solia abortar la funcion entera y dejaba TODO
+  // el Resumen colgado en "Cargando..." (paso con el bloque de marketing). Ahora
+  // se pinta lo que se alcanzo a armar y el error se avisa al final.
+  try {
 
   // ----- STOCK -----
   h += '<div class="resumen-block">';
@@ -8055,8 +8060,10 @@ function renderResumen() {
   // ----- MARKETING -----
   // El Resumen mira el MES EN CURSO: la plata que se está gastando ahora y qué
   // trajo. El análisis largo (velocidad, vendedores, fuga) vive en la solapa.
+  // Va entero adentro de un try: si algo de marketing falla NO puede dejar el
+  // resto del Resumen colgado en "Cargando...".
   h += '<div class="resumen-block">';
-  {
+  try {
     const mesNom = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
     const hoyIso = _mkIso(new Date());
     const etiqueta = mesNom[parseInt(hoyIso.slice(5, 7), 10) - 1] + '-' + hoyIso.slice(2, 4);
@@ -8131,6 +8138,8 @@ function renderResumen() {
     } else {
       h += '<div class="resumen-loading">Cargando pauta...</div>';
     }
+  } catch (e) {
+    h += '<div class="resumen-loading">No se pudo armar el bloque de marketing: ' + escapeHtml(String(e && e.message || e)) + '</div>';
   }
   h += '</div>';
 
@@ -8376,6 +8385,12 @@ function renderResumen() {
     }
   }
   h += '</div>';
+
+  } catch (e) {
+    h += '<div class="resumen-block"><div class="resumen-loading">Se cortó el armado del resumen: '
+       + escapeHtml(String(e && e.message || e)) + '</div></div>';
+    console.error('renderResumen', e);
+  }
 
   wrap.innerHTML = h;
 }
