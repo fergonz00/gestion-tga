@@ -7459,6 +7459,28 @@ function toggleResumenSaldos(key) {
   resumenSaldosOpen = (resumenSaldosOpen === key) ? '' : key;
   renderResumen();
 }
+// Marketing: las tablas del Resumen arrancan plegadas. Cada una tiene su propio
+// estado, asi que abrir una no cierra la otra.
+let resumenMktOpen = {};
+function toggleResumenMkt(key) {
+  resumenMktOpen[key] = !resumenMktOpen[key];
+  renderResumen();
+}
+/** Barra clickeable con el titulo y un resumen de una linea; el detalle se abre debajo. */
+function _mkDesplegable(key, titulo, resumen, contenido) {
+  const abierto = !!resumenMktOpen[key];
+  let h = '<div style="margin-top:12px;border:1px solid var(--vw-grey-2);border-radius:10px;overflow:hidden">'
+        + '<div onclick="toggleResumenMkt(\'' + key + '\')" style="cursor:pointer;display:flex;align-items:center;'
+        + 'justify-content:space-between;gap:10px;padding:10px 14px;background:var(--vw-grey-1)" title="Ver el detalle">'
+        + '<div style="font-weight:700;font-size:13px;color:var(--vw-blue)">'
+        + '<span style="font-size:10px;opacity:.75">' + (abierto ? '▲' : '▼') + '</span> '
+        + escapeHtml(titulo) + '</div>'
+        + '<div style="font-size:12px;color:var(--vw-grey-3);text-align:right">' + escapeHtml(resumen) + '</div>'
+        + '</div>';
+  if (abierto) h += '<div style="padding:10px 12px 12px">' + contenido + '</div>';
+  return h + '</div>';
+}
+
 // Idem para el bloque Personal, con estado propio (abrir una no cierra la otra).
 let resumenPersonalOpen = '';
 function toggleResumenPersonal(key) {
@@ -8059,7 +8081,8 @@ function renderResumen() {
 
   // ----- MARKETING -----
   // El Resumen mira el MES EN CURSO: la plata que se está gastando ahora y qué
-  // trajo. El análisis largo (velocidad, vendedores, fuga) vive en la solapa.
+  // trajo. Las tablas arrancan PLEGADAS — arriba quedan solo las cifras y una
+  // línea por bloque; el detalle se abre al tocarlo.
   // Va entero adentro de un try: si algo de marketing falla NO puede dejar el
   // resto del Resumen colgado en "Cargando...".
   h += '<div class="resumen-block">';
@@ -8085,11 +8108,12 @@ function renderResumen() {
       h += kpi('Costo por lead comercial', cLead ? fmtPesos(cLead) : '—', 'toda la inversión de marketing', cLead ? 'warn' : '');
       h += '</div>';
 
-      // Anuncios de Meta con gasto en el mes, los que están en aire primero.
+      // --- Anuncios de Meta (plegado) ---
       const anuncios = (marketingMes.anuncios || []).slice()
         .sort((x, y) => (_mkEnAire(y) - _mkEnAire(x)) || (y.spend - x.spend));
+      const enAire = anuncios.filter(_mkEnAire).length;
       if (anuncios.length) {
-        h += '<div class="table-wrap" style="margin-top:12px"><div class="table-scroll">'
+        let t = '<div class="table-wrap" style="margin-top:0"><div class="table-scroll">'
            + '<table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:980px">'
            + '<thead><tr>'
            + '<th style="text-align:left">Anuncio de Meta</th>'
@@ -8107,7 +8131,7 @@ function renderResumen() {
           const aire = _mkEnAire(a);
           const cCharla = a.charlas ? Math.round(a.spend / a.charlas) : 0;
           const cCom = a.comercial ? Math.round(a.spend / a.comercial) : 0;
-          h += '<tr' + (aire ? '' : ' style="opacity:.62"') + '>'
+          t += '<tr' + (aire ? '' : ' style="opacity:.62"') + '>'
             + '<td data-label="Anuncio" style="max-width:250px">' + escapeHtml(a.ad_name || a.ad_id)
             +   (aire ? ' <span style="font-size:10px;color:#0a7a30;font-weight:700">EN AIRE</span>' : '')
             +   '<div style="font-size:10.5px;color:var(--vw-grey-3)">' + escapeHtml(a.campaign_name || '') + '</div></td>'
@@ -8125,16 +8149,24 @@ function renderResumen() {
             + '<td data-label="Último día" style="text-align:right;color:var(--vw-grey-3)">' + escapeHtml(String(a.ultimo_dia || '—')) + '</td>'
             + '</tr>';
         }
-        h += '</tbody></table></div></div>';
-        h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">'
-           + 'Todo lo que gastó Meta este mes; los que están <b>EN AIRE</b> (entregaron en los últimos 3 días) van arriba y los apagados quedan atenuados. '
+        t += '</tbody></table></div></div>';
+        t += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">'
+           + 'Los que están <b>EN AIRE</b> (entregaron en los últimos 3 días) van arriba y los apagados quedan atenuados. '
            + '<b>Charlas</b> = el cliente mandó 3 mensajes o más. <b>Comerc.</b> = leads que se vendieron o cerraron por una razón de negocio. '
            + 'El $/comercial se pinta rojo si es 50% peor que el promedio de toda la inversión y verde si es 30% mejor.</div>';
+        h += _mkDesplegable('meta', 'Anuncios de Meta',
+               anuncios.length + (anuncios.length === 1 ? ' anuncio' : ' anuncios') + ' · ' + enAire + ' en aire · ' + fmtPesos(tt.gastoMeta), t);
       } else {
-        h += '<div class="resumen-loading">Meta no gastó nada este mes.</div>';
+        h += _mkDesplegable('meta', 'Anuncios de Meta', 'sin gasto este mes', '<div class="resumen-loading">Meta no gastó nada este mes.</div>');
       }
 
-      h += _mkTablaInversiones(marketingInvMes, cLead, true);
+      // --- Canales que cobran por lead (plegado) ---
+      const canales = (marketingInvMes && marketingInvMes.canales) || [];
+      if (canales.length) {
+        const resumenLead = canales.map(c => c.canal + ': ' + c.leads + ' leads').join(' · ') + ' · ' + fmtPesos(tt.gastoOtros);
+        h += _mkDesplegable('lead', 'Otras inversiones (se paga por lead)', resumenLead,
+               _mkTablaInversiones(marketingInvMes, cLead, true));
+      }
     } else {
       h += '<div class="resumen-loading">Cargando pauta...</div>';
     }
