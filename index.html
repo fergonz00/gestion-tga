@@ -1371,6 +1371,21 @@ table.patent-tbl tr.tbl-sep.pat:hover td  { background: var(--green-soft); }
 .rep-zonal { background: #f4f8fc; border: 1px solid #c8dcf0; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
 .rep-zonal-ttl { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; font-weight: 700; color: #0057a0; margin-bottom: 6px; }
 .rep-zonal-cnt { font-weight: 500; font-size: 12px; color: var(--vw-grey-4); }
+/* La tabla de Rotación scrollea ADENTRO suyo (arriba y al costado) en vez de
+   arrastrar la página: así se pueden dejar fijos los títulos y la columna del
+   modelo mientras se analiza fila por fila. Hace falta que el contenedor tenga
+   altura propia — con `position:sticky` a secas no alcanza, porque .table-wrap
+   tiene overflow:hidden y se come el pegado. */
+.rot-scroll { max-height: 72vh; overflow: auto; }
+.rot-tabla thead th { position: sticky; top: 0; z-index: 3; background: var(--vw-grey-1); box-shadow: inset 0 -1px 0 var(--vw-grey-2); }
+.rot-tabla thead th:first-child { left: 0; z-index: 4; }
+.rot-tabla tbody tr:not(.reparto-detalle) td:first-child { position: sticky; left: 0; z-index: 2; background: #fff; box-shadow: inset -1px 0 0 var(--vw-grey-2); }
+.rot-tabla tbody tr.rot-row:hover td:first-child { background: var(--vw-grey-1); }
+@media (max-width: 900px) {
+  /* en pantalla chica la columna fija se come media tabla: solo títulos */
+  .rot-tabla tbody tr:not(.reparto-detalle) td:first-child { position: static; box-shadow: none; }
+  .rot-tabla thead th:first-child { left: auto; }
+}
 </style>
 
 <!-- pdf.js para parsing client-side de los NCs -->
@@ -6347,9 +6362,15 @@ function _rotMesesCell(ms, stock) {
 // Forma: { mes:'YYYY-MM', items: { modeloKey: { modelo, familia, total, colores:{nombre:n} } } }
 // `total` = cuántas pido del modelo. `colores` = el desglose. Si el desglose suma
 // más que el total, el total sube solo (nunca podés pedir menos de lo que detallaste).
-const PEDIDO_ZONAL_LS = 'gestion_pedido_zonal';
-let repartoPedido = _pedidoZonalLoad();
-let _repZonalConfirm = false;
+var PEDIDO_ZONAL_LS = 'gestion_pedido_zonal';
+var repartoPedido = null;      // se carga sola en el primer _ped()
+var _repZonalConfirm = false;
+// Acceso unico al estado. Si todavia no se cargo (o cambio el mes con la pestana
+// abierta) lo (re)lee de localStorage. Nunca devuelve null.
+function _ped() {
+  if (!repartoPedido || repartoPedido.mes !== _mesKeyHoy()) repartoPedido = _pedidoZonalLoad();
+  return repartoPedido;
+}
 
 function _pedidoZonalLoad() {
   try {
@@ -6359,14 +6380,16 @@ function _pedidoZonalLoad() {
   return { mes: _mesKeyHoy(), items: {} };
 }
 function _pedidoZonalSave() {
-  repartoPedido.mes = _mesKeyHoy();
-  try { localStorage.setItem(PEDIDO_ZONAL_LS, JSON.stringify(repartoPedido)); } catch (e) {}
+  const d = _ped();
+  d.mes = _mesKeyHoy();
+  try { localStorage.setItem(PEDIDO_ZONAL_LS, JSON.stringify(d)); } catch (e) {}
 }
 // id de DOM seguro a partir del modeloKey (que puede traer espacios y símbolos)
 function _pedId(mk) { return String(mk).replace(/[^a-zA-Z0-9]/g, '_'); }
 function _pedidoZonalItem(mk, modelo, familia) {
-  let it = repartoPedido.items[mk];
-  if (!it) it = repartoPedido.items[mk] = { modelo: modelo || mk, familia: familia || '', total: 0, colores: {} };
+  const d = _ped();
+  let it = d.items[mk];
+  if (!it) it = d.items[mk] = { modelo: modelo || mk, familia: familia || '', total: 0, colores: {} };
   if (modelo) it.modelo = modelo;
   if (familia) it.familia = familia;
   return it;
@@ -6386,7 +6409,7 @@ function pedidoZonalTotal(mk, modelo, familia, el) {
 }
 // Al salir del campo: no podés pedir menos de lo que ya detallaste por color.
 function pedidoZonalTotalFin(mk, el) {
-  const it = repartoPedido.items[mk];
+  const it = _ped().items[mk];
   if (it) {
     const suma = _pedidoSumCols(it);
     if (suma > it.total) it.total = suma;
@@ -6407,9 +6430,10 @@ function pedidoZonalColor(mk, modelo, familia, color, el) {
 }
 function _pedidoZonalTrasCambio(mk) {
   // limpieza: los modelos que quedaron en cero no ensucian el texto ni el storage
-  Object.keys(repartoPedido.items).forEach(k => {
-    const it = repartoPedido.items[k];
-    if (!(it.total > 0) && !_pedidoSumCols(it)) delete repartoPedido.items[k];
+  const d = _ped();
+  Object.keys(d.items).forEach(k => {
+    const it = d.items[k];
+    if (!(it.total > 0) && !_pedidoSumCols(it)) delete d.items[k];
   });
   _pedidoZonalSave();
   _pedidoZonalSyncFila(mk);
@@ -6419,7 +6443,7 @@ function _pedidoZonalTrasCambio(mk) {
 // solo, y el cartelito de cuántas quedan sin color). No redibuja la tabla, así no
 // se cierran los modelos abiertos ni se pierde el foco mientras vas marcando.
 function _pedidoZonalSyncFila(mk) {
-  const it = repartoPedido.items[mk];
+  const it = _ped().items[mk];
   const inp = document.getElementById('pedtot-' + _pedId(mk));
   if (inp && document.activeElement !== inp) {
     const v = (it && it.total > 0) ? String(it.total) : '';
@@ -6440,7 +6464,7 @@ function _pedidoHintHtml(it) {
 }
 // Input de la columna "Pedir" (fila del modelo).
 function _pedidoInputModelo(mk, modelo, familia) {
-  const it = repartoPedido.items[mk];
+  const it = _ped().items[mk];
   const v = (it && it.total > 0) ? it.total : '';
   const a = [_repJsArg(mk), _repJsArg(modelo), _repJsArg(familia)].map(x => "'" + x + "'").join(',');
   return '<input type="number" min="0" step="1" class="ped-inp' + (v ? ' on' : '') + '" id="pedtot-' + _pedId(mk) + '"'
@@ -6451,7 +6475,7 @@ function _pedidoInputModelo(mk, modelo, familia) {
 }
 // Input de "Pedir" de una fila de color, dentro del detalle del modelo.
 function _pedidoInputColor(mk, modelo, familia, color) {
-  const it = repartoPedido.items[mk];
+  const it = _ped().items[mk];
   const v = (it && Number(it.colores[color]) > 0) ? it.colores[color] : '';
   const a = [_repJsArg(mk), _repJsArg(modelo), _repJsArg(familia), _repJsArg(color)].map(x => "'" + x + "'").join(',');
   return '<input type="number" min="0" step="1" class="ped-inp' + (v ? ' on' : '') + '"'
@@ -6461,7 +6485,7 @@ function _pedidoInputColor(mk, modelo, familia, color) {
 // Texto plano para copiar y pegar. Los modelos salen en el orden en que los fuiste
 // marcando; los colores, del que más pedís al que menos.
 function pedidoZonalTexto() {
-  const items = repartoPedido.items || {};
+  const items = _ped().items || {};
   const keys = Object.keys(items);
   if (!keys.length) return '';
   let tot = 0;
@@ -6482,10 +6506,16 @@ function pedidoZonalTexto() {
   return 'PEDIDO AL ZONAL - ' + _mesLabel(_mesKeyHoy()) + ' - ' + tot + (tot === 1 ? ' unidad' : ' unidades')
     + '\n\n' + lineas.join('\n');
 }
+// El cuadro del pedido NUNCA puede voltear la tabla de rotación: si algo falla
+// acá, la tabla — que es para lo que se entra a la sección — tiene que quedar
+// igual. Por eso se pinta DESPUÉS de la tabla y siempre por acá.
+function _repPedidoBoxSafe() {
+  try { repartoPedidoBoxRender(); } catch (e) { console.error('pedido al zonal:', e); }
+}
 // El cuadrito con el texto. Se repinta solo (no toca la tabla).
 function repartoPedidoBoxRender() {
   const body = document.getElementById('repZonalBody'); if (!body) return;
-  const items = repartoPedido.items || {};
+  const items = _ped().items || {};
   let tot = 0, mods = 0;
   Object.keys(items).forEach(k => {
     const n = Math.max(Number(items[k].total) || 0, _pedidoSumCols(items[k]));
@@ -6628,18 +6658,17 @@ function _rotModKey(m) { return _repNtrimFront(m.nombreCorto || m.modelo) || (m.
 
 function repartoRotFiltrar() {
   const wrap = document.getElementById('repartoRotWrap'); if (!wrap) return;
-  repartoPedidoBoxRender();   // el cuadro del pedido no depende del filtro de búsqueda
   const rot = (repartoData && repartoData.rotacion) || { items: [] };
   const qEl = document.getElementById('repartoRotBusq');
   const q = (qEl ? qEl.value : '').trim().toLowerCase();
   const items = (rot.items || []).filter(m => !q
     || (m.modelo || '').toLowerCase().includes(q) || (m.familia || '').toLowerCase().includes(q));
-  if (!items.length) { wrap.innerHTML = '<div class="empty">Sin datos de rotación' + (q ? ' para la búsqueda.' : '.') + '</div>'; return; }
+  if (!items.length) { wrap.innerHTML = '<div class="empty">Sin datos de rotación' + (q ? ' para la búsqueda.' : '.') + '</div>'; _repPedidoBoxSafe(); return; }
   const comp = _rotCompradas();
   const enRep = _rotEnReparto();
   const vend = _rotVendMes();
   const mesLbl = _mesLabel(_mesKeyHoy());
-  let h = '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla rot-tabla"><thead><tr>'
+  let h = '<div class="table-wrap"><div class="table-scroll rot-scroll"><table class="reparto-tabla rot-tabla"><thead><tr>'
     + '<th>Modelo</th>'
     + '<th class="num" title="Cuántas unidades de este modelo le pedís al zonal. Abrí el modelo para repartirlas por color. Queda guardado en esta compu y se vacía solo al cambiar de mes.">Pedir</th>'
     + '<th class="num" title="Stock disponible. Ya INCLUYE las unidades que compraste este mes en el reparto y todavía no entraron a Oversoft (si tenías 10 y compraste 2, dice 12).">Stock</th>'
@@ -6655,7 +6684,7 @@ function repartoRotFiltrar() {
     const vMes = (m.ventaMesActual != null) ? Number(m.ventaMesActual) : vend.porModelo[mk];
     h += '<tr class="rot-row" onclick="repartoRotToggle(' + idx + ')">';
     h += '<td><span class="reparto-chev" id="rotchev-' + idx + '">▸</span> <span class="reparto-modelo">' + escapeHtml((m.modelo || '').replace(/^VW /, '')) + '</span><div class="reparto-fam">' + escapeHtml(m.familia || '') + '</div></td>';
-    h += '<td class="num" onclick="event.stopPropagation()">' + _pedidoInputModelo(mk, (m.modelo || '').replace(/^VW /, ''), m.familia || '') + '</td>';
+    h += '<td class="num ped-td" onclick="event.stopPropagation()">' + _pedidoInputModelo(mk, (m.modelo || '').replace(/^VW /, ''), m.familia || '') + '</td>';
     h += '<td class="num">' + m.stock + '</td>';
     h += '<td class="num">' + (rMes > 0 ? '<strong class="rot-enrep">' + rMes + '</strong>' : '<span class="reparto-fam">—</span>') + '</td>';
     h += '<td class="num">' + (cMes > 0 ? '<strong>' + cMes + '</strong>' : '<span class="reparto-fam">0</span>') + '</td>';
@@ -6667,6 +6696,7 @@ function repartoRotFiltrar() {
   });
   h += '</tbody></table></div></div>';
   wrap.innerHTML = h;
+  _repPedidoBoxSafe();
   // Si "Vend. mes" todavía no tiene de dónde salir (backend viejo + motor sin
   // cargar), lo traemos y redibujamos una sola vez.
   if (!items.some(m => m.ventaMesActual != null) && !(preciosData && preciosData.modelos)) {
