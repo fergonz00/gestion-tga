@@ -110,6 +110,9 @@ const get = async (u) => {
         if (/Cargando pauta/.test(salida)) throw new Error('quedo en "Cargando pauta"');
         if (!/toggleResumenMkt/.test(salida)) throw new Error('no armo los desplegables');
         if (/<table/.test(salida)) throw new Error('las tablas tienen que arrancar PLEGADAS');
+        // Un 0 de ventas es informacion: tiene que verse el numero, nunca un guion.
+        if (!/Ventas del mes/.test(salida)) throw new Error('falta la tarjeta de Ventas del mes');
+        if (/Ventas del mes=—/.test(salida)) throw new Error('las ventas en 0 salen como guion');
       }
       console.log(`  ✓ bloque del Resumen — ${nombre} (${salida.length} chars)`);
     } catch (e) {

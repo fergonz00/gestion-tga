@@ -7576,6 +7576,9 @@ function renderMarketing() {
   h += kpi('Leads en el CRM', t.leads || 0, _mkPct(t.convs ? 100 * t.leads / t.convs : null) + ' de las conversaciones', '');
   h += kpi('Leads comerciales', t.comercial || 0, 'hablaron de comprar', t.comercial ? 'good' : '');
   h += kpi('Costo por lead comercial', _mkPesos(_mkDiv(tt.gasto, tt.comercial)), 'toda la inversión · el número que ordena', 'warn');
+  h += kpi('Ventas', tt.vendidos || 0,
+           tt.vendidos ? _mkPesos(_mkDiv(tt.gasto, tt.vendidos)) + ' de pauta por venta' : 'ninguna venta cargada en el período',
+           tt.vendidos ? 'good' : 'bad');
   h += '</div>';
 
   // ---- Anuncio por anuncio ----
@@ -7608,9 +7611,9 @@ function renderMarketing() {
       +   (a.convs ? ' <span style="color:var(--vw-grey-3)">' + Math.round(100 * a.charlas / a.convs) + '%</span>' : '') + '</td>'
       + '<td data-label="$/charla" style="text-align:right">' + _mkPesos(_mkDiv(a.spend, a.charlas)) + '</td>'
       + '<td data-label="Leads" style="text-align:right">' + (a.leads || '—') + '</td>'
-      + '<td data-label="Comerciales" style="text-align:right;font-weight:700">' + (a.comercial || '—') + '</td>'
+      + '<td data-label="Comerciales" style="text-align:right;font-weight:700">' + (a.comercial || 0) + '</td>'
       + '<td data-label="$/comercial" style="text-align:right;font-weight:700">' + _mkPesos(_mkDiv(a.spend, a.comercial)) + '</td>'
-      + '<td data-label="Vendidos" style="text-align:right">' + (a.vendidos || '—') + '</td>'
+      + '<td data-label="Vendidos" style="text-align:right">' + (a.vendidos || 0) + '</td>'
       + '</tr>';
   }
   h += '</tbody></table></div></div>';
@@ -7633,7 +7636,7 @@ function renderMarketing() {
       + '<td data-label="Leads" style="text-align:right">' + v.leads + '</td>'
       + '<td data-label="No contesta" style="text-align:right">' + _mkPct(v.pct_no_contesta) + '</td>'
       + '<td data-label="Comercial" style="text-align:right;font-weight:700;color:' + (v.pct_comercial >= 40 ? '#0a7a30' : (v.pct_comercial <= 20 ? '#cc3300' : 'inherit')) + '">' + _mkPct(v.pct_comercial) + '</td>'
-      + '<td data-label="Vendidos" style="text-align:right">' + (v.vendidos || '—') + '</td>'
+      + '<td data-label="Vendidos" style="text-align:right">' + (v.vendidos || 0) + '</td>'
       + '</tr>';
   }
   h += '</tbody></table></div></div>';
@@ -7673,7 +7676,7 @@ function renderMarketing() {
       + '<td data-label="Más viejo" style="text-align:right">' + (v.dias_mas_viejo === null ? '—' : v.dias_mas_viejo + ' d') + '</td>'
       + '<td data-label="Horas" style="text-align:right">' + (v.hs_1er_contacto === null ? '—' : v.hs_1er_contacto) + '</td>'
       + '<td data-label="Comercial" style="text-align:right">' + _mkPct(v.pct_comercial) + '</td>'
-      + '<td data-label="Vendidos" style="text-align:right">' + (v.vendidos || '—') + '</td>'
+      + '<td data-label="Vendidos" style="text-align:right">' + (v.vendidos || 0) + '</td>'
       + '</tr>';
   }
   h += '</tbody></table></div></div>';
@@ -7688,7 +7691,7 @@ function renderMarketing() {
       + '<td data-label="Modelo">' + escapeHtml(m.modelo) + '</td>'
       + '<td data-label="Leads" style="text-align:right">' + m.leads + '</td>'
       + '<td data-label="Comercial" style="text-align:right;font-weight:700;color:' + (m.pct_comercial >= 45 ? '#0a7a30' : (m.pct_comercial <= 25 ? '#cc3300' : 'inherit')) + '">' + _mkPct(m.pct_comercial) + '</td>'
-      + '<td data-label="Vendidos" style="text-align:right">' + (m.vendidos || '—') + '</td>'
+      + '<td data-label="Vendidos" style="text-align:right">' + (m.vendidos || 0) + '</td>'
       + '</tr>';
   }
   h += '</tbody></table></div></div>';
@@ -7815,13 +7818,13 @@ function _mkTablaInversiones(inv, refCom, compacta) {
       + '<td data-label="Inversión" style="text-align:right;font-weight:700">' + fmtPesos(c.costo_ars) + '</td>'
       + (compacta ? '' : '<td data-label="En USD" style="text-align:right">u$s ' + _mkNum(Math.round(c.costo_usd)) + '</td>')
       + '<td data-label="$/lead" style="text-align:right">' + (cpl ? fmtPesos(cpl) : '—') + '</td>'
-      + '<td data-label="Comerciales" style="text-align:right">' + (c.comercial || '—')
+      + '<td data-label="Comerciales" style="text-align:right">' + (c.comercial || 0)
       +   (c.pct_comercial === null || c.pct_comercial === undefined ? '' : ' <span style="color:var(--vw-grey-3)">' + c.pct_comercial + '%</span>') + '</td>'
       + '<td data-label="$/comercial" style="text-align:right;font-weight:700;color:'
       +   (cCom && refCom && cCom > refCom * 1.5 ? '#cc3300' : (cCom && refCom && cCom < refCom * 0.7 ? '#0a7a30' : 'inherit')) + '">'
       +   (cCom ? fmtPesos(cCom) : '—') + '</td>'
       + '<td data-label="Abiertos" style="text-align:right">' + (c.abiertos || '—') + '</td>'
-      + '<td data-label="Vendidos" style="text-align:right">' + (c.vendidos || '—') + '</td>'
+      + '<td data-label="Vendidos" style="text-align:right">' + (c.vendidos || 0) + '</td>'
       + '<td data-label="Últimos 7d" style="text-align:right;color:' + (c.leads_7d ? 'inherit' : '#cc3300') + '">'
       +   (c.leads_7d ? c.leads_7d + ' leads' : 'sin leads') + '</td>'
       + '</tr>';
@@ -7856,10 +7859,10 @@ function _mkTablaMeses(inv) {
       + '<td data-label="Inversión" style="text-align:right">' + fmtPesos(m.costo_ars) + '</td>'
       + '<td data-label="En USD" style="text-align:right">u$s ' + _mkNum(Math.round(m.costo_usd)) + '</td>'
       + '<td data-label="$/lead" style="text-align:right">' + (cpl ? fmtPesos(cpl) : '—') + '</td>'
-      + '<td data-label="Comerciales" style="text-align:right">' + (m.comercial || '—') + '</td>'
+      + '<td data-label="Comerciales" style="text-align:right">' + (m.comercial || 0) + '</td>'
       + '<td data-label="$/comercial" style="text-align:right">' + (cCom ? fmtPesos(cCom) : '—') + '</td>'
       + '<td data-label="Abiertos" style="text-align:right">' + (m.abiertos || '—') + '</td>'
-      + '<td data-label="Vendidos" style="text-align:right">' + (m.vendidos || '—') + '</td>'
+      + '<td data-label="Vendidos" style="text-align:right">' + (m.vendidos || 0) + '</td>'
       + '</tr>';
   }
   h += '</tbody></table></div></div>';
@@ -7886,9 +7889,9 @@ function _mkTablaMesesMeta(data) {
       + '<td data-label="Charlas" style="text-align:right">' + (m.charlas || '—') + '</td>'
       + '<td data-label="$/charla" style="text-align:right">' + (cc ? fmtPesos(cc) : '—') + '</td>'
       + '<td data-label="Leads" style="text-align:right">' + (m.leads || '—') + '</td>'
-      + '<td data-label="Comerciales" style="text-align:right">' + (m.comercial || '—') + '</td>'
+      + '<td data-label="Comerciales" style="text-align:right">' + (m.comercial || 0) + '</td>'
       + '<td data-label="$/comercial" style="text-align:right;font-weight:700">' + (co ? fmtPesos(co) : '—') + '</td>'
-      + '<td data-label="Vendidos" style="text-align:right">' + (m.vendidos || '—') + '</td>'
+      + '<td data-label="Vendidos" style="text-align:right">' + (m.vendidos || 0) + '</td>'
       + '</tr>';
   }
   h += '</tbody></table></div></div>';
@@ -8106,6 +8109,10 @@ function renderResumen() {
                'proyección del mes ' + fmtPesos(Math.round(tt.gasto / Math.max(dia, 1) * 30)), '');
       h += kpi('Leads comerciales', tt.comercial || 0, 'de ' + (tt.leads || 0) + ' leads del mes', tt.comercial ? 'good' : '');
       h += kpi('Costo por lead comercial', cLead ? fmtPesos(cLead) : '—', 'toda la inversión de marketing', cLead ? 'warn' : '');
+      // Las ventas van SIEMPRE con el numero, aunque sea 0: el cero ES el dato.
+      h += kpi('Ventas del mes', tt.vendidos || 0,
+               tt.vendidos ? fmtPesos(Math.round(tt.gasto / tt.vendidos)) + ' de pauta por venta' : 'todavía ninguna venta cargada',
+               tt.vendidos ? 'good' : 'bad');
       h += '</div>';
 
       // --- Anuncios de Meta (plegado) ---
@@ -8125,6 +8132,7 @@ function renderResumen() {
            + '<th style="text-align:right">Leads</th>'
            + '<th style="text-align:right">Comerc.</th>'
            + '<th style="text-align:right">$/comerc.</th>'
+           + '<th style="text-align:right">Ventas</th>'
            + '<th style="text-align:right">Último día</th>'
            + '</tr></thead><tbody>';
         for (const a of anuncios) {
@@ -8142,10 +8150,11 @@ function renderResumen() {
             +   (a.convs ? ' <span style="color:var(--vw-grey-3)">' + Math.round(100 * a.charlas / a.convs) + '%</span>' : '') + '</td>'
             + '<td data-label="$/charla" style="text-align:right">' + (cCharla ? fmtPesos(cCharla) : '—') + '</td>'
             + '<td data-label="Leads" style="text-align:right">' + (a.leads || '—') + '</td>'
-            + '<td data-label="Comerciales" style="text-align:right">' + (a.comercial || '—') + '</td>'
+            + '<td data-label="Comerciales" style="text-align:right">' + (a.comercial || 0) + '</td>'
             + '<td data-label="$/comercial" style="text-align:right;font-weight:700;color:'
             +   (cCom && cLead && cCom > cLead * 1.5 ? '#cc3300' : (cCom && cLead && cCom < cLead * 0.7 ? '#0a7a30' : 'inherit')) + '">'
             +   (cCom ? fmtPesos(cCom) : '—') + '</td>'
+            + '<td data-label="Ventas" style="text-align:right;font-weight:700' + (a.vendidos ? ';color:#0a7a30' : '') + '">' + (a.vendidos || 0) + '</td>'
             + '<td data-label="Último día" style="text-align:right;color:var(--vw-grey-3)">' + escapeHtml(String(a.ultimo_dia || '—')) + '</td>'
             + '</tr>';
         }
