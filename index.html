@@ -7510,12 +7510,12 @@ async function loadMarketing(forzar) {
   if (cont && (forzar || !marketingData)) cont.innerHTML = '<div class="resumen-loading">Cargando pauta...</div>';
   if (btn) { btn.disabled = true; btn.textContent = 'Cargando...'; }
   try {
-    const p = _mkPeriodo();
-    const url = GESTION_NEXT_URL + '/api/meta/analisis?desde=' + p.desde + '&hasta=' + p.hasta;
-    const res = await fetch(url);
-    const data = await res.json();
-    if (data && data.error) throw new Error(data.error);
-    marketingData = data;
+    const [full, sem] = await Promise.all([
+      _mkFetch(_mkPeriodo()),
+      _mkFetch(_mkRango(7)).catch(() => null),   // la ventana de 7d es para el Resumen
+    ]);
+    marketingData = full;
+    if (sem) marketingData7 = sem;
     renderMarketing();
   } catch (e) {
     if (cont) cont.innerHTML = '<div class="resumen-loading">No se pudo cargar la pauta: ' + escapeHtml(String(e.message || e)) + '</div>';
@@ -7695,15 +7695,34 @@ function renderMarketing() {
   cont.innerHTML = h;
 }
 
-// El Resumen muestra el bloque Marketing sin que haga falta abrir la solapa.
+// El Resumen muestra la tabla de anuncios en aire sin que haga falta abrir la
+// solapa. Trae dos ventanas: el período elegido (contexto) y los últimos 7 días
+// (la plata de esta semana, que es la que se puede corregir a tiempo).
 // Silencioso: si el endpoint falla, la card queda en "Cargando" y no rompe nada.
+let marketingData7 = null;
+
+function _mkRango(dias) {
+  const iso = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).format(d);
+  const hasta = new Date();
+  return { desde: iso(new Date(hasta.getTime() - dias * 86400000)), hasta: iso(hasta) };
+}
+
+async function _mkFetch(rango) {
+  const res = await fetch(GESTION_NEXT_URL + '/api/meta/analisis?desde=' + rango.desde + '&hasta=' + rango.hasta);
+  const data = await res.json();
+  if (!data || data.error) throw new Error((data && data.error) || 'sin datos');
+  return data;
+}
+
 async function loadMarketingSilent(forzar) {
-  if (marketingData && !forzar) return marketingData;
+  if (marketingData && marketingData7 && !forzar) return marketingData;
   try {
-    const p = _mkPeriodo();
-    const res = await fetch(GESTION_NEXT_URL + '/api/meta/analisis?desde=' + p.desde + '&hasta=' + p.hasta);
-    const data = await res.json();
-    if (data && !data.error) marketingData = data;
+    const [full, sem] = await Promise.all([
+      _mkFetch(_mkPeriodo()).catch(() => null),
+      _mkFetch(_mkRango(7)).catch(() => null),
+    ]);
+    if (full) marketingData = full;
+    if (sem) marketingData7 = sem;
   } catch (e) { /* silencioso */ }
   return marketingData;
 }
@@ -7873,23 +7892,86 @@ function renderResumen() {
   h += '</div>';
 
   // ----- MARKETING -----
-  // Costo por lead comercial, que es el numero que ordena bien la pauta: el
-  // costo por conversacion que muestra Meta engaña (ver solapa Marketing).
+  // No alcanza con el total: lo que hay que ver todos los días es cómo viene
+  // rindiendo cada anuncio que está EN AIRE hoy, porque es la plata que se está
+  // gastando ahora. El acumulado del período va al lado para tener contexto.
   h += '<div class="resumen-block">';
-  h += '  <div class="resumen-head"><h3>Marketing — pauta de Meta</h3>'
-     + '    <button class="resumen-link" onclick="setTab(\'marketing\')">Ver detalle →</button>'
+  h += '  <div class="resumen-head"><h3>Marketing — anuncios en aire</h3>'
+     + '    <button class="resumen-link" onclick="setTab(\'marketing\')">Ver todo el análisis →</button>'
      + '  </div>';
   if (marketingData && marketingData.total) {
     const mt = marketingData.total;
     const cLead = mt.comercial ? Math.round(mt.spend / mt.comercial) : 0;
-    const activos = (marketingData.anuncios || []).filter(a => String(a.effective_status || '').indexOf('ACTIVE') >= 0).length;
+
+    // "En aire" = gastó en los últimos 7 días. Es el criterio que no miente:
+    // un anuncio puede figurar ACTIVE y no estar entregando hace semanas.
+    const sem = {};
+    for (const a of ((marketingData7 && marketingData7.anuncios) || [])) sem[a.ad_id] = a;
+    let activos = (marketingData.anuncios || []).filter(a => sem[a.ad_id] && sem[a.ad_id].spend > 0);
+    let criterio = 'gastaron en los últimos 7 días';
+    if (!activos.length) {
+      activos = (marketingData.anuncios || []).filter(a => String(a.effective_status || '').indexOf('ACTIVE') >= 0);
+      criterio = 'marcados como activos en Meta (ninguno gastó esta semana)';
+    }
+    activos.sort((x, y) => ((sem[y.ad_id] || {}).spend || 0) - ((sem[x.ad_id] || {}).spend || 0));
+
+    const gasto7 = activos.reduce((s, a) => s + ((sem[a.ad_id] || {}).spend || 0), 0);
+
     h += '<div class="cards-resumen">';
-    h += kpi('Gasto en pauta', fmtPesos(mt.spend || 0), activos + (activos === 1 ? ' anuncio en aire' : ' anuncios en aire'), '');
-    h += kpi('Conversaciones', mt.convs || 0, (mt.charlas || 0) + ' llegaron a charlar', '');
-    h += kpi('Leads comerciales', mt.comercial || 0, 'de ' + (mt.leads || 0) + ' leads', mt.comercial ? 'good' : '');
+    h += kpi('Gasto esta semana', fmtPesos(gasto7), activos.length + (activos.length === 1 ? ' anuncio en aire' : ' anuncios en aire'), gasto7 ? '' : 'warn');
+    h += kpi('Gasto del período', fmtPesos(mt.spend || 0), marketingData.desde + ' a ' + marketingData.hasta, '');
+    h += kpi('Leads comerciales', mt.comercial || 0, 'de ' + (mt.leads || 0) + ' leads y ' + (mt.convs || 0) + ' conversaciones', mt.comercial ? 'good' : '');
     h += kpi('Costo por lead comercial', cLead ? fmtPesos(cLead) : '—', 'lo que cuesta un interesado real', cLead ? 'warn' : '');
-    h += '<div style="grid-column:1/-1;font-size:11px;color:var(--vw-grey-3)">' + escapeHtml(marketingData.desde + ' a ' + marketingData.hasta) + ' · lead comercial = habló de comprar, no "no contesta" ni dato erróneo</div>';
     h += '</div>';
+
+    if (activos.length) {
+      h += '<div class="table-wrap" style="margin-top:12px"><div class="table-scroll">'
+         + '<table class="responsive-cards" style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:1040px">'
+         + '<thead><tr>'
+         + '<th style="text-align:left">Anuncio en aire</th>'
+         + '<th style="text-align:right">Gasto 7d</th>'
+         + '<th style="text-align:right">Por día</th>'
+         + '<th style="text-align:right">Conv. 7d</th>'
+         + '<th style="text-align:right">Charlas 7d</th>'
+         + '<th style="text-align:right">Gasto período</th>'
+         + '<th style="text-align:right">Conv.</th>'
+         + '<th style="text-align:right">Charlas</th>'
+         + '<th style="text-align:right">$/charla</th>'
+         + '<th style="text-align:right">Comerc.</th>'
+         + '<th style="text-align:right">$/comerc.</th>'
+         + '</tr></thead><tbody>';
+      for (const a of activos) {
+        const s7 = sem[a.ad_id] || {};
+        const pctCharla = a.convs ? Math.round(100 * a.charlas / a.convs) : null;
+        const cCharla = a.charlas ? Math.round(a.spend / a.charlas) : null;
+        const cCom = a.comercial ? Math.round(a.spend / a.comercial) : null;
+        h += '<tr>'
+          + '<td data-label="Anuncio" style="max-width:250px">' + escapeHtml(a.ad_name || a.ad_id)
+          +   '<div style="font-size:10.5px;color:var(--vw-grey-3)">' + escapeHtml(a.campaign_name || '') + '</div></td>'
+          + '<td data-label="Gasto 7d" style="text-align:right;font-weight:700">' + (s7.spend ? fmtPesos(s7.spend) : '—') + '</td>'
+          + '<td data-label="Por día" style="text-align:right">' + (s7.spend && s7.dias ? fmtPesos(Math.round(s7.spend / s7.dias)) + ' <span style="color:var(--vw-grey-3)">' + s7.dias + 'd</span>' : '—') + '</td>'
+          + '<td data-label="Conv. 7d" style="text-align:right">' + (s7.convs || '—') + '</td>'
+          + '<td data-label="Charlas 7d" style="text-align:right">' + (s7.charlas || '—') + '</td>'
+          + '<td data-label="Gasto período" style="text-align:right">' + fmtPesos(a.spend) + '</td>'
+          + '<td data-label="Conv." style="text-align:right">' + (a.convs || '—') + '</td>'
+          + '<td data-label="Charlas" style="text-align:right">' + (a.charlas || '—')
+          +   (pctCharla === null ? '' : ' <span style="color:var(--vw-grey-3)">' + pctCharla + '%</span>') + '</td>'
+          + '<td data-label="$/charla" style="text-align:right">' + (cCharla ? fmtPesos(cCharla) : '—') + '</td>'
+          + '<td data-label="Comerciales" style="text-align:right;font-weight:700">' + (a.comercial || '—') + '</td>'
+          + '<td data-label="$/comercial" style="text-align:right;font-weight:700;color:'
+          +   (cCom && cLead && cCom > cLead * 1.5 ? '#cc3300' : (cCom && cLead && cCom < cLead * 0.7 ? '#0a7a30' : 'inherit')) + '">'
+          +   (cCom ? fmtPesos(cCom) : '—') + '</td>'
+          + '</tr>';
+      }
+      h += '</tbody></table></div></div>';
+      h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:8px">En aire = ' + criterio + '. '
+         + '<b>Charlas</b> = el cliente mandó 3 mensajes o más; es la señal más temprana y no hay que esperar a que el lead madure. '
+         + '<b>Comerc.</b> = leads que se vendieron o cerraron por una razón de negocio (no "no contesta" ni dato erróneo). '
+         + 'El $/comercial se pinta rojo si es 50% peor que el promedio de la cuenta y verde si es 30% mejor. '
+         + 'Las columnas de 7 días son plata de esta semana (el "por día" divide por los días que el anuncio realmente entregó, no por 7); las del período, el acumulado del anuncio.</div>';
+    } else {
+      h += '<div class="resumen-loading">No hay anuncios en aire.</div>';
+    }
   } else {
     h += '<div class="resumen-loading">Cargando pauta...</div>';
   }
