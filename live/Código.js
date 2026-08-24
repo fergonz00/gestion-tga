@@ -4351,22 +4351,107 @@ function _repartoNtrim(s) {
 }
 
 // =======================================================================
-// STOCK VIRTUAL — unidades que YA pedimos comprar a VW (reparto en estado
-// comprado u ok) pero que TODAVIA no figuran en Oversoft. Se cuentan como
-// stock SOLO para los analisis internos: "Analisis de stock", la rotacion del
-// Reparto y el stock por color del Reparto. NUNCA para la vista de vendedores
-// (precios) ni para la solapa Stock/Stock. En cuanto el VIN aparece en
-// Oversoft deja de contar como virtual (lo toma el stock fisico real).
+// STOCK VIRTUAL — unidades que YA compramos a VW pero que TODAVIA no figuran
+// en Oversoft. Se cuentan como stock SOLO para los analisis internos:
+// "Analisis de stock", la rotacion del Reparto y el stock por color del
+// Reparto. NUNCA para la vista de vendedores (precios) ni para la solapa
+// Stock/Stock. En cuanto el VIN aparece en Oversoft deja de contar como
+// virtual (lo toma el stock fisico real).
+//
+// Son DOS fuentes, no una (dedup por SERIE, los ultimos 8 del VIN):
+//   1) el reparto de VW marcado comprado/ok, y
+//   2) lo que Monica carga en `compras_vw` — la MISMA fuente de la estadistica
+//      "comprado" de arriba del Reparto.
+// Hasta ago-26 miraba solo (1), asi que toda compra hecha fuera del mail de VW
+// (cupo del zonal, corporativo, etc) no existia para la rotacion: 13 de las 44
+// de agosto, entre ellas las 6 Tera Trend, mostraban Stock viejo y "Compr. mes"
+// en 0 justo cuando se decide que reponer.
+//
 // Devuelve todo indexado por nombre_corto del catalogo:
 //   byNc      : { nc -> cantidad }
 //   colorByNc : { nc -> { nombreColor -> cantidad } }
 //   chasisByNc: { nc -> [ {serie, color, dias, viejo, virtual:true} ] }
 // =======================================================================
+// Catalogo indexado por nombre normalizado: norm(nombre_corto | nombre_bt) -> nombre_corto.
+function _catalogoPorNorm() {
+  var out = {};
+  try {
+    _supaGet('/catalogo_modelos?select=nombre_corto,nombre_bt&activo=eq.true').forEach(function (c) {
+      if (c.nombre_corto) out[_ntrim(c.nombre_corto)] = c.nombre_corto;
+      if (c.nombre_bt) out[_ntrim(c.nombre_bt)] = c.nombre_corto;
+    });
+  } catch (e) {}
+  return out;
+}
+// "agosto-26" (asi carga Monica `compras_vw.mes`) -> "2026-08".
+function _cvwMesKey(mes) {
+  var p = String(mes || '').toLowerCase().trim().split('-');
+  var n = _MES_TXT_A_NUM[(p[0] || '').trim()];
+  var yy = Number((p[1] || '').trim());
+  return (n && yy) ? ((2000 + yy) + '-' + n) : '';
+}
+// compras_vw completo, una sola vez por ejecucion (lo piden el stock virtual y
+// la columna "Compr. mes"; sin esto serian dos fetch por apertura del Reparto).
+var _CVW_ROWS_CACHE = null;
+function _cvwRows() {
+  if (_CVW_ROWS_CACHE) return _CVW_ROWS_CACHE;
+  try { _CVW_ROWS_CACHE = _supaGet('/compras_vw?select=serie,modelo_valeria,color,mes,fecha_fc,created_at') || []; }
+  catch (e) { _CVW_ROWS_CACHE = []; }
+  return _CVW_ROWS_CACHE;
+}
+// Compras de `compras_vw` de los meses pedidos ('YYYY-MM'), ya cruzadas contra el
+// catalogo. Devuelve [{serie, nc, color, dias}].
+function _comprasVwDeMeses(meses, catByNorm) {
+  var quiero = {};
+  (meses || []).forEach(function (m) { if (m) quiero[m] = true; });
+  var now = Date.now(), out = [];
+  _cvwRows().forEach(function (r) {
+    var serie = String(r.serie || '').trim().toUpperCase();
+    // "MAN-..." es un placeholder que se carga sin chasis: todavia no es una
+    // compra real de VW, no puede sumar stock ni contar como comprada.
+    if (!serie || serie.indexOf('MAN-') === 0) return;
+    if (!quiero[_cvwMesKey(r.mes)]) return;
+    var nc = catByNorm[_ntrim(r.modelo_valeria)];
+    if (!nc) return;                                   // no matchea catalogo -> lo salteamos
+    var f = r.fecha_fc || r.created_at;
+    var d = f ? Math.floor((now - new Date(f).getTime()) / 86400000) : null;
+    out.push({ serie: serie, nc: nc, color: String(r.color || '').trim() || '(sin color)', dias: d });
+  });
+  return out;
+}
 function _stockVirtualCompras() {
   var vacio = { byNc: {}, colorByNc: {}, chasisByNc: {} };
+  var catByNorm = _catalogoPorNorm();
+
+  // nombres de color (codigo VW -> nombre)
+  var coloresDb = {};
+  try { (_repartoRead('/reparto_colores?select=codigo,nombre') || []).forEach(function (c) { coloresDb[c.codigo] = c.nombre; }); } catch (e) {}
+  var colores = Object.assign({}, REPARTO_COLORES_BASE, coloresDb);
+
+  // Candidatas de las dos fuentes, dedup por serie (gana la primera vista: el
+  // reparto, que trae el color como lo ofrecio VW).
+  var now = Date.now();
+  var cand = [], vistas = {};
+  var push = function (serie, nc, colNom, dias) {
+    if (!serie || !nc || vistas[serie]) return;
+    vistas[serie] = true;
+    cand.push({ serie: serie, nc: nc, color: colNom, dias: dias });
+  };
   var rows = [];
-  try { rows = _repartoRead('/reparto_vw?select=vin,descripcion,color_codigo,comprado_at,estado_compra&estado_compra=in.(comprado,ok)') || []; } catch (e) { return vacio; }
-  if (!rows.length) return vacio;
+  try { rows = _repartoRead('/reparto_vw?select=vin,descripcion,color_codigo,comprado_at,estado_compra&estado_compra=in.(comprado,ok)') || []; } catch (e) {}
+  rows.forEach(function (r) {
+    var vin = String(r.vin || '').toUpperCase();
+    if (!vin) return;
+    push(vin.slice(-8), catByNorm[_ntrim(r.descripcion)],
+      colores[r.color_codigo] || r.color_codigo || '(sin color)',
+      r.comprado_at ? Math.floor((now - new Date(r.comprado_at).getTime()) / 86400000) : null);
+  });
+  // Mes en curso + el anterior: es la ventana en la que una compra puede estar
+  // cargada y todavia no haber entrado a Oversoft. Mas atras seria basura vieja.
+  var d0 = new Date();
+  var mesesCvw = [_yyyyMm(d0), _yyyyMm(new Date(d0.getFullYear(), d0.getMonth() - 1, 1))];
+  _comprasVwDeMeses(mesesCvw, catByNorm).forEach(function (c) { push(c.serie, c.nc, c.color, c.dias); });
+  if (!cand.length) return vacio;
 
   // Excluir las que YA estan en Oversoft: esas ya las cuenta el stock real. Se
   // cruza por SERIE (ultimos 8 del VIN) y no por VIN completo, asi tambien
@@ -4374,7 +4459,7 @@ function _stockVirtualCompras() {
   // para un VIN normal, slice(-8) == la serie de Oversoft.
   var enOv = {};
   var h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
-  var series = rows.map(function (r) { return String(r.vin || '').toUpperCase().slice(-8); }).filter(Boolean);
+  var series = cand.map(function (c) { return c.serie; });
   for (var i = 0; i < series.length; i += 60) {
     var lote = series.slice(i, i + 60).map(function (s) { return '"' + s + '"'; }).join(',');
     try {
@@ -4383,36 +4468,42 @@ function _stockVirtualCompras() {
     } catch (e) {}
   }
 
-  // catalogo: norm(corto|bt) -> nombre_corto (para cruzar la descripcion del reparto)
-  var catByNorm = {};
-  try {
-    _supaGet('/catalogo_modelos?select=nombre_corto,nombre_bt&activo=eq.true').forEach(function (c) {
-      if (c.nombre_corto) catByNorm[_ntrim(c.nombre_corto)] = c.nombre_corto;
-      if (c.nombre_bt) catByNorm[_ntrim(c.nombre_bt)] = c.nombre_corto;
-    });
-  } catch (e) {}
-
-  // nombres de color (codigo VW -> nombre)
-  var coloresDb = {};
-  try { (_repartoRead('/reparto_colores?select=codigo,nombre') || []).forEach(function (c) { coloresDb[c.codigo] = c.nombre; }); } catch (e) {}
-  var colores = Object.assign({}, REPARTO_COLORES_BASE, coloresDb);
-
   var out = { byNc: {}, colorByNc: {}, chasisByNc: {} };
-  var now = Date.now();
-  rows.forEach(function (r) {
-    var vin = String(r.vin || '').toUpperCase();
-    if (!vin || enOv[vin.slice(-8)]) return;                // ya esta en Oversoft (por serie) -> no es virtual
-    var nc = catByNorm[_ntrim(r.descripcion)];
-    if (!nc) return;                                        // no matchea catalogo -> lo salteamos
-    var colNom = colores[r.color_codigo] || r.color_codigo || '(sin color)';
-    var dias = r.comprado_at ? Math.floor((now - new Date(r.comprado_at).getTime()) / 86400000) : null;
-    out.byNc[nc] = (out.byNc[nc] || 0) + 1;
-    if (!out.colorByNc[nc]) out.colorByNc[nc] = {};
-    out.colorByNc[nc][colNom] = (out.colorByNc[nc][colNom] || 0) + 1;
-    if (!out.chasisByNc[nc]) out.chasisByNc[nc] = [];
-    out.chasisByNc[nc].push({ serie: vin.slice(-8), color: colNom, fechaRecepcion: null, dias: dias, viejo: (dias != null && dias > 90), virtual: true });
+  cand.forEach(function (c) {
+    if (enOv[c.serie]) return;                            // ya esta en Oversoft -> no es virtual
+    out.byNc[c.nc] = (out.byNc[c.nc] || 0) + 1;
+    if (!out.colorByNc[c.nc]) out.colorByNc[c.nc] = {};
+    out.colorByNc[c.nc][c.color] = (out.colorByNc[c.nc][c.color] || 0) + 1;
+    if (!out.chasisByNc[c.nc]) out.chasisByNc[c.nc] = [];
+    out.chasisByNc[c.nc].push({ serie: c.serie, color: c.color, fechaRecepcion: null, dias: c.dias, viejo: (c.dias != null && c.dias > 90), virtual: true });
   });
   return out;
+}
+
+// Compradas del MES para la columna "Compr. mes" de la rotacion: union del
+// reparto marcado comprado/ok + lo que Monica cargo en compras_vw con ese mes,
+// dedup por SERIE. A diferencia del stock virtual, aca entran TAMBIEN las que ya
+// estan en Oversoft: la pregunta es "cuantas compre este mes", no "cuantas faltan
+// entrar". Indexado con la MISMA clave normalizada que usa el front para cruzar
+// modelos (_repartoNtrim del nombre_corto = `modeloKey`) y por 'clave||colorNorm'.
+function _repartoCompradasMes(items, mesKey, catByNorm) {
+  var porModelo = {}, porColor = {}, vistas = {}, total = 0;
+  var add = function (serie, modeloNom, colorNom) {
+    if (serie) { if (vistas[serie]) return; vistas[serie] = true; }
+    var nc = catByNorm[_ntrim(modeloNom)] || modeloNom;
+    var k = _repartoNtrim(nc) || String(nc || '').trim();
+    if (!k) return;
+    total++;
+    porModelo[k] = (porModelo[k] || 0) + 1;
+    var ck = k + '||' + _stockColNorm(colorNom);
+    porColor[ck] = (porColor[ck] || 0) + 1;
+  };
+  (items || []).forEach(function (i) {
+    if (i.estado_compra !== 'comprado' && i.estado_compra !== 'ok') return;
+    add(String(i.vin || '').toUpperCase().slice(-8), i.descripcion, i.color_nombre);
+  });
+  _comprasVwDeMeses([mesKey], catByNorm).forEach(function (c) { add(c.serie, c.nc, c.color); });
+  return { porModelo: porModelo, porColor: porColor, total: total };
 }
 
 // Normaliza un nombre de color para cruzar dos sistemas de naming (Oversoft vs
@@ -4773,17 +4864,25 @@ function getReparto() {
       rawu = rawu.concat(ovGet('/unidades?select=serie,vin,modelo,color,fechaderecepcion,preventa&serie=in.(' + encodeURIComponent(lote) + ')'));
     }
     // mapas modelo (codigodecompra -> descripcion) y color (colorid -> descripcion).
-    // descOvsBase: codigo SIN el sufijo de modelo-year -> descripcion (la ultima =
-    // el MY mas nuevo, por venir ordenado por modeloid). Sirve de fallback cuando la
-    // unidad trae un MY todavia NO catalogado (ej. "5URTT4 MY27") para mostrar igual
-    // el nombre del modelo en vez del codigo pelado.
-    var descOvs = {}, descOvsBase = {}, off = 0;
+    // descOvsBase: codigo SIN el sufijo de modelo-year -> descripcion. Es el fallback
+    // para cuando la unidad trae un MY todavia NO catalogado (ej "AGDD8A MY2026",
+    // "5URTT4 MY27") y asi mostrar el nombre del modelo en vez del codigo pelado.
+    // PERO hay bases COMPARTIDAS por trims distintos (AGDD8A = Amarok Extreme / Hero
+    // / Black Style, CH24K3 = Nivus Highline / Outfit, DF14D3 = Tera High / Outfit):
+    // ahi elegir uno es adivinar, y adivinar mal es peor que no saber — el panel
+    // mostraba "Oversoft: Hero" para un Extreme y marcaba ⚠ una unidad que en el
+    // sistema estaba perfecta. Base ambiguo -> sin nombre: queda modeloResuelto=false
+    // y manda la descripcion del Pedido (misma cadena que usa el motor).
+    var descOvs = {}, descOvsBase = {}, baseAmbiguo = {}, off = 0;
     for (var k = 0; k < 12; k++) {
       var ch = ovGet('/modelos?select=codigodecompra,descripcionoperativa&order=modeloid&limit=1000&offset=' + off);
       for (var j = 0; j < ch.length; j++) if (ch[j].codigodecompra) {
         var cc = String(ch[j].codigodecompra).trim();
-        descOvs[cc] = ch[j].descripcionoperativa;
-        descOvsBase[_baseCod(cc)] = ch[j].descripcionoperativa;
+        var dsc = ch[j].descripcionoperativa;
+        descOvs[cc] = dsc;
+        var bc = _baseCod(cc);
+        if (descOvsBase[bc] === undefined) descOvsBase[bc] = dsc;
+        else if (_repartoNtrim(descOvsBase[bc]) !== _repartoNtrim(dsc)) baseAmbiguo[bc] = true;
       }
       if (ch.length < 1000) break; off += 1000;
     }
@@ -4791,7 +4890,10 @@ function getReparto() {
     ovGet('/colores?select=colorid,descripcion&limit=2000').forEach(function (c) { colOvs[c.colorid] = String(c.descripcion || '').trim(); });
     rawu.forEach(function (u) {
       var codU = String(u.modelo || '').trim();
-      var nombreOv = descOvs[codU] || descOvsBase[_baseCod(codU)] || '';  // '' = el codigo NO esta en el catalogo
+      var bcU = _baseCod(codU);
+      // '' = Oversoft no dice nada confiable de esta unidad (codigo sin catalogar y
+      // base compartido por varios trims) -> no se inventa un nombre.
+      var nombreOv = descOvs[codU] || (baseAmbiguo[bcU] ? '' : (descOvsBase[bcU] || ''));
       cruce[String(u.serie || '').toUpperCase().trim()] = {
         serie: String(u.serie || '').trim(),
         vin: String(u.vin || '').trim(),
@@ -4908,7 +5010,12 @@ function getReparto() {
     } catch (e) {}
   }
 
-  return { periodo: periodo, items: items, colores: colores, rotacion: _repartoRotacion(motor, virt), autoConciliadas: autoVins.length };
+  // "Compr. mes" de la rotacion: lo comprado ESTE mes por las dos vias (reparto
+  // + carga de Monica en Compras VW), dedup por serie. Se calcula aca porque `items`
+  // ya esta resuelto (con el auto-OK aplicado) y el catalogo ya se leyo.
+  var compradasMes = { porModelo: {}, porColor: {}, total: 0 };
+  try { compradasMes = _repartoCompradasMes(items, periodo, _catalogoPorNorm()); } catch (e) {}
+  return { periodo: periodo, items: items, colores: colores, rotacion: _repartoRotacion(motor, virt, compradasMes), autoConciliadas: autoVins.length };
 }
 
 // =======================================================================
@@ -5034,7 +5141,7 @@ function _rotMesesRef() {
   }
   return out;   // p.ej. ['2026-08','2026-07','2026-06','2026-05']
 }
-function _repartoRotacion(motor, virt) {
+function _repartoRotacion(motor, virt, compradas) {
   virt = virt || { byNc: {}, colorByNc: {} };
   var refMeses = _rotMesesRef();
   var nMes = refMeses.length;
@@ -5103,7 +5210,7 @@ function _repartoRotacion(motor, virt) {
   });
   // Orden = el del catalogo/baratito (motor.modelos ya viene Polo Track -> ... -> Amarok).
   // No se reordena por ventas, para que coincida con el panel de precios.
-  return { meses: refMeses, mesActual: mesAct, items: out, ventasMes: ventasMes };
+  return { meses: refMeses, mesActual: mesAct, items: out, ventasMes: ventasMes, compradas: compradas || null };
 }
 
 // =======================================================================

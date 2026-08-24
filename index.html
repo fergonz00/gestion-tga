@@ -6598,7 +6598,8 @@ function repartoRotacionSec() {
   h += '<div class="rep-zonal"><div class="rep-zonal-ttl"><span>📋 Pedido al zonal</span><span class="rep-zonal-cnt" id="repZonalCount"></span></div><div id="repZonalBody"></div></div>';
   h += '<p class="reparto-hint">Cuántas se venden por mes y cuántos <strong>meses de stock</strong> tenés al ritmo actual (stock ÷ venta mensual). '
     + '<span class="rot-rapido">Verde</span> = rota rápido, poco stock → reponer · <span class="rot-sobra">gris</span> = sobra stock · <span class="rot-norota">rojo</span> = no se vende. '
-    + 'El <strong>Stock</strong> ya incluye lo que compraste este mes en el reparto aunque todavía no haya entrado a Oversoft (columna <strong>Compr. mes</strong>): si tenías 10 y compraste 2, dice 12. '
+    + 'El <strong>Stock</strong> ya incluye lo que compraste este mes aunque todavía no haya entrado a Oversoft (columna <strong>Compr. mes</strong>): si tenías 10 y compraste 2, dice 12. '
+    + '<strong>Compr. mes</strong> son las compras del mes por las dos vías: el reparto de VW y lo que carga Mónica en <strong>Compras VW</strong> (cupo del zonal, corporativo, etc.) — el mismo total que la estadística de arriba. '
     + '<strong class="rot-enrep">En reparto</strong> es lo que VW te ofrece este mes y todavía NO compraste — eso NO está en el Stock. '
     + 'Tocá un modelo para ver el detalle por color, con los colores que hay en el reparto. '
     + (hayAct ? 'La ventana son <strong>4 meses: el que está corriendo (' + _mesLabelCorto(mesAct) + '*, todavía <strong>parcial</strong>) y los 3 anteriores</strong>, así que a principio de mes el promedio baja un poco. ' : '')
@@ -6612,12 +6613,20 @@ function repartoRotacionSec() {
 function _rotColNorm(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
 }
-// Compradas del reparto de este mes (comprado + confirmado), indexadas por modelo
-// normalizado y por modelo+color. El stock que muestra la rotación YA las incluye
-// (el backend suma el "stock virtual": las compradas a VW que todavía no entraron
-// a Oversoft), así que esta columna es la que explica de dónde sale ese número:
-// si tenías 10 y compraste 2, Stock dice 12 y Compr. mes dice 2.
+// Compradas ESTE MES, indexadas por modelo normalizado y por modelo+color. Son
+// las mismas 44 (ago-26) que cuenta la estadística de arriba: el reparto marcado
+// comprado/confirmado MÁS lo que Mónica carga en Compras VW, dedup por serie.
+// Lo arma el backend (`rotacion.compradas`) para que las dos vistas no puedan dar
+// números distintos. Antes se calculaba acá mirando SOLO el reparto, así que todo
+// lo comprado fuera del mail de VW figuraba en 0 — las 6 Tera Trend de agosto,
+// entre otras 13 — justo en la tabla con la que se decide qué reponer.
+// El Stock de la rotación ya las incluye (el backend suma el "stock virtual": las
+// compradas que todavía no entraron a Oversoft), así que esta columna explica de
+// dónde sale ese número: si tenías 10 y compraste 2, Stock dice 12 y Compr. mes 2.
 function _rotCompradas() {
+  const dat = (repartoData && repartoData.rotacion && repartoData.rotacion.compradas) || null;
+  if (dat && dat.porModelo) return dat;
+  // Backend viejo (sin `compradas`): al menos lo del reparto, como antes.
   const porModelo = {}, porColor = {};
   ((repartoData && repartoData.items) || []).forEach(i => {
     if (i.estado_compra !== 'comprado' && i.estado_compra !== 'ok') return;
@@ -6698,7 +6707,7 @@ function repartoRotFiltrar() {
     + '<th class="num" title="Cuántas unidades de este modelo le pedís al zonal. Abrí el modelo para repartirlas por color. Queda guardado en esta compu y se vacía solo al cambiar de mes.">Pedir</th>'
     + '<th class="num" title="Stock disponible. Ya INCLUYE las unidades que compraste este mes en el reparto y todavía no entraron a Oversoft (si tenías 10 y compraste 2, dice 12).">Stock</th>'
     + '<th class="num" title="Unidades de este modelo que VW te ofrece en el reparto de ' + mesLbl + ' y todavía NO compraste (pendientes + elegidas). Tocá la fila para ver de qué colores son. NO están sumadas en el Stock: todavía no son tuyas.">En reparto</th>'
-    + '<th class="num" title="Unidades de este modelo que ya marcaste compradas/confirmadas en el reparto de ' + mesLbl + '. Están sumadas en la columna Stock.">Compr. mes</th>'
+    + '<th class="num" title="Unidades de este modelo que compraste en ' + mesLbl + ': las marcadas compradas/confirmadas en el reparto MÁS las que cargó Mónica en Compras VW (compras fuera del mail de VW). Mismo total que la estadística de arriba. Están sumadas en la columna Stock.">Compr. mes</th>'
     + '<th class="num" title="Unidades de este modelo vendidas en el mes en curso (' + mesLbl + ', parcial). Ventas desde Oversoft.">Vend. mes</th>'
     + '<th class="num">Vta/mes</th><th class="num">Meses stock</th>'
     + '<th class="num" title="Rotación real: días promedio entre que la unidad entró al sistema y se vendió (últimos 12 meses)">Días en venderse</th></tr></thead><tbody>';
