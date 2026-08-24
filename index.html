@@ -2008,6 +2008,10 @@ async function loadIndustria() {
       if (document.getElementById('panelIndustria') && document.getElementById('panelIndustria').classList.contains('active')) {
         renderIndustria();
       }
+      // Trimestre usa tga_total como fallback de los meses sin carpetas vivas: si esta
+      // visible hay que repintarlo, sino se queda con el 0% que pinto antes de este fetch.
+      const subTriInd = document.getElementById('subpanelAdmVentasTrimestre');
+      if (subTriInd && subTriInd.classList.contains('active')) renderTrimestre();
     }
   } catch (e) { console.error('loadIndustria:', e); }
 }
@@ -10484,9 +10488,33 @@ function _mesEstado(mesKey) {
   return 'current';
 }
 
+// Patentadas de un mes. Fuente primaria: las carpetas vivas que trae Adm. ventas
+// (tipo=patentamientos). Ojo: ese backend sirve una ventana de ~6 meses hacia atras,
+// asi que los meses viejos vienen SIN carpetas y el alcance daba 0% aunque el mes
+// hubiera cumplido (paso con todo el Q1 2026: ene/feb/mar figuraban en 0%).
+// Fallback: el total cargado a mano en la solapa Industria (industriaData[mk].tga_total),
+// que es el conteo oficial conciliado por fecha de AES. Se usa solo si no hay carpetas
+// vivas, asi que nunca pisa el conteo automatico de un mes en curso.
 function _patentadasMes(mesKey) {
-  if (!patentData || !Array.isArray(patentData.carpetas)) return 0;
-  return patentData.carpetas.filter(c => c.mesKey === mesKey && c.patentada).length;
+  let vivas = 0;
+  if (patentData && Array.isArray(patentData.carpetas)) {
+    vivas = patentData.carpetas.filter(c => c.mesKey === mesKey && c.patentada).length;
+  }
+  if (vivas > 0) return vivas;
+  const ind = industriaData && industriaData[mesKey];
+  const manual = (ind && ind.tga_total != null) ? Number(ind.tga_total) : 0;
+  return manual > 0 ? manual : vivas;
+}
+
+// true si las patentadas del mes salen de la carga manual de Industria y no de las
+// carpetas vivas. Sirve para aclararlo en la UI del Trimestre.
+function _patentadasEsManual(mesKey) {
+  const vivas = (patentData && Array.isArray(patentData.carpetas))
+    ? patentData.carpetas.filter(c => c.mesKey === mesKey && c.patentada).length
+    : 0;
+  if (vivas > 0) return false;
+  const ind = industriaData && industriaData[mesKey];
+  return !!(ind && ind.tga_total != null && Number(ind.tga_total) > 0);
 }
 
 // Lista de quarters disponibles para el selector: une los que aparecen en
@@ -10679,7 +10707,9 @@ function renderTrimestre() {
     if (m.obj > 0) {
       html += '<div class="alc"><div class="num">' + (alcPct != null ? alcPct.toLocaleString('es-AR', { maximumFractionDigits: 1 }) + '%' : '—') + '</div>'
            +  '  <div class="lbl">alcance</div></div>';
-      html += '<div class="det"><b>' + m.pat + '</b> patentadas · objetivo <b>' + m.obj + '</b></div>';
+      html += '<div class="det"><b>' + m.pat + '</b> patentadas · objetivo <b>' + m.obj + '</b>'
+           +  (_patentadasEsManual(m.mesKey) ? ' <span class="muted" title="Mes fuera de la ventana de carpetas vivas: el número sale de la carga manual de la solapa Industria (conteo oficial por fecha de AES)">· carga manual</span>' : '')
+           +  '</div>';
       html += '<div class="q-bar"><div class="fill" style="width:' + Math.min(100, barPct) + '%"></div></div>';
     } else {
       html += '<div class="det" style="color:var(--vw-grey-3);font-style:italic">Sin objetivo cargado</div>';
