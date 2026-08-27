@@ -498,14 +498,17 @@ table.patent-tbl tbody tr.pat-hit > td:first-child { box-shadow: inset 3px 0 0 v
 /* Marca manual de la administrativa (boton de la primera columna). Va DESPUES
    de pat-hit a proposito: si la fila ademas coincide con un chip de resaltado,
    manda la marca que puso ella a mano. */
-table.patent-tbl tbody tr.pat-marcada > td { background: #E3F0FF !important; }
-table.patent-tbl tbody tr.pat-marcada > td:first-child { box-shadow: inset 3px 0 0 #0a66c2; }
+table.patent-tbl tbody tr.pat-marcada > td {
+  background: #A9CEFF !important; font-weight: 600;
+  border-top: 1px solid #6aa4e8; border-bottom: 1px solid #6aa4e8;
+}
+table.patent-tbl tbody tr.pat-marcada > td:first-child { box-shadow: inset 6px 0 0 #0a3d80; }
 .pat-mark {
   border: 0; background: none; cursor: pointer; padding: 2px 4px;
   font-size: 13px; line-height: 1; color: var(--vw-grey-3); opacity: .45;
 }
 .pat-mark:hover { opacity: 1; color: #0a66c2; }
-.pat-mark.on { opacity: 1; color: #0a66c2; font-size: 14px; }
+.pat-mark.on { opacity: 1; color: #0a3d80; font-size: 15px; }
 .pat-marcas-info { font-weight: 400; color: #0a66c2; }
 table.ventas-tbl tbody td.gcia-pos { color: var(--green-dark); font-weight: 600; }
 table.ventas-tbl tbody td.gcia-neg { color: var(--orange-dark); font-weight: 600; }
