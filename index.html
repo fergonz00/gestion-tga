@@ -11721,6 +11721,11 @@ function panelAdminDetalle(rows) {
     // donde figura como la que cubrio a la titular. `cedidas` es el espejo: las
     // etapas de SUS carpetas que termino haciendo otra.
     apoyoCarp: 0, absorb: 0, cedidas: 0, absCarp: {},
+    // Para poder decir QUIEN: `auxPor` = quien la auxilio a ella (y cuantas
+    // veces), `auxCarp` = sus carpetas donde la auxiliaron, `ayudoA` = a quien
+    // ayudo ella. Son los mapas que alimentan la sub-linea de la tabla y el
+    // ranking de auxilio.
+    auxPor: {}, auxCarp: {}, ayudoA: {},
     vend: {}, financ: {},
   });
   for (const c of rows) {
@@ -11752,7 +11757,10 @@ function panelAdminDetalle(rows) {
         const oa = acc[resp] || (acc[resp] = nuevo());
         oa.absorb++;
         oa.absCarp[c.pv] = 1;
+        oa.ayudoA[a] = (oa.ayudoA[a] || 0) + 1;
         o.cedidas++;
+        o.auxPor[resp] = (o.auxPor[resp] || 0) + 1;
+        o.auxCarp[c.pv] = 1;
       }
     }
     // Financiadas: quién presta y cuánto (líneas «Financia» del cuadro de la PV,
@@ -11780,6 +11788,9 @@ function panelAdminDetalle(rows) {
     const o = acc[a];
     for (const k of NUMK) tot[k] += o[k];
     for (const k in o.absCarp) tot.absCarp[k] = 1;
+    for (const k in o.auxCarp) tot.auxCarp[k] = 1;
+    for (const k in o.auxPor)  tot.auxPor[k]  = (tot.auxPor[k]  || 0) + o.auxPor[k];
+    for (const k in o.ayudoA)  tot.ayudoA[k]  = (tot.ayudoA[k]  || 0) + o.ayudoA[k];
     for (const k in o.vend)   tot.vend[k]   = (tot.vend[k]   || 0) + o.vend[k];
     for (const k in o.financ) tot.financ[k] = (tot.financ[k] || 0) + o.financ[k];
   }
@@ -11796,10 +11807,9 @@ function panelAdminDetalle(rows) {
         + '      <thead><tr>'
         + '        <th>Administrativa</th>'
         + '        <th class="num">Carpetas</th>'
+        + '        <th class="num grp" title="Cuántas veces la auxiliaron: etapas de SUS carpetas que terminó haciendo otra administrativa. Debajo, en cuántas carpetas y quién la ayudó.">La auxiliaron</th>'
         + '        <th class="num">Patent.</th>'
         + '        <th class="num">Pend.</th>'
-        + '        <th class="num grp" title="Reemplazos: etapas que hizo en carpetas de OTRA administrativa. Debajo, en cuántas carpetas ajenas y en cuántas figura como la que cubrió a la titular.">Cubrió</th>'
-        + '        <th class="num" title="El espejo: etapas de SUS carpetas que terminó haciendo otra administrativa.">Cedió</th>'
         + '        <th class="num grp" title="Créditos que maneja: VW Credit + bancos externos + financiación propia TG. NO incluye plan de ahorro.">Financiadas</th>'
         + '        <th class="num" title="Financiado VW Credit">VW Credit</th>'
         + '        <th class="num" title="Créditos de bancos externos (Galicia, Nación, etc.)">Banco ext.</th>'
@@ -11849,16 +11859,19 @@ function panelAdminDetalle(rows) {
        + (sel ? ' <span class="adm-chip">filtrando</span>' : '')
        + (patTxt ? '<div class="adm-sub">' + patTxt + '</div>' : '') + '</td>';
     r += '<td class="num" data-label="Carpetas">' + o.total + '</td>';
+    // Cuántas veces la auxiliaron (etapas de sus carpetas que hizo otra), con
+    // en cuántas carpetas y quién la ayudó.
+    const nAuxCarp = Object.keys(o.auxCarp).length;
+    const quienAux = Object.keys(o.auxPor).map(k => ({ k: k, n: o.auxPor[k] })).sort((x, y) => y.n - x.n);
+    const auxSub = [
+      nAuxCarp ? 'en ' + nAuxCarp + ' carpeta' + (nAuxCarp === 1 ? '' : 's') : '',
+      quienAux.length ? quienAux.map(x => escapeHtml(x.k) + ' ' + x.n).join(' · ') : '',
+    ].filter(Boolean).join(' · ');
+    r += '<td class="num grp' + (o.cedidas ? ' warn' : '') + '" data-label="La auxiliaron">'
+       + (o.cedidas ? '<b>' + o.cedidas + '</b>' : '0')
+       + (auxSub ? '<div class="adm-sub">' + auxSub + '</div>' : '') + '</td>';
     r += '<td class="num good" data-label="Patent.">' + o.pat + '</td>';
     r += '<td class="num' + ((o.total - o.pat) ? ' warn' : '') + '" data-label="Pend.">' + (o.total - o.pat) + '</td>';
-    const nCarpAbs = Object.keys(o.absCarp).length;
-    const cubSub = [
-      nCarpAbs     ? nCarpAbs + ' carpeta' + (nCarpAbs === 1 ? '' : 's') + ' ajena' + (nCarpAbs === 1 ? '' : 's') : '',
-      o.apoyoCarp  ? 'cubre ' + o.apoyoCarp : '',
-    ].filter(Boolean).join(' · ');
-    r += '<td class="num grp" data-label="Cubrió">' + ((o.absorb || o.apoyoCarp) ? '<b>' + o.absorb + '</b>' : '—')
-       + (cubSub ? '<div class="adm-sub">' + cubSub + '</div>' : '') + '</td>';
-    r += '<td class="num' + (o.cedidas ? ' warn' : '') + '" data-label="Cedió">' + (o.cedidas || '—') + '</td>';
     r += '<td class="num grp" data-label="Financiadas"><b>' + fin + '</b> <span class="adm-pct">' + pctF + '%</span>'
        + (fncTxt ? '<div class="adm-sub">' + fncTxt + '</div>' : '') + '</td>';
     r += '<td class="num" data-label="VW Credit">' + (o.vw || '—') + '</td>';
@@ -11888,9 +11901,74 @@ function panelAdminDetalle(rows) {
          ? 'Los $ salen de las líneas «Financia» del cuadro de cada PV, igual que la subtab Financiaciones; «cobrado» incluye lo que la administrativa marcó como liquidado aunque el recibo todavía no esté. '
          : '⚠️ Falta cargar la subtab <b>Adm. ventas</b>: sin ella no hay tipos de Oversoft ni montos. ')
      + 'Pasá el mouse por la fila para ver el mix de vendedores. '
-     + '<b>Cubrió / Cedió</b> son los reemplazos entre administrativas: la titular de la carpeta no cambia nunca, '
-     + 'se anota aparte quién la cubrió (y por qué) y qué etapa manejó cada una — se carga con el botón 👥 de la columna <b>Etapas</b> '
-     + 'o desde la grilla de Adm. ventas. Una administrativa que solo absorbe trabajo ajeno aparece igual, con 0 carpetas propias.</div>';
+     + '<b>La auxiliaron</b> son los reemplazos: la titular de la carpeta no cambia nunca, se anota aparte quién la cubrió (y por qué) '
+     + 'y qué etapa manejó cada una — se carga con el botón 👥 de la columna <b>Etapas</b> o desde la grilla de Adm. ventas. '
+     + 'Cada etapa que hizo otra cuenta como una vez. El espejo (cuántas veces ayudó cada una) está en el <b>ranking de auxilio</b>, acá abajo.</div>';
+  h += '</div>';
+  h += tablaRankingAuxilio(acc);
+  return h;
+}
+
+// Ranking de auxilio: cuántas veces ayudó CADA administrativa en carpetas que
+// no son suyas. Aparecen las cuatro siempre (las que no ayudaron van en 0), que
+// es justamente el punto: se ve quién está absorbiendo trabajo ajeno y quién no.
+// Una vez = una etapa que hizo en la carpeta de otra. Aparte se cuentan las
+// carpetas donde figura como reemplazo de la titular (ausencia y demás), que
+// puede haber sin ninguna etapa tildada todavía.
+function tablaRankingAuxilio(acc) {
+  const nombres = ADMINS_ADM.slice();
+  for (const k of Object.keys(acc)) if (k !== '—' && nombres.indexOf(k) === -1) nombres.push(k);
+
+  const filas = nombres.map(nom => {
+    const o = acc[nom] || null;
+    const veces   = o ? o.absorb : 0;
+    const carp    = o ? Object.keys(o.absCarp).length : 0;
+    const cubre   = o ? o.apoyoCarp : 0;
+    const aQuien  = o ? Object.keys(o.ayudoA).map(k => ({ k: k, n: o.ayudoA[k] })).sort((x, y) => y.n - x.n) : [];
+    return { nom: nom, veces: veces, carp: carp, cubre: cubre, aQuien: aQuien, propias: o ? o.total : 0 };
+  }).sort((x, y) => y.veces - x.veces || y.cubre - x.cubre || x.nom.localeCompare(y.nom));
+
+  const totVeces = filas.reduce((a, f) => a + f.veces, 0);
+
+  let h = '<div class="table-wrap admin-detalle">'
+        + '  <div class="table-head">'
+        + '    <h3>Ranking de auxilio</h3>'
+        + '    <div class="count">' + (totVeces ? totVeces + ' etapa' + (totVeces === 1 ? '' : 's') + ' hechas en carpetas ajenas este mes' : 'todavía nadie auxilió en este mes') + '</div>'
+        + '  </div>'
+        + '  <div class="table-scroll">'
+        + '    <table class="admin-tbl">'
+        + '      <thead><tr>'
+        + '        <th>#</th>'
+        + '        <th>Administrativa</th>'
+        + '        <th class="num grp" title="Cada etapa que hizo en una carpeta que no es suya cuenta como una vez">Veces que auxilió</th>'
+        + '        <th class="num" title="En cuántas carpetas ajenas distintas metió mano">Carpetas ajenas</th>'
+        + '        <th class="num" title="Carpetas donde figura como la que reemplazó a la titular (ausencia, licencia, etc.)">Cubrió por ausencia</th>'
+        + '        <th title="A quién le hizo esas etapas">A quién ayudó</th>'
+        + '        <th class="num" title="Carpetas propias del mes (las que tiene como titular)">Carpetas propias</th>'
+        + '      </tr></thead><tbody>';
+
+  let pos = 0;
+  for (const f of filas) {
+    pos++;
+    const medalla = f.veces > 0 && pos <= 3 ? ['🥇', '🥈', '🥉'][pos - 1] + ' ' : '';
+    const aQuienTxt = f.aQuien.length
+      ? f.aQuien.map(x => escapeHtml(x.k) + ' <span class="adm-pct">' + x.n + '</span>').join(' · ')
+      : '<span style="color:var(--vw-grey-3)">—</span>';
+    h += '<tr>'
+       + '<td data-label="#">' + (f.veces ? medalla + pos : '<span style="color:var(--vw-grey-3)">—</span>') + '</td>'
+       + '<td data-label="Administrativa"><b>' + escapeHtml(f.nom) + '</b></td>'
+       + '<td class="num grp' + (f.veces ? ' good' : '') + '" data-label="Veces que auxilió"><b>' + f.veces + '</b></td>'
+       + '<td class="num" data-label="Carpetas ajenas">' + (f.carp || 0) + '</td>'
+       + '<td class="num" data-label="Cubrió por ausencia">' + (f.cubre || 0) + '</td>'
+       + '<td data-label="A quién ayudó">' + aQuienTxt + '</td>'
+       + '<td class="num" data-label="Carpetas propias">' + (f.propias || 0) + '</td>'
+       + '</tr>';
+  }
+  h += '</tbody></table></div>';
+  h += '<div class="adm-nota">Una <b>vez</b> = una etapa de la carpeta de otra administrativa (mail de bienvenida, facturación, firmas, doc del usado, '
+     + 'confirmación y entrega). Se marcan con el botón 👥 de la columna <b>Etapas</b>. <b>Cubrió por ausencia</b> son las carpetas donde quedó anotada '
+     + 'como reemplazo de la titular, aunque todavía no se le haya tildado ninguna etapa. Las que no auxiliaron figuran igual, en <b>0</b>. '
+     + 'El ranking mira el mes y el vendedor seleccionados arriba.</div>';
   h += '</div>';
   return h;
 }
