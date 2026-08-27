@@ -893,6 +893,13 @@ function getAdmVentas() {
         // La carga a mano la adm; vacío = todavía no la retiró.
         retiro_doc:         m.retiro_doc || '',
         notas:              m.notas || '',
+        // Reemplazo de administrativa: la titular (`admin`) NO se toca; aca va
+        // quien tuvo que absorber la carpeta y por que (ej. ausencia).
+        admin_apoyo:        m.admin_apoyo || '',
+        motivo_apoyo:       m.motivo_apoyo || '',
+        // Etapas de la carpeta: { <clave>: { resp, ts, por } }. Sin entrada = la
+        // hizo (o la tiene que hacer) la administrativa titular.
+        etapas:             m.etapas || null,
         // Pedido de pago prioritario a VW (para que liberen el certificado):
         // lo prende la adm y lo ve tesorería en Compras VW de saldos-tga.
         prioridad_certificado: !!m.prioridad_certificado,
@@ -1881,7 +1888,7 @@ function _admCachePatch(pv, campos) {
 function saveAdmVenta(body) {
   const pv = String(body.preventa || '').trim();
   if (!pv) return { error: 'falta preventa' };
-  const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'credito_liquidado', 'credito_liquidado_ts', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'retiro_doc', 'notas',
+  const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'credito_liquidado', 'credito_liquidado_ts', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'retiro_doc', 'notas', 'admin_apoyo', 'motivo_apoyo', 'etapas',
                       'prioridad_certificado', 'prioridad_nota', 'prioridad_ts', 'prioridad_por', 'prioridad_serie', 'prioridad_listo_ts', 'prioridad_listo_por'];
   const row = { preventa: pv, updated_at: new Date().toISOString(), updated_by: String(body.usuario || '') };
   const campos = body.campos || {};

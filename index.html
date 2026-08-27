@@ -676,6 +676,47 @@ table.admin-tbl tbody tr.adm-row.sel .adm-pct { color: rgba(255, 255, 255, 0.8);
 .adm-nota {
   padding: 8px 16px 12px; font-size: 11px; color: var(--vw-grey-3); line-height: 1.5;
 }
+/* Etapas de la carpeta / reemplazo de administrativa */
+.etp-panel { font-size: 12px; }
+.etp-hd { font-weight: 700; font-size: 12px; margin-bottom: 6px; color: #4a148c; }
+.etp-apoyo {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  background: #fff; border: 1px solid #e3d7f0; border-radius: 8px;
+  padding: 7px 10px; margin-bottom: 10px;
+}
+.etp-apoyo label { font-size: 11.5px; color: var(--vw-grey-3); font-weight: 600; }
+.etp-apoyo select, .etp-apoyo input {
+  padding: 3px 6px; border: 1px solid var(--vw-grey-2); border-radius: 5px; font-size: 12px;
+}
+.etp-row {
+  display: grid; grid-template-columns: 210px 1fr 200px;
+  gap: 8px; align-items: center;
+  padding: 5px 6px; border-bottom: 1px solid #ece6f5;
+}
+.etp-row.na { opacity: .5; }
+.etp-row .etp-n { font-weight: 600; font-size: 12px; }
+.etp-row .etp-n i { font-style: normal; color: var(--vw-grey-3); font-weight: 400; }
+.etp-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.etp-chip {
+  border: 1px solid var(--vw-grey-2); background: #fff; color: #333;
+  border-radius: 11px; padding: 2px 9px; font-size: 11px; font-weight: 700;
+  cursor: pointer; line-height: 1.5;
+}
+.etp-chip:hover { border-color: #6a1b9a; color: #6a1b9a; }
+.etp-chip.tit { border-style: dashed; color: var(--vw-grey-3); }
+.etp-chip.on { background: #6a1b9a; border-color: #6a1b9a; color: #fff; }
+.etp-chip.on.tit { background: #0a7a30; border-color: #0a7a30; color: #fff; border-style: solid; }
+.etp-sello { font-size: 10.5px; color: var(--vw-grey-3); text-align: right; }
+.etp-sello b { color: #6a1b9a; }
+.etp-btn {
+  border: 1px solid var(--vw-grey-2); background: #fff; border-radius: 10px;
+  padding: 1px 7px; font-size: 10.5px; font-weight: 700; cursor: pointer;
+  color: var(--vw-grey-3); white-space: nowrap;
+}
+.etp-btn:hover { border-color: #6a1b9a; color: #6a1b9a; }
+.etp-btn.hay { background: #f3e9fb; border-color: #b98fd6; color: #6a1b9a; }
+.etp-nota { font-size: 11px; color: var(--vw-grey-3); line-height: 1.5; margin-top: 8px; }
+
 /* Rev/Part deducido de la columna Patenta (la administrativa no lo cargó) */
 .rp-inferido { color: var(--vw-grey-3); font-style: italic; cursor: help; }
 .rp-aviso {
@@ -1785,6 +1826,7 @@ let vistaResumidaPat = false;     // toggle vista resumida en patentamientos
 let factFiltroPat = '';
 let docFiltroPat  = '';
 let revFiltroPat  = '';   // '' | 'REVENTA' | 'PARTICULAR' | 'SIN' (sin definir)
+let reempFiltroPat = '';  // '' | 'si' | 'no' — carpetas con reemplazo de administrativa
 // 'filtrar' esconde lo que no matchea; 'resaltar' no esconde nada y pinta lo que
 // matchea (pedido de Monica: ver el mes entero con lo buscado marcado).
 let modoFiltroPat = 'filtrar';
@@ -2034,6 +2076,267 @@ function toggleAdmComentario(key) {
   const abrir = tr.style.display === 'none';
   tr.style.display = abrir ? '' : 'none';
   if (abrir) admVentasComAbiertos.add(key); else admVentasComAbiertos.delete(key);
+}
+
+// =======================================================================
+// ETAPAS DE LA CARPETA · quien hizo cada cosa (reemplazos entre admins)
+// =======================================================================
+// La carpeta sigue teniendo UNA administrativa titular (columna Admin, campo
+// `admin`), que NO se pisa nunca. Cuando otra tuvo que manejarla —el caso tipico
+// es una ausencia— se anota aca, asi quedan LAS DOS a la vista:
+//   · `admin_apoyo` + `motivo_apoyo` = quien cubrio la carpeta y por que.
+//   · `etapas` (jsonb en adm_ventas) = que etapa manejo cada una:
+//       { bienvenida: { resp:'MONI', ts:'2026-08-27T…', por:'mgerez' }, … }
+// Las etapas SIN entrada son de la titular (default implicito): se marca SOLO la
+// excepcion, asi la carpeta normal no obliga a tildar nada. Monica, que casi no
+// tiene carpetas propias pero absorbe pedazos de las ajenas, tilda con su nombre
+// lo que hizo en cada una; eso se cuenta en el panel «Detalle por administrativa»
+// de Patentamientos (columnas Cubrio / Cedio).
+// El control es el mismo en las dos solapas (grilla de Adm. ventas y
+// Patentamientos): mismo panel, misma funcion de guardado.
+const ADMINS_ADM = ['MECHI', 'ANTO', 'VALE', 'MONI'];
+const ADM_ETAPAS = [
+  { k: 'bienvenida',   n: 'Mail de bienvenida' },
+  { k: 'facturacion',  n: 'Facturación' },
+  { k: 'firma_cli',    n: 'Toma de firma del cliente' },
+  { k: 'firma_cred',   n: 'Toma de firma de crédito',        si: 'credito' },
+  { k: 'doc_usado',    n: 'Chequeo y toma de doc del usado', si: 'usado' },
+  { k: 'confirma_ent', n: 'Confirmación de entrega' },
+  { k: 'entrega',      n: 'Entrega de la unidad' },
+];
+let admEtapasAbiertos = new Set();   // keys con el panel abierto en la grilla
+let patEtapasAbiertos = new Set();   // idem en la subtab Patentamientos
+
+function _admVentaDe(pv) {
+  return ((admVentasData && admVentasData.ventas) || []).find(x => x.preventa === pv) || null;
+}
+// El jsonb puede llegar como objeto (motor nuevo) o como texto (Apps Script).
+function _etapasDe(v) {
+  const e = v && v.manual && v.manual.etapas;
+  if (!e) return {};
+  if (typeof e === 'string') { try { return JSON.parse(e) || {}; } catch (x) { return {}; } }
+  return e;
+}
+function _admTitular(v) { return String((v && v.manual && v.manual.admin) || '').trim(); }
+// Etapas que no aplican a la carpeta: la firma de credito solo si esta
+// financiada, la doc del usado solo si hay usado en parte de pago. No se
+// bloquean (Oversoft puede estar incompleto), se muestran apagadas.
+function _etapaAplica(v, e) {
+  if (e.si === 'usado')   return !!(v.usadoParte || v.usado);
+  if (e.si === 'credito') return String(v.tipo || '').indexOf('FINANCIA') === 0;
+  return true;
+}
+// Senal de Oversoft que ya tenemos para esa etapa (dato, no marca): ayuda a la
+// adm a saber si la etapa esta hecha sin salir del panel.
+function _etapaHint(v, k) {
+  const m = v.manual || {};
+  if (k === 'facturacion') { const f = _admFacturaFecha(v); return f ? 'facturada ' + _fechaDMA(f) : 'sin facturar'; }
+  if (k === 'entrega')     return v.entregada ? 'retiró ✓' : (v.entregaFecha ? 'pactada ' + _fechaDMA(v.entregaFecha) : '');
+  if (k === 'firma_cred') {
+    if (v.creditoCobrado && v.creditoCobrado.fecha) return 'crédito cobrado ' + _fechaDMA(v.creditoCobrado.fecha);
+    if (m.credito_liquidado === 'SI') return 'liquidado';
+    return '';
+  }
+  if (k === 'doc_usado' && v.usadoParte) {
+    return [String(v.usadoParte.marca || '').trim(), String(v.usadoParte.patente || '').trim()].filter(Boolean).join(' ');
+  }
+  return '';
+}
+// Resumen para el boton/celda: cuantas etapas estan marcadas y quienes
+// aparecen aparte de la titular.
+function _etapasResumen(v) {
+  const et  = _etapasDe(v);
+  const tit = _admTitular(v);
+  const otras = {};
+  let marcadas = 0;
+  for (const e of ADM_ETAPAS) {
+    const r = et[e.k] && et[e.k].resp;
+    if (!r) continue;
+    marcadas++;
+    if (r !== tit) otras[r] = (otras[r] || 0) + 1;
+  }
+  const apoyo = String((v.manual && v.manual.admin_apoyo) || '').trim();
+  return { marcadas: marcadas, otras: otras, apoyo: apoyo, titular: tit,
+           nOtras: Object.keys(otras).reduce((a, k) => a + otras[k], 0) };
+}
+
+// Boton que abre el panel. Se pinta en la grilla (dentro de la celda Admin) y
+// en la columna Etapas de Patentamientos, con el mismo resumen.
+function _etapasBtnHtml(v, key, donde) {
+  const r = _etapasResumen(v);
+  const quienes = Object.keys(r.otras).map(k => k + ' ' + r.otras[k]).join(' · ');
+  const hay = !!(r.nOtras || r.apoyo);
+  const txt = hay
+    ? (quienes || ('apoyo ' + r.apoyo))
+    : (r.marcadas ? r.marcadas + '/' + ADM_ETAPAS.length : 'etapas');
+  const tip = hay
+    ? 'Etapas manejadas por otra administrativa' + (r.apoyo ? ' · cubre ' + r.apoyo : '') + (r.titular ? ' · titular ' + r.titular : '')
+    : 'Anotar qué etapa manejó cada administrativa (reemplazos, ausencias)';
+  return '<button id="etpbtn_' + donde + '_' + key + '" class="etp-btn' + (hay ? ' hay' : '') + '"'
+       + ' data-k="' + key + '" data-d="' + donde + '" onclick="toggleEtapas(this.dataset.k, this.dataset.d)"'
+       + ' title="' + escapeHtml(tip) + '">\uD83D\uDC65 ' + escapeHtml(txt) + '</button>';
+}
+
+// Panel desplegable con el reemplazo de la carpeta + las 7 etapas.
+function _etapasPanelHtml(v, donde) {
+  if (!v) return '<div class="etp-panel">Sin datos de la carpeta (todavía no llegó Adm. ventas).</div>';
+  const key = _admKey(v.preventa);
+  const et  = _etapasDe(v);
+  const tit = _admTitular(v);
+  const m   = v.manual || {};
+  const idA = 'etpapoyo_' + donde + '_' + key;
+  const idM = 'etpmot_'   + donde + '_' + key;
+  const onA = ' onchange="saveApoyoDesde(this.dataset.d, this.dataset.k, this.dataset.pv)"'
+            + ' data-d="' + donde + '" data-k="' + key + '" data-pv="' + escapeHtml(v.preventa) + '"';
+
+  let h = '<div class="etp-panel">';
+  h += '<div class="etp-hd">\uD83D\uDC65 Etapas de la carpeta · PV ' + escapeHtml(v.preventa)
+     + ' · titular <b>' + escapeHtml(tit || 'sin asignar') + '</b></div>';
+
+  // ---- Reemplazo de la carpeta: la titular queda, se suma la que cubrio ----
+  h += '<div class="etp-apoyo">';
+  h += '<label>Reemplazada por</label>';
+  h += '<select id="' + idA + '"' + onA + ' style="min-width:110px">';
+  h += '<option value="">— nadie —</option>';
+  for (const a of ADMINS_ADM) {
+    if (a === tit) continue;   // la titular no se reemplaza a si misma
+    h += '<option value="' + a + '"' + (m.admin_apoyo === a ? ' selected' : '') + '>' + a + '</option>';
+  }
+  if (m.admin_apoyo && ADMINS_ADM.indexOf(m.admin_apoyo) === -1) {
+    h += '<option value="' + escapeHtml(m.admin_apoyo) + '" selected>' + escapeHtml(m.admin_apoyo) + '</option>';
+  }
+  h += '</select>';
+  h += '<label>Motivo</label>';
+  h += '<input id="' + idM + '" type="text" value="' + escapeHtml(m.motivo_apoyo || '') + '"' + onA
+     + ' placeholder="ej. ausencia, licencia, franco" style="min-width:240px">';
+  if (tit && m.admin_apoyo) {
+    h += '<span style="font-size:11px;color:#0a7a30;font-weight:700">figuran las dos: '
+       + escapeHtml(tit) + ' (titular) + ' + escapeHtml(m.admin_apoyo) + '</span>';
+  }
+  h += '</div>';
+
+  // ---- Las 7 etapas ----
+  const chipsAdmins = ADMINS_ADM.concat((tit && ADMINS_ADM.indexOf(tit) === -1) ? [tit] : []);
+  for (const e of ADM_ETAPAS) {
+    const aplica = _etapaAplica(v, e);
+    const cur    = (et[e.k] && et[e.k].resp) || '';
+    const hint   = _etapaHint(v, e.k);
+    h += '<div class="etp-row' + (aplica ? '' : ' na') + '">';
+    h += '<div class="etp-n">' + escapeHtml(e.n)
+       + (aplica ? '' : ' <i>(no aplica)</i>')
+       + (hint ? '<div style="font-size:10.5px;color:var(--vw-grey-3);font-weight:400">' + escapeHtml(hint) + '</div>' : '')
+       + '</div>';
+    h += '<div class="etp-chips">';
+    for (const a of chipsAdmins) {
+      const on = cur === a;
+      h += '<button class="etp-chip' + (a === tit ? ' tit' : '') + (on ? ' on' : '') + '"'
+         + ' data-pv="' + escapeHtml(v.preventa) + '" data-e="' + e.k + '" data-r="' + escapeHtml(a) + '"'
+         + ' onclick="saveEtapa(this.dataset.pv, this.dataset.e, this.dataset.r)"'
+         + ' title="' + (a === tit ? 'Titular de la carpeta' : 'La manejó ' + escapeHtml(a)) + ' — volvé a tocarlo para desmarcar">'
+         + escapeHtml(a) + '</button>';
+    }
+    h += '</div>';
+    const sello = et[e.k];
+    h += '<div class="etp-sello">'
+       + (sello && sello.resp
+           ? 'hecha por <b>' + escapeHtml(sello.resp) + '</b>'
+             + (sello.ts ? '<br>' + escapeHtml(_fechaDMA(String(sello.ts).slice(0, 10))) + (sello.por ? ' · ' + escapeHtml(sello.por) : '') : '')
+           : (tit ? '<span style="color:var(--vw-grey-3)">queda en ' + escapeHtml(tit) + '</span>' : ''))
+       + '</div>';
+    h += '</div>';
+  }
+
+  h += '<div class="etp-nota">Sin marcar, todas las etapas son de la administrativa <b>titular</b>. '
+     + 'Marcá <b>solo</b> la etapa que manejó otra: la titular sigue figurando igual y quedan las dos. '
+     + 'Al marcar se guarda quién la hizo y la fecha; volviendo a tocar el mismo nombre se desmarca. '
+     + 'Lo que absorbe cada una se suma en el panel <b>Detalle por administrativa</b> de Patentamientos.</div>';
+  h += '</div>';
+  return h;
+}
+
+function toggleEtapas(key, donde) {
+  const tr = document.getElementById('etprow_' + donde + '_' + key);
+  if (!tr) return;
+  const abrir = tr.style.display === 'none';
+  tr.style.display = abrir ? '' : 'none';
+  const set = donde === 'pat' ? patEtapasAbiertos : admEtapasAbiertos;
+  if (abrir) set.add(key); else set.delete(key);
+}
+
+// POST de campos manuales de una carpeta (mismo endpoint que guardarAdmVenta /
+// saveLiq; ?motorviejo=1 cae al Apps Script).
+async function _admPost(pv, campos) {
+  let res;
+  if (MOTOR_NEXT) {
+    res = await fetch(GESTION_NEXT_URL + '/api/admventas?token=' + encodeURIComponent(GESTION_NEXT_TOKEN), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preventa: pv, campos: campos, usuario: window._tgaUser || '' }),
+    });
+  } else {
+    const body = new URLSearchParams();
+    body.set('payload', JSON.stringify({ token: APPS_SCRIPT_TOKEN, accion: 'setadmventa', preventa: pv, campos: campos, usuario: window._tgaUser || '' }));
+    res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: body });
+  }
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  if (data && data.error) throw new Error(data.error);
+  return data;
+}
+
+// Repinta SOLO lo que muestra etapas (panel abierto + boton) en las dos
+// solapas, sin rehacer las tablas enteras: el panel se usa mientras se tilda y
+// un re-render completo perderia el scroll.
+function _etapasRepintar(pv) {
+  const key = _admKey(pv);
+  const v = _admVentaDe(pv);
+  for (const d of ['grilla', 'pat']) {
+    const tr = document.getElementById('etprow_' + d + '_' + key);
+    if (tr) { const td = tr.querySelector('td'); if (td) td.innerHTML = _etapasPanelHtml(v, d); }
+    const b = document.getElementById('etpbtn_' + d + '_' + key);
+    if (b && v) b.outerHTML = _etapasBtnHtml(v, key, d);
+  }
+}
+
+// Marca (o desmarca) quien hizo una etapa. Tocar el nombre ya marcado la
+// devuelve a la titular. Se sella la fecha/hora y el usuario del portal.
+async function saveEtapa(pv, etapaK, resp) {
+  const v = _admVentaDe(pv);
+  if (!v) { alert('No encuentro la carpeta ' + pv + ' en Adm. ventas.'); return; }
+  const et = Object.assign({}, _etapasDe(v));
+  if (et[etapaK] && et[etapaK].resp === resp) delete et[etapaK];
+  else et[etapaK] = { resp: resp, ts: new Date().toISOString(), por: window._tgaUser || '' };
+  const previo = v.manual && v.manual.etapas;
+  v.manual = Object.assign({}, v.manual, { etapas: et });   // optimista: se ve al toque
+  _etapasRepintar(pv);
+  try {
+    await _admPost(pv, { etapas: et });
+  } catch (e) {
+    v.manual = Object.assign({}, v.manual, { etapas: previo });
+    _etapasRepintar(pv);
+    alert('No se pudo guardar la etapa de ' + pv + ': ' + e.message);
+  }
+}
+
+// Guarda el reemplazo de la carpeta (quien cubrio + por que). No toca `admin`:
+// la titular sigue siendo la misma.
+async function saveApoyoDesde(donde, key, pv) {
+  const selA = document.getElementById('etpapoyo_' + donde + '_' + key);
+  const inpM = document.getElementById('etpmot_' + donde + '_' + key);
+  const campos = {
+    admin_apoyo:  selA ? selA.value.trim() : '',
+    motivo_apoyo: inpM ? inpM.value.trim() : '',
+  };
+  const v = _admVentaDe(pv);
+  const previo = v ? v.manual : null;
+  if (v) v.manual = Object.assign({}, v.manual, campos);
+  _etapasRepintar(pv);
+  try {
+    await _admPost(pv, campos);
+  } catch (e) {
+    if (v) v.manual = previo;
+    _etapasRepintar(pv);
+    alert('No se pudo guardar el reemplazo de ' + pv + ': ' + e.message);
+  }
 }
 
 // Cuadro financiero (formas de pago + recibos) desplegable por PV
@@ -2660,7 +2963,11 @@ function renderAdmVentas() {
        + '<td data-label="Dominio">' + (v.dominio ? '<b style="color:#0a7a30">' + escapeHtml(v.dominio) + '</b>' : '<span style="color:#cc6600">pend.</span>') + '</td>'
        + '<td data-label="F. patent.">' + (v.fechaPatentamiento ? _fechaDMA(v.fechaPatentamiento) : '<span style="color:var(--vw-grey-3)">—</span>') + '</td>'
        + '<td data-label="Patenta">' + sel(v.preventa, key, 'patenta', m.patenta, ['TG', 'CL', 'RE'], 58) + '</td>'
-       + '<td data-label="Admin">' + sel(v.preventa, key, 'admin', m.admin, ['MECHI', 'ANTO', 'VALE', 'MONI'], 78) + '</td>'
+       + '<td data-label="Admin" style="white-space:nowrap">'
+         + sel(v.preventa, key, 'admin', m.admin, ADMINS_ADM, 78)
+         // Debajo de la titular: quien la reemplazo y que etapa manejo cada una.
+         + '<div style="margin-top:3px">' + _etapasBtnHtml(v, key, 'grilla') + '</div>'
+       + '</td>'
        // Oversoft ya tiene fecha pero la adm no confirmó el mes → borde naranja
        + '<td data-label="Mes pat. ✔adm">' + inp(v.preventa, key, 'mes_patentamiento', m.mes_patentamiento, 88, 'month', (v.fechaPatentamiento && !m.mes_patentamiento) ? '#cc6600' : null) + '</td>'
        + '<td data-label="Tipo" style="white-space:nowrap">'
@@ -2706,6 +3013,11 @@ function renderAdmVentas() {
     h += '<tr id="admserie_' + key + '"' + (admSerieAbiertos.has(key) ? '' : ' style="display:none"') + '>'
        + '<td colspan="22" style="background:#f5f8fc;border-left:3px solid #0a66c2;padding:8px 14px 12px 30px;text-align:left">'
        + _admSerieDetalleHtml(v) + '</td></tr>';
+    // Etapas de la carpeta / reemplazo de administrativa (mismo panel que en
+    // la subtab Patentamientos).
+    h += '<tr id="etprow_grilla_' + key + '"' + (admEtapasAbiertos.has(key) ? '' : ' style="display:none"') + '>'
+       + '<td colspan="22" style="background:#faf7ff;border-left:3px solid #6a1b9a;padding:10px 14px 12px 30px;text-align:left">'
+       + _etapasPanelHtml(v, 'grilla') + '</td></tr>';
   }
   if (!rows.length) h += '<tr><td colspan="22" class="empty">'
      + (admVentasFiltro === 'prioridad'
@@ -2904,6 +3216,9 @@ async function guardarAdmVenta(preventa) {
     // refrescar copia local
     const v = (admVentasData.ventas || []).find(x => x.preventa === preventa);
     if (v) v.manual = Object.assign({}, v.manual, campos);
+    // Si cambio la administrativa titular, el panel de etapas (que la usa como
+    // default de todas) y su boton tienen que reflejarlo sin recargar.
+    try { _etapasRepintar(preventa); } catch (e) {}
     if (btn) { btn.disabled = false; btn.textContent = '✓'; btn.style.background = '#0a7a30'; setTimeout(() => { btn.style.background = ''; }, 1200); }
   } catch (e) {
     if (btn) { btn.disabled = false; btn.textContent = '✓'; }
@@ -10426,10 +10741,11 @@ function togglePatChip(dim, val) {
   if (dim === 'fact') factFiltroPat = (factFiltroPat === val ? '' : val);
   if (dim === 'doc')  docFiltroPat  = (docFiltroPat  === val ? '' : val);
   if (dim === 'rev')  revFiltroPat  = (revFiltroPat  === val ? '' : val);
+  if (dim === 'reemp') reempFiltroPat = (reempFiltroPat === val ? '' : val);
   renderPatentamientos();
 }
 function setModoFiltroPat(m)  { modoFiltroPat = (m === 'resaltar' ? 'resaltar' : 'filtrar'); renderPatentamientos(); }
-function limpiarFiltrosPat()  { factFiltroPat = ''; docFiltroPat = ''; revFiltroPat = ''; renderPatentamientos(); }
+function limpiarFiltrosPat()  { factFiltroPat = ''; docFiltroPat = ''; revFiltroPat = ''; reempFiltroPat = ''; renderPatentamientos(); }
 // Click en la fila de una administrativa del panel: filtra por ella, y si ya
 // estaba filtrada, limpia (toggle).
 function toggleAdminFiltroPat(a) { setAdminFiltroPat(adminFiltroPat === a ? '' : a); }
@@ -10860,6 +11176,10 @@ function renderPatentamientos() {
   // KPIs siguen midiendo todas las carpetas del mes (que es lo que va al objetivo).
   const _fact = c => _admFacturaFecha(admMapDesg ? admMapDesg[_pvKey(c.pv)] : null);
   const _doc  = c => _admRetiroDoc(admMapDesg ? admMapDesg[_pvKey(c.pv)] : null);
+  // Carpeta con reemplazo: alguien distinto de la titular figura como quien la
+  // cubrio o hizo alguna de las 7 etapas.
+  const _ovDe  = c => (admMapDesg ? admMapDesg[_pvKey(c.pv)] : null);
+  const _reemp = c => { const ov = _ovDe(c); if (!ov) return false; const r = _etapasResumen(ov); return !!(r.nOtras || r.apoyo); };
   const porPatenta = _agruparCount(delMes, c => c.patentaA || '—');     // TG / CLIENTE / REVENTA
   const porTipo    = _agruparCount(delMes, c => _tipoOperTxt(c, admMapDesg ? admMapDesg[_pvKey(c.pv)] : null));
   const porRevPart = _agruparCount(delMes, c => c.reventaOParticular || '—');
@@ -10936,7 +11256,9 @@ function renderPatentamientos() {
   const nSinRp  = delMes.filter(c => !rpDe(c)).length;
   const sinAdm  = !admMapDesg;   // todavía no llegó la data de Adm. ventas
   const chipPat = (dim, val, lbl, n, dis) => {
-    const activo = dim === 'fact' ? factFiltroPat : (dim === 'doc' ? docFiltroPat : revFiltroPat);
+    const activo = dim === 'fact' ? factFiltroPat
+                 : (dim === 'doc'   ? docFiltroPat
+                 : (dim === 'reemp' ? reempFiltroPat : revFiltroPat));
     return '<button class="pat-chip' + (activo === val ? ' on' : '') + '"'
       + ' data-dim="' + dim + '" data-val="' + val + '"'
       + (dis ? ' disabled' : ' onclick="togglePatChip(this.dataset.dim, this.dataset.val)"')
@@ -10957,12 +11279,17 @@ function renderPatentamientos() {
         + chipPat('rev', 'PARTICULAR', 'Particular ',  nPart)
         + chipPat('rev', 'SIN',        'Sin definir ', nSinRp)
         + '</div><div class="sep"></div>';
+  const nReemp = delMes.filter(_reemp).length;
+  html += '  <div class="grp"><span class="grp-lab" title="Carpetas donde otra administrativa cubrio a la titular o le hizo alguna etapa">Reemplazo</span>'
+        + chipPat('reemp', 'si', 'Con ',  nReemp,                  sinAdm)
+        + chipPat('reemp', 'no', 'Sin ',  delMes.length - nReemp,  sinAdm)
+        + '</div><div class="sep"></div>';
   html += '  <div class="pat-modo" title="Filtrar esconde lo que no coincide. Resaltar deja todo el mes a la vista y pinta en amarillo lo que coincide.">'
         + '<button data-m="filtrar" class="'  + (modoFiltroPat === 'filtrar'  ? 'on' : '') + '" onclick="setModoFiltroPat(this.dataset.m)">🔍 Filtrar</button>'
         + '<button data-m="resaltar" class="' + (modoFiltroPat === 'resaltar' ? 'on' : '') + '" onclick="setModoFiltroPat(this.dataset.m)">🖍 Resaltar</button>'
         + '</div>';
-  if (factFiltroPat || docFiltroPat || revFiltroPat) {
-    html += '  <button class="calc-clear" onclick="limpiarFiltrosPat()" title="Limpiar los tres cortes">✕ limpiar</button>';
+  if (factFiltroPat || docFiltroPat || revFiltroPat || reempFiltroPat) {
+    html += '  <button class="calc-clear" onclick="limpiarFiltrosPat()" title="Limpiar todos los cortes">✕ limpiar</button>';
   }
   if (sinAdm) {
     html += '  <span style="font-size:11.5px;color:var(--vw-grey-3)">cargando Adm. ventas para Facturada / Retiró doc…</span>';
@@ -11110,15 +11437,18 @@ function renderPatentamientos() {
     if (revFiltroPat === 'REVENTA'    && rpDe(c) !== 'REVENTA')    return false;
     if (revFiltroPat === 'PARTICULAR' && rpDe(c) !== 'PARTICULAR') return false;
     if (revFiltroPat === 'SIN'        && rpDe(c))                  return false;
+    if (reempFiltroPat === 'si' && !_reemp(c)) return false;
+    if (reempFiltroPat === 'no' &&  _reemp(c)) return false;
     return true;
   };
-  const hayFiltroPat  = !!(factFiltroPat || docFiltroPat || revFiltroPat);
+  const hayFiltroPat  = !!(factFiltroPat || docFiltroPat || revFiltroPat || reempFiltroPat);
   const resaltandoPat = hayFiltroPat && modoFiltroPat === 'resaltar';
   const delMesTabla   = (hayFiltroPat && !resaltandoPat) ? delMes.filter(_matchPat) : delMes;
   const _filtrosTblTxt = [
     factFiltroPat === 'si' ? 'facturadas' : (factFiltroPat === 'no' ? 'sin facturar' : ''),
     docFiltroPat  === 'si' ? 'retiraron doc' : (docFiltroPat  === 'no' ? 'sin retirar doc' : ''),
     revFiltroPat === 'REVENTA' ? 'reventa' : (revFiltroPat === 'PARTICULAR' ? 'particular' : (revFiltroPat === 'SIN' ? 'rev/part sin definir' : '')),
+    reempFiltroPat === 'si' ? 'con reemplazo' : (reempFiltroPat === 'no' ? 'sin reemplazo' : ''),
   ].filter(Boolean).join(' + ');
   const nHitPat = resaltandoPat ? delMes.filter(_matchPat).length : 0;
 
@@ -11141,6 +11471,7 @@ function renderPatentamientos() {
         + '        <th class="col-extra">Serie</th>'
         + '        <th class="ctr">Patenta</th>'
         + '        <th class="col-extra">Admin</th>'
+        + '        <th class="col-extra" title="Quién manejó cada etapa de la carpeta. Sin marcas, todas son de la administrativa titular; acá se anota la que tuvo que hacer otra (ausencia, reemplazo).">Etapas</th>'
         + '        <th class="col-extra">Tipo</th>'
         + '        <th class="col-extra">Rev/Part</th>'
         + '        <th class="ctr" title="Factura del auto al cliente (Oversoft, automático): NO, o la fecha de la factura">Facturada</th>'
@@ -11153,7 +11484,7 @@ function renderPatentamientos() {
         + '      </tr></thead><tbody>';
 
   if (!delMesTabla.length) {
-    html += '<tr><td colspan="14" class="empty">No hay carpetas para este filtro.</td></tr>';
+    html += '<tr><td colspan="15" class="empty">No hay carpetas para este filtro.</td></tr>';
   } else {
     // Pendientes arriba, patentadas todas juntas al final (no mezcladas)
     const pendList = delMesTabla.filter(c => !c.patentada);
@@ -11162,11 +11493,11 @@ function renderPatentamientos() {
     // suele estar vacío en el mes en curso.
     const admMapTbl = _admMapPorPv();
     if (pendList.length) {
-      html += '<tr class="tbl-sep pend"><td colspan="14">Pendientes de patentar · ' + pendList.length + '</td></tr>';
+      html += '<tr class="tbl-sep pend"><td colspan="15">Pendientes de patentar · ' + pendList.length + '</td></tr>';
       for (const c of pendList) html += filaPatent(c, admMapTbl, resaltandoPat && _matchPat(c));
     }
     if (patList.length) {
-      html += '<tr class="tbl-sep pat"><td colspan="14">Patentadas · ' + patList.length + '</td></tr>';
+      html += '<tr class="tbl-sep pat"><td colspan="15">Patentadas · ' + patList.length + '</td></tr>';
       for (const c of patList) html += filaPatent(c, admMapTbl, resaltandoPat && _matchPat(c));
     }
   }
@@ -11204,6 +11535,10 @@ function filaPatent(c, admMap, hit) {
   h += '<td class="col-extra" data-label="Serie"><span class="serie">' + escapeHtml(c.serie) + '</span></td>';
   h += '<td class="ctr" data-label="Patenta">' + patentaBadge + '</td>';
   h += '<td class="col-extra" data-label="Admin">' + escapeHtml(c.admin || '—') + '</td>';
+  // Etapas / reemplazo de administrativa. Igual que Facturada y Retiró doc, sale
+  // de Adm. ventas (admVentasData): sin esa data todavía cargada va como s/d.
+  h += '<td class="col-extra" data-label="Etapas">'
+     + (ov ? _etapasBtnHtml(ov, _admKey(ov.preventa), 'pat') : '<span class="muted">s/d</span>') + '</td>';
   h += '<td class="col-extra" data-label="Tipo">' + escapeHtml(_tipoOperTxt(c, ov)) + '</td>';
   // Rev/Part: si el backend lo dedujo de la columna Patenta (la adm no lo cargó)
   // se marca con * para que se distinga de lo cargado a mano.
@@ -11232,6 +11567,14 @@ function filaPatent(c, admMap, hit) {
   h += '<td class="ctr" data-label="Fecha pat.">' + patBadge + '</td>';
   h += '<td class="col-extra" data-label="Dominio">' + escapeHtml(c.dominio || '—') + '</td>';
   h += '</tr>';
+  // Panel de etapas (mismo control que en la grilla de Adm. ventas): se guarda
+  // desde acá también, para que Mónica pueda tildar sin cambiar de solapa.
+  if (ov) {
+    const kEt = _admKey(ov.preventa);
+    h += '<tr id="etprow_pat_' + kEt + '"' + (patEtapasAbiertos.has(kEt) ? '' : ' style="display:none"') + '>'
+       + '<td colspan="15" style="background:#faf7ff;border-left:3px solid #6a1b9a;padding:10px 14px 12px 24px;text-align:left">'
+       + _etapasPanelHtml(ov, 'pat') + '</td></tr>';
+  }
   return h;
 }
 
@@ -11300,6 +11643,11 @@ function panelAdminDetalle(rows) {
     total: 0, pat: 0, vw: 0, ext: 0, tgf: 0, plan: 0, contado: 0, sin: 0,
     pTg: 0, pCli: 0, pRev: 0, reventa: 0, particular: 0,
     nMonto: 0, montoPlan: 0, montoCob: 0, pendCobro: 0,
+    // Reemplazos: `absorb` = etapas que hizo en carpetas de OTRA (con `absCarp`
+    // llevando de cuantas carpetas distintas se trata) y `apoyoCarp` = carpetas
+    // donde figura como la que cubrio a la titular. `cedidas` es el espejo: las
+    // etapas de SUS carpetas que termino haciendo otra.
+    apoyoCarp: 0, absorb: 0, cedidas: 0, absCarp: {},
     vend: {}, financ: {},
   });
   for (const c of rows) {
@@ -11318,6 +11666,22 @@ function panelAdminDetalle(rows) {
     else if (rp.indexOf('PAR') === 0) o.particular++;
     const vd = c.vendedor || c.vendedorRaw;
     if (vd) o.vend[vd] = (o.vend[vd] || 0) + 1;
+    // Reemplazos de administrativa. Una admin que solo absorbe etapas ajenas
+    // (el caso de Monica, que no tiene carpetas de base) entra igual al panel
+    // con 0 carpetas propias — para eso se crea su fila aca si no existe.
+    if (ov) {
+      const apo = String((ov.manual && ov.manual.admin_apoyo) || '').trim();
+      if (apo) { (acc[apo] || (acc[apo] = nuevo())).apoyoCarp++; }
+      const et = _etapasDe(ov);
+      for (const e of ADM_ETAPAS) {
+        const resp = et[e.k] && et[e.k].resp;
+        if (!resp || resp === a) continue;   // sin marca o la hizo la titular
+        const oa = acc[resp] || (acc[resp] = nuevo());
+        oa.absorb++;
+        oa.absCarp[c.pv] = 1;
+        o.cedidas++;
+      }
+    }
     // Financiadas: quién presta y cuánto (líneas «Financia» del cuadro de la PV,
     // el mismo dato que usa la subtab Financiaciones).
     if (b === 'vw' || b === 'ext' || b === 'tgf') {
@@ -11336,11 +11700,13 @@ function panelAdminDetalle(rows) {
 
   const admins = Object.keys(acc).sort((a, b) => acc[b].total - acc[a].total || a.localeCompare(b));
   const NUMK = ['total','pat','vw','ext','tgf','plan','contado','sin','pTg','pCli','pRev',
-                'reventa','particular','nMonto','montoPlan','montoCob','pendCobro'];
+                'reventa','particular','nMonto','montoPlan','montoCob','pendCobro',
+                'apoyoCarp','absorb','cedidas'];
   const tot = nuevo();
   for (const a of admins) {
     const o = acc[a];
     for (const k of NUMK) tot[k] += o[k];
+    for (const k in o.absCarp) tot.absCarp[k] = 1;
     for (const k in o.vend)   tot.vend[k]   = (tot.vend[k]   || 0) + o.vend[k];
     for (const k in o.financ) tot.financ[k] = (tot.financ[k] || 0) + o.financ[k];
   }
@@ -11359,6 +11725,8 @@ function panelAdminDetalle(rows) {
         + '        <th class="num">Carpetas</th>'
         + '        <th class="num">Patent.</th>'
         + '        <th class="num">Pend.</th>'
+        + '        <th class="num grp" title="Reemplazos: etapas que hizo en carpetas de OTRA administrativa. Debajo, en cuántas carpetas ajenas y en cuántas figura como la que cubrió a la titular.">Cubrió</th>'
+        + '        <th class="num" title="El espejo: etapas de SUS carpetas que terminó haciendo otra administrativa.">Cedió</th>'
         + '        <th class="num grp" title="Créditos que maneja: VW Credit + bancos externos + financiación propia TG. NO incluye plan de ahorro.">Financiadas</th>'
         + '        <th class="num" title="Financiado VW Credit">VW Credit</th>'
         + '        <th class="num" title="Créditos de bancos externos (Galicia, Nación, etc.)">Banco ext.</th>'
@@ -11410,6 +11778,14 @@ function panelAdminDetalle(rows) {
     r += '<td class="num" data-label="Carpetas">' + o.total + '</td>';
     r += '<td class="num good" data-label="Patent.">' + o.pat + '</td>';
     r += '<td class="num' + ((o.total - o.pat) ? ' warn' : '') + '" data-label="Pend.">' + (o.total - o.pat) + '</td>';
+    const nCarpAbs = Object.keys(o.absCarp).length;
+    const cubSub = [
+      nCarpAbs     ? nCarpAbs + ' carpeta' + (nCarpAbs === 1 ? '' : 's') + ' ajena' + (nCarpAbs === 1 ? '' : 's') : '',
+      o.apoyoCarp  ? 'cubre ' + o.apoyoCarp : '',
+    ].filter(Boolean).join(' · ');
+    r += '<td class="num grp" data-label="Cubrió">' + ((o.absorb || o.apoyoCarp) ? '<b>' + o.absorb + '</b>' : '—')
+       + (cubSub ? '<div class="adm-sub">' + cubSub + '</div>' : '') + '</td>';
+    r += '<td class="num' + (o.cedidas ? ' warn' : '') + '" data-label="Cedió">' + (o.cedidas || '—') + '</td>';
     r += '<td class="num grp" data-label="Financiadas"><b>' + fin + '</b> <span class="adm-pct">' + pctF + '%</span>'
        + (fncTxt ? '<div class="adm-sub">' + fncTxt + '</div>' : '') + '</td>';
     r += '<td class="num" data-label="VW Credit">' + (o.vw || '—') + '</td>';
@@ -11438,7 +11814,10 @@ function panelAdminDetalle(rows) {
      + (conMonto
          ? 'Los $ salen de las líneas «Financia» del cuadro de cada PV, igual que la subtab Financiaciones; «cobrado» incluye lo que la administrativa marcó como liquidado aunque el recibo todavía no esté. '
          : '⚠️ Falta cargar la subtab <b>Adm. ventas</b>: sin ella no hay tipos de Oversoft ni montos. ')
-     + 'Pasá el mouse por la fila para ver el mix de vendedores.</div>';
+     + 'Pasá el mouse por la fila para ver el mix de vendedores. '
+     + '<b>Cubrió / Cedió</b> son los reemplazos entre administrativas: la titular de la carpeta no cambia nunca, '
+     + 'se anota aparte quién la cubrió (y por qué) y qué etapa manejó cada una — se carga con el botón 👥 de la columna <b>Etapas</b> '
+     + 'o desde la grilla de Adm. ventas. Una administrativa que solo absorbe trabajo ajeno aparece igual, con 0 carpetas propias.</div>';
   h += '</div>';
   return h;
 }
