@@ -495,6 +495,18 @@ table.ventas-tbl.resumida .col-extra { display: none; }
 /* Fila resaltada (modo Resaltar): amarillo + barrita al costado. */
 table.patent-tbl tbody tr.pat-hit > td { background: #FFF8D9 !important; }
 table.patent-tbl tbody tr.pat-hit > td:first-child { box-shadow: inset 3px 0 0 var(--orange); }
+/* Marca manual de la administrativa (boton de la primera columna). Va DESPUES
+   de pat-hit a proposito: si la fila ademas coincide con un chip de resaltado,
+   manda la marca que puso ella a mano. */
+table.patent-tbl tbody tr.pat-marcada > td { background: #E3F0FF !important; }
+table.patent-tbl tbody tr.pat-marcada > td:first-child { box-shadow: inset 3px 0 0 #0a66c2; }
+.pat-mark {
+  border: 0; background: none; cursor: pointer; padding: 2px 4px;
+  font-size: 13px; line-height: 1; color: var(--vw-grey-3); opacity: .45;
+}
+.pat-mark:hover { opacity: 1; color: #0a66c2; }
+.pat-mark.on { opacity: 1; color: #0a66c2; font-size: 14px; }
+.pat-marcas-info { font-weight: 400; color: #0a66c2; }
 table.ventas-tbl tbody td.gcia-pos { color: var(--green-dark); font-weight: 600; }
 table.ventas-tbl tbody td.gcia-neg { color: var(--orange-dark); font-weight: 600; }
 
@@ -1827,6 +1839,20 @@ let factFiltroPat = '';
 let docFiltroPat  = '';
 let revFiltroPat  = '';   // '' | 'REVENTA' | 'PARTICULAR' | 'SIN' (sin definir)
 let reempFiltroPat = '';  // '' | 'si' | 'no' — carpetas con reemplazo de administrativa
+// Marcas manuales de la administrativa sobre la tabla de Patentamientos: un
+// resaltador propio para ir siguiendo las carpetas que tiene entre manos. Es
+// PERSONAL de la máquina (localStorage, no va a la base): no lo ven los demás
+// ni se mezcla con los cortes de la barra de chips. Se guarda la PV normalizada
+// (_pvKey) para que no dependa del formato con el que venga el número.
+const PAT_MARCAS_LS = 'tga_pat_marcadas';
+let patMarcadas = new Set();
+try {
+  const _mk = JSON.parse(localStorage.getItem(PAT_MARCAS_LS) || '[]');
+  if (Array.isArray(_mk)) patMarcadas = new Set(_mk);
+} catch (e) {}
+function _savePatMarcadas() {
+  try { localStorage.setItem(PAT_MARCAS_LS, JSON.stringify(Array.from(patMarcadas))); } catch (e) {}
+}
 // 'filtrar' esconde lo que no matchea; 'resaltar' no esconde nada y pinta lo que
 // matchea (pedido de Monica: ver el mes entero con lo buscado marcado).
 let modoFiltroPat = 'filtrar';
@@ -10744,6 +10770,40 @@ function togglePatChip(dim, val) {
   if (dim === 'reemp') reempFiltroPat = (reempFiltroPat === val ? '' : val);
   renderPatentamientos();
 }
+// ---- Resaltador manual de filas (Patentamientos) ----
+// Prende/apaga la marca de una carpeta y la pinta SIN re-render: la tabla es
+// larga y un renderPatentamientos() completo perdería el scroll justo cuando
+// está marcando varias seguidas.
+function _patMarcaBtn(pv) {
+  const on = patMarcadas.has(_pvKey(pv));
+  return '<button id="patmark_' + _admKey(pv) + '" class="pat-mark' + (on ? ' on' : '') + '"'
+       + ' data-pv="' + escapeHtml(pv) + '" onclick="togglePatMarca(this.dataset.pv)"'
+       + ' title="' + (on ? 'Sacar la marca de esta carpeta' : 'Marcar esta carpeta — queda resaltada hasta que la vuelvas a tocar') + '">'
+       + (on ? '●' : '○') + '</button>';
+}
+function togglePatMarca(pv) {
+  const k = _pvKey(pv);
+  if (patMarcadas.has(k)) patMarcadas.delete(k); else patMarcadas.add(k);
+  _savePatMarcadas();
+  const key = _admKey(pv);
+  const tr = document.getElementById('patrow_' + key);
+  if (tr) tr.classList.toggle('pat-marcada', patMarcadas.has(k));
+  const b = document.getElementById('patmark_' + key);
+  if (b) b.outerHTML = _patMarcaBtn(pv);
+  const info = document.getElementById('patMarcasInfo');
+  if (info) info.innerHTML = _patMarcasInfoHtml();
+}
+function _patMarcasInfoHtml() {
+  const n = patMarcadas.size;
+  if (!n) return '';
+  return ' · <span class="pat-marcas-info">● ' + n + ' marcada' + (n === 1 ? '' : 's')
+       + ' <button class="calc-clear" onclick="limpiarPatMarcas()" title="Sacar todas las marcas">✕</button></span>';
+}
+function limpiarPatMarcas() {
+  patMarcadas = new Set();
+  _savePatMarcadas();
+  renderPatentamientos();
+}
 function setModoFiltroPat(m)  { modoFiltroPat = (m === 'resaltar' ? 'resaltar' : 'filtrar'); renderPatentamientos(); }
 function limpiarFiltrosPat()  { factFiltroPat = ''; docFiltroPat = ''; revFiltroPat = ''; reempFiltroPat = ''; renderPatentamientos(); }
 // Click en la fila de una administrativa del panel: filtra por ella, y si ya
@@ -11461,12 +11521,14 @@ function renderPatentamientos() {
               + ' <span style="font-weight:400">(' + escapeHtml(_filtrosTblTxt) + ')</span>'
             : delMesTabla.length + ' visibles'
               + (_filtrosTblTxt ? ' <span style="font-weight:400">(' + escapeHtml(_filtrosTblTxt) + ', de ' + delMes.length + ')</span>' : ''))
+        + '<span id="patMarcasInfo">' + _patMarcasInfoHtml() + '</span>'
         + '    </div>'
         + '  </div>'
         + '  <div class="table-scroll">'
         + '    <table class="patent-tbl responsive-cards ' + (vistaResumidaPat ? 'resumida' : '') + '">'
         + '      <thead><tr>'
-        + '        <th class="ctr">#</th>'
+        + '        <th class="ctr" title="Resaltador propio: marcá las carpetas que estás siguiendo y quedan pintadas hasta que las vuelvas a tocar. Es tuyo, no lo ven los demás."></th>'
+        + '        <th class="ctr">Fecha PV</th>'
         + '        <th># PV</th>'
         + '        <th class="col-extra">Serie</th>'
         + '        <th class="ctr">Patenta</th>'
@@ -11484,7 +11546,7 @@ function renderPatentamientos() {
         + '      </tr></thead><tbody>';
 
   if (!delMesTabla.length) {
-    html += '<tr><td colspan="15" class="empty">No hay carpetas para este filtro.</td></tr>';
+    html += '<tr><td colspan="16" class="empty">No hay carpetas para este filtro.</td></tr>';
   } else {
     // Pendientes arriba, patentadas todas juntas al final (no mezcladas)
     const pendList = delMesTabla.filter(c => !c.patentada);
@@ -11493,11 +11555,11 @@ function renderPatentamientos() {
     // suele estar vacío en el mes en curso.
     const admMapTbl = _admMapPorPv();
     if (pendList.length) {
-      html += '<tr class="tbl-sep pend"><td colspan="15">Pendientes de patentar · ' + pendList.length + '</td></tr>';
+      html += '<tr class="tbl-sep pend"><td colspan="16">Pendientes de patentar · ' + pendList.length + '</td></tr>';
       for (const c of pendList) html += filaPatent(c, admMapTbl, resaltandoPat && _matchPat(c));
     }
     if (patList.length) {
-      html += '<tr class="tbl-sep pat"><td colspan="15">Patentadas · ' + patList.length + '</td></tr>';
+      html += '<tr class="tbl-sep pat"><td colspan="16">Patentadas · ' + patList.length + '</td></tr>';
       for (const c of patList) html += filaPatent(c, admMapTbl, resaltandoPat && _matchPat(c));
     }
   }
@@ -11529,8 +11591,16 @@ function filaPatent(c, admMap, hit) {
     ? '<span class="badge ' + _patentaCls(c.patentaA) + '">' + escapeHtml(c.patentaA) + '</span>'
     : '<span class="muted">—</span>';
 
-  let h = '<tr' + (hit ? ' class="pat-hit"' : '') + '>';
-  h += '<td class="ctr" data-label="#">' + (c.num || '—') + '</td>';
+  // La fila lleva id para que el resaltador manual la pinte sin re-render, y
+  // dos clases posibles: pat-hit (coincide con los chips) y pat-marcada (marca
+  // manual de la adm).
+  const kRow = _admKey(c.pv);
+  const cls = [hit ? 'pat-hit' : '', patMarcadas.has(_pvKey(c.pv)) ? 'pat-marcada' : ''].filter(Boolean).join(' ');
+  let h = '<tr id="patrow_' + kRow + '"' + (cls ? ' class="' + cls + '"' : '') + '>';
+  h += '<td class="ctr" data-label="Marcar">' + _patMarcaBtn(c.pv) + '</td>';
+  // Reemplaza al "#" (correlativo de carga, que no se usaba): la fecha de la
+  // preventa, que es el dato con el que la adm ubica la carpeta.
+  h += '<td class="ctr" data-label="Fecha PV">' + escapeHtml(c.fechaPvStr || fmtFechaCorta(c.fechaPvIso) || '—') + '</td>';
   h += '<td data-label="# PV">' + escapeHtml(c.pv) + '</td>';
   h += '<td class="col-extra" data-label="Serie"><span class="serie">' + escapeHtml(c.serie) + '</span></td>';
   h += '<td class="ctr" data-label="Patenta">' + patentaBadge + '</td>';
@@ -11572,7 +11642,7 @@ function filaPatent(c, admMap, hit) {
   if (ov) {
     const kEt = _admKey(ov.preventa);
     h += '<tr id="etprow_pat_' + kEt + '"' + (patEtapasAbiertos.has(kEt) ? '' : ' style="display:none"') + '>'
-       + '<td colspan="15" style="background:#faf7ff;border-left:3px solid #6a1b9a;padding:10px 14px 12px 24px;text-align:left">'
+       + '<td colspan="16" style="background:#faf7ff;border-left:3px solid #6a1b9a;padding:10px 14px 12px 24px;text-align:left">'
        + _etapasPanelHtml(ov, 'pat') + '</td></tr>';
   }
   return h;
