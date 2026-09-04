@@ -8,22 +8,34 @@ catalogo (SE); tramos performance distintos de 90/100 se anotan en condicion;
 filas en $0 no se cargan.
 Circuito completo: skill circular-vw (C:\\proyectos\\.claude\\skills).
 
-Ultima corrida: 2026-08 circular 89/26 (Fe de Erratas, es la circular completa).
-Agosto NO cambio un peso vs julio: VW CONSOLIDO el "tactico incremental Polo/Tera/
-Nivus" (lo que cargabamos como adicional1) DENTRO del tactico -> tactico agosto =
-tactico julio + incremental julio, verificado modelo por modelo. Por eso este mes
-NO se carga adicional1. Unico cambio real: whosale +1,00% en los 14 (ahora si
-incluye el T-Cross Bi-Tono, que en julio habia quedado congelado)."""
+Ultima corrida: 2026-09 circular 99/26. Tacticos, Tiguan/Vento y esquema trimestral
+IDENTICOS a agosto al peso. Cambios reales del mes:
+ - WHOLESALE +1,50% en los 14 (acompana la lista #897).
+ - PERFORMANCE reacomodado en las Amarok 4x2: Trendline 4x2 se DERRUMBA de
+   2.600.000 a 1.000.000; Comfortline AT 4x2 sube de 900.000 a 2.000.000; ALTA de
+   Comfortline MT 4x2 (2.000.000, cobra desde el 80%); Highline AT 4x2 sube a
+   3.200.000 con tramos propios 50%=2.200.000 y 80%=2.600.000. Los V6, el Polo
+   Track y la Tera Trend no se movieron.
+ - ALTA Amarok Unlimited V6 AT 4x4 G2: tactico = Extreme, performance = Black Style.
+ - El performance viene como IMAGEN en el PDF (pag. 5) y SOLO sin IVA, asi que el
+   c/IVA se calcula (21% autos, 10,5% Amarok), como se viene haciendo.
+ - Regimen viejo Amarok (circ 40, facturadas 01/11/25-30/04/26): la circular lo
+   repite y coincide 10/10 con lo cargado en 2026-04. ULTIMO MES: vence para
+   patentamientos el 30/09/26.
+ - Gastos: fletes autos +8,69%, medianos +4,35%, admin +1,1%, seguros y
+   formularios 0%. Revisar si el FyF de $1.110.000 sigue cubriendo.
+ - C67 (proteccion stock Virtus/Saveiro) extendida a patentamientos hasta 31/10/26.
+"""
 import json, urllib.request, sys
 
-CIRC = "89/26"
-MES = "2026-08"
+CIRC = "99/26"
+MES = "2026-09"
 R = []
 def add(codigo, nombre, tipo, siva, civa, cond):
     R.append((codigo, nombre, tipo, siva, civa, cond))
 
 T50 = "50% objetivo"
-# ---------------- TACTICO (ya incluye el ex-"incremental" de julio) ----------------
+# ---------------- TACTICO (identico a agosto, al peso) ----------------
 add("BZ31T4","Polo Track MSI MT","tactico",5210129,6304256,T50)
 add("BZ32D3","Polo COMFORTLINE 170TSI AT","tactico",4441445,5374149,T50)
 add("BZ33D3","Polo HIGHLINE 170TSI AT","tactico",2884515,3490263,T50)
@@ -49,7 +61,7 @@ add("CL23LZ","Taos Comfortline 250TSI AT","tactico",3863636,4675000,T50)
 add("CL24LZ","Taos Highline 250TSI AT","tactico",4917355,5950000,T50)
 add("CL24LZ","Taos Highline Bi Tono 250TSI AT","tactico",4917355,5950000,T50)
 # Amarok: facturadas desde lista 887 (05/05/26); historicas nov-abr van por Circ.40
-AMK = "50% objetivo · fact. desde lista 887"
+AMK = "50% objetivo - fact. desde lista 887"
 add("AGDA43","Amarok Trendline TDI MT 4x2 G2","tactico",1611584,1780800,AMK)
 add("AGDA34","Amarok Trendline TDI MT 4x4 G2","tactico",1827827,2019749,AMK)
 add("AGDB33","Amarok Comfortline TDI MT 4x2 SE G2","tactico",1611584,1780800,AMK)
@@ -59,45 +71,51 @@ add("AGDC3X","Amarok Highline TDI AT 4x2 SE G2","tactico",3754720,4148965,AMK)
 add("AGDB8A","Amarok Comfortline V6 AT 4x4 G2","tactico",6108858,6750288,AMK)
 add("AGDC8A","Amarok Highline V6 AT 4x4 G2","tactico",6713755,7418700,AMK)
 add("AGDD8A","Amarok Extreme V6 AT 4x4 G2","tactico",6930534,7658240,AMK)
+add("AGDD8A","Amarok Unlimited V6 AT 4x4 G2","tactico",6930534,7658240,AMK)   # ALTA sep
 add("AGDD8A","Amarok Hero V6 AT 4x4 G2","tactico",6930534,7658240,AMK)
 add("AGDD8A","Amarok Black Style V6 AT 4x4 SE G2","tactico",6173638,6821870,AMK)
-# ---------------- ADICIONAL2 (tactico Tiguan/Vento) ----------------
+# ---------------- ADICIONAL2 (tactico Tiguan/Vento) - identico a agosto -------
 add("RM14M7","Tiguan R-Line 250TSI DSG","adicional2",3951418,4781216,"tactico tiguan/vento")
 add("BU59UZ","Vento GLI 350TSI DSG","adicional2",5748043,6955132,"tactico tiguan/vento")
-# ---------------- WHOSALE ----------------
+# ---------------- WHOSALE (+1,50% vs agosto, los 14 de la circular) ----------
 W = "compra whosale"
-add("BZ31T4","Polo Track MSI MT","whosale",1155719,1398420,W)
-add("BZ32D3","Polo COMFORTLINE 170TSI AT","whosale",1320557,1597874,W)
-add("BZ33D3","Polo HIGHLINE 170TSI AT","whosale",1403228,1697906,W)
-add("BF32D4","T-Cross Trendline 170TSI MT","whosale",1410530,1706741,W)
-add("BF32K3","T-Cross Trendline 200TSI AT","whosale",1482577,1793918,W)
-add("BF33K3","T-Cross Comfortline 200TSI AT","whosale",1602670,1939231,W)
-add("BF34K3","T-Cross Highline 200TSI AT","whosale",1767884,2139139,W)
-add("BF34K3","T-Cross Highline Bi Tono 200TSI AT","whosale",1732105,2095847,W)  # agosto SI le dio el +1%
-add("BF3XK3","T-Cross Extreme 200TSI AT","whosale",1801113,2179346,W)
-add("DF11T4","Tera Trend MSI MT","whosale",506658,613057,W)
-add("DF11T4","Tera Trend MSI MT + Pack Safe I","whosale",506658,613057,W)
-add("DF13D3","Tera Comfort 170TSI AT","whosale",572914,693226,W)
-add("DF13D3","Tera Comfort 170TSI AT + Pack Safe II","whosale",572914,693226,W)
-add("CH23K3","Nivus Comfortline 200TSI AT","whosale",1011391,1223783,W)
-add("CH24K3","Nivus Highline 200TSI AT","whosale",1092068,1321402,W)
-add("CH24K3","Nivus Outfit 200TSI AT","whosale",1117158,1351761,W)
-# ---------------- ADICIONAL1: NO EXISTE EN AGOSTO ----------------
-# La circular 89/26 elimino la seccion "Incentivo Tactico Incremental Polo, Tera,
-# Nivus" y sumo esos montos DENTRO del tactico (verificado al peso). Cargarlo
-# aparte seria contarlo dos veces: el motor suma tactico+whosale+adicional1+
-# adicional2+cupo.
+add("BZ31T4","Polo Track MSI MT","whosale",1173055,1419396,W)
+add("BZ32D3","Polo COMFORTLINE 170TSI AT","whosale",1340365,1621842,W)
+add("BZ33D3","Polo HIGHLINE 170TSI AT","whosale",1424276,1723374,W)
+add("BF32D4","T-Cross Trendline 170TSI MT","whosale",1431688,1732342,W)
+add("BF32K3","T-Cross Trendline 200TSI AT","whosale",1504816,1820827,W)
+add("BF33K3","T-Cross Comfortline 200TSI AT","whosale",1626710,1968319,W)
+add("BF34K3","T-Cross Highline 200TSI AT","whosale",1794402,2171227,W)
+add("BF34K3","T-Cross Highline Bi Tono 200TSI AT","whosale",1758087,2127285,W)
+add("BF3XK3","T-Cross Extreme 200TSI AT","whosale",1828130,2212037,W)
+add("DF11T4","Tera Trend MSI MT","whosale",514258,622252,W)
+add("DF11T4","Tera Trend MSI MT + Pack Safe I","whosale",514258,622252,W)
+add("DF13D3","Tera Comfort 170TSI AT","whosale",581508,703624,W)
+add("DF13D3","Tera Comfort 170TSI AT + Pack Safe II","whosale",581508,703624,W)
+add("CH23K3","Nivus Comfortline 200TSI AT","whosale",1026562,1242140,W)
+add("CH24K3","Nivus Highline 200TSI AT","whosale",1108449,1341223,W)
+add("CH24K3","Nivus Outfit 200TSI AT","whosale",1133915,1372038,W)
+# ---------------- ADICIONAL1: SIGUE SIN EXISTIR ----------------
+# Desde la circular 89/26 el "Incentivo Tactico Incremental Polo/Tera/Nivus" quedo
+# consolidado DENTRO del tactico. Cargarlo aparte seria contarlo dos veces: el
+# motor suma tactico+whosale+adicional1+adicional2+cupo.
 # ---------------- PERFORMANCE (90%) y PERFORMANCE100 ----------------
-# Identico a julio. AGDC33 y AGDB8A ya no figuran (en julio estaban en 0).
+# La tabla viene como IMAGEN y solo sin IVA -> el c/IVA se calcula (21% / 10,5%).
 P90D50 = "90% objetivo (cobra desde 50%)"
 P100D50 = "100% objetivo (cobra desde 50%)"
+P90D80 = "90% objetivo (cobra desde 80%)"
+P100D80 = "100% objetivo (cobra desde 80%)"
 P90, P100 = "90% objetivo", "100% objetivo"
-add("AGDA43","Amarok Trendline TDI MT 4x2 G2","performance",2600000,2873000,P90D50)
-add("AGDA43","Amarok Trendline TDI MT 4x2 G2","performance100",2600000,2873000,P100D50)
-add("AGDB3X","Amarok Comfortline TDI AT 4x2 SE G2","performance",900000,994500,P90)
-add("AGDB3X","Amarok Comfortline TDI AT 4x2 SE G2","performance100",1000000,1105000,P100)
-add("AGDC3X","Amarok Highline TDI AT 4x2 SE G2","performance",2200000,2431000,P90D50)
-add("AGDC3X","Amarok Highline TDI AT 4x2 SE G2","performance100",2200000,2431000,P100D50)
+HI90 = "90% objetivo (tramos propios s/IVA: 50%=2.200.000, 80%=2.600.000)"
+HI100 = "100% objetivo (tramos propios s/IVA: 50%=2.200.000, 80%=2.600.000)"
+add("AGDA43","Amarok Trendline TDI MT 4x2 G2","performance",1000000,1105000,P90D50)
+add("AGDA43","Amarok Trendline TDI MT 4x2 G2","performance100",1000000,1105000,P100D50)
+add("AGDB3X","Amarok Comfortline TDI AT 4x2 SE G2","performance",2000000,2210000,P90D80)
+add("AGDB3X","Amarok Comfortline TDI AT 4x2 SE G2","performance100",2000000,2210000,P100D80)
+add("AGDB33","Amarok Comfortline TDI MT 4x2 SE G2","performance",2000000,2210000,P90D80)   # ALTA sep
+add("AGDB33","Amarok Comfortline TDI MT 4x2 SE G2","performance100",2000000,2210000,P100D80)
+add("AGDC3X","Amarok Highline TDI AT 4x2 SE G2","performance",3200000,3536000,HI90)
+add("AGDC3X","Amarok Highline TDI AT 4x2 SE G2","performance100",3200000,3536000,HI100)
 add("AGDC8A","Amarok Highline V6 AT 4x4 G2","performance",1350000,1491750,P90)
 add("AGDC8A","Amarok Highline V6 AT 4x4 G2","performance100",1500000,1657500,P100)
 add("AGDD8A","Amarok Hero V6 AT 4x4 G2","performance",1440000,1591200,P90)
@@ -106,6 +124,8 @@ add("AGDD8A","Amarok Extreme V6 AT 4x4 G2","performance",1350000,1491750,P90)
 add("AGDD8A","Amarok Extreme V6 AT 4x4 G2","performance100",1500000,1657500,P100)
 add("AGDD8A","Amarok Black Style V6 AT 4x4 SE G2","performance",1080000,1193400,P90)
 add("AGDD8A","Amarok Black Style V6 AT 4x4 SE G2","performance100",1200000,1326000,P100)
+add("AGDD8A","Amarok Unlimited V6 AT 4x4 G2","performance",1080000,1193400,P90)            # ALTA sep
+add("AGDD8A","Amarok Unlimited V6 AT 4x4 G2","performance100",1200000,1326000,P100)
 add("BZ31T4","Polo Track MSI MT","performance",1000000,1210000,P90D50)
 add("BZ31T4","Polo Track MSI MT","performance100",1000000,1210000,P100D50)
 add("DF11T4","Tera Trend MSI MT","performance",1000000,1210000,P90D50)
