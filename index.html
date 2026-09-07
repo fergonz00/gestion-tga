@@ -3693,6 +3693,13 @@ function renderVentasOv() {
     const mencionaAcc = v.mencionaAcc || _gastoMencionaAcc(gasto);
     // El nag "acc" solo si menciona accesorios y NO hay monto cargado todavía (si
     // el acc del gasto 468 ya se autodetectó y sumó, no hace falta avisar).
+    // Monto de accesorios que NO se cargo a mano: sale del gasto 468 o del "Acc
+    // 4.000" que el vendedor escribio en el comentario. Se pinta en ambar para que
+    // se distinga del cargado a mano (azul) y se pueda pisar editandolo.
+    const accAutoDet = v.accAuto || v.accCom;
+    const accAutoTit = v.accCom
+      ? 'Leído del comentario de la PV (el «Acc» va en miles) — se suma solo como ingreso, sin IVA porque no se factura. Editá para fijarlo a mano.'
+      : 'Detectado del gasto (Costo Unidad ≠ $1.110.000) — se suma solo como ingreso. Edita para fijarlo a mano.';
     const accFlag = (mencionaAcc && !(v.accesorios > 0)) ? ' <span title="Menciona accesorios en el comentario, o el Costo Unidad del gasto difiere de $1.110.000 — cargá el monto" style="background:#cc6600;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">acc</span>' : '';
     // Badge del circuito reventas/FyF/costo unidad. Ámbar = pendiente que Valeria
     // confirme cobrado; verde OK = Valeria confirmó → hay que moverlo en Oversoft.
@@ -3749,7 +3756,7 @@ function renderVentasOv() {
       + '<td style="text-align:right;white-space:nowrap">' + gastoCell + '</td>'
       + '<td style="text-align:right">' + gciaCell + '</td>'
       + '<td style="text-align:right;color:' + gColor + '">' + (v.gciaVtaPct != null ? (v.gciaVtaPct * 100).toFixed(1) + '%' : '—') + '</td>'
-      + '<td style="text-align:right"><input type="number" value="' + (v.accesorios || 0) + '" onchange="guardarAccesorios(\'' + pvArg + '\', this.value)"' + (v.accAuto ? ' title="Detectado del gasto (Costo Unidad ≠ $1.110.000) — se suma solo como ingreso. Editá para fijarlo a mano."' : '') + ' style="width:108px;text-align:right;padding:3px 5px;border:1px solid ' + (v.accAuto ? '#b9770e' : (v.accesorios ? '#0a66c2' : 'var(--vw-grey-2)')) + ';border-radius:5px;font-size:12px' + (v.accAuto ? ';background:#fff6e9' : '') + '"></td>'
+      + '<td style="text-align:right"><input type="number" value="' + (v.accesorios || 0) + '" onchange="guardarAccesorios(\'' + pvArg + '\', this.value)"' + (accAutoDet ? ' title="' + accAutoTit + '"' : '') + ' style="width:108px;text-align:right;padding:3px 5px;border:1px solid ' + (accAutoDet ? '#b9770e' : (v.accesorios ? '#0a66c2' : 'var(--vw-grey-2)')) + ';border-radius:5px;font-size:12px' + (accAutoDet ? ';background:#fff6e9' : '') + '"></td>'
       + '</tr>';
     if (v.comentario) {
       h += '<tr id="vovcom_' + key + '"' + (comAbierto ? '' : ' style="display:none"') + '>'
@@ -3772,7 +3779,7 @@ function renderVentasOv() {
   }
   if (!rows.length) h += '<tr><td colspan="10" class="empty">Sin ventas.</td></tr>';
   h += '</tbody></table></div>';
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Ganancia = venta − costo de reposición (con incentivos) − comisión − IIBB + accesorios. Los badges <span style="background:#cc3300;color:#fff;border-radius:8px;padding:0 5px">FyF</span>/<span style="background:#cc3300;color:#fff;border-radius:8px;padding:0 5px">acc$</span> son el costo unidad del circuito que se concilia con saldos: rojo = pendiente de cobro · ámbar OK = Valeria confirmó (mover en Oversoft) · verde ✓ = completo · magenta ⚠ = reventa sin costo unidad. "s/BT" = mes sin BT cargada · "s/precio" = la PV no tiene precio de venta cargado · <span style="background:#00437A;color:#fff;border-radius:8px;padding:0 5px">EMPL. FÁBRICA</span> = la factura VW: cuenta para el objetivo, ganancia $0. <b>Gastos</b>: tocá el monto para ver el desglose por concepto (mismo dato que Adm. ventas); en ámbar "a fact." = cargado en la preventa, sin emitir todavía. (Versión nueva: sale de Oversoft, sin Sheet.)</div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Ganancia = venta − costo de reposición (con incentivos) − comisión − IIBB + accesorios. Los <b>accesorios</b> salen, en ese orden, de lo cargado a mano, del gasto Costo Unidad, o del «Acc» del comentario de la PV (va en miles: «Acc 4.000» = $4.000.000). Se suman sin IVA porque se cobran y no se facturan; en ámbar = autodetectado, editá el campo para fijarlo. Los badges <span style="background:#cc3300;color:#fff;border-radius:8px;padding:0 5px">FyF</span>/<span style="background:#cc3300;color:#fff;border-radius:8px;padding:0 5px">acc$</span> son el costo unidad del circuito que se concilia con saldos: rojo = pendiente de cobro · ámbar OK = Valeria confirmó (mover en Oversoft) · verde ✓ = completo · magenta ⚠ = reventa sin costo unidad. "s/BT" = mes sin BT cargada · "s/precio" = la PV no tiene precio de venta cargado · <span style="background:#00437A;color:#fff;border-radius:8px;padding:0 5px">EMPL. FÁBRICA</span> = la factura VW: cuenta para el objetivo, ganancia $0. <b>Gastos</b>: tocá el monto para ver el desglose por concepto (mismo dato que Adm. ventas); en ámbar "a fact." = cargado en la preventa, sin emitir todavía. (Versión nueva: sale de Oversoft, sin Sheet.)</div>';
   cont.innerHTML = h;
   const u = document.getElementById('updatedAtVentasOv');
   if (u && ventasOvData.updatedAt) u.textContent = 'Actualizado: ' + new Date(ventasOvData.updatedAt).toLocaleString('es-AR');

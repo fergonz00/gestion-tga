@@ -1,0 +1,625 @@
+<title>Seguros VW — Beneficios de agosto 2026</title>
+
+<style>
+  :root {
+    --paper:        #F1F4F8;
+    --surface:      #FFFFFF;
+    --surface-alt:  #E8ECF3;
+    --ink:          #101B2B;
+    --muted:        #5A6779;
+    --line:         #D2D9E4;
+    --line-strong:  #A9B4C4;
+    --accent:       #1B3FA0;
+    --accent-soft:  #E4E9F7;
+    --ochre:        #B0620F;
+    --ochre-soft:   #FAEEDF;
+    --go:           #1B7A4A;
+    --stop:         #A32A1E;
+
+    --mono: ui-monospace, "Cascadia Mono", "Consolas", "SF Mono", "Roboto Mono", monospace;
+    --sans: ui-sans-serif, "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+
+    --step--1: clamp(0.78rem, 0.76rem + 0.1vw, 0.84rem);
+    --step-0:  clamp(1rem, 0.97rem + 0.15vw, 1.09rem);
+    --step-1:  clamp(1.2rem, 1.13rem + 0.35vw, 1.42rem);
+    --step-2:  clamp(1.5rem, 1.36rem + 0.7vw, 1.95rem);
+    --step-3:  clamp(1.95rem, 1.7rem + 1.25vw, 2.85rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:        #0D131C;
+      --surface:      #151D28;
+      --surface-alt:  #1D2734;
+      --ink:          #E7EBF2;
+      --muted:        #94A1B4;
+      --line:         #283242;
+      --line-strong:  #3C4959;
+      --accent:       #8AAAF5;
+      --accent-soft:  #1A2540;
+      --ochre:        #E4A05A;
+      --ochre-soft:   #2C2216;
+      --go:           #5FC08C;
+      --stop:         #E88478;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:        #0D131C;
+    --surface:      #151D28;
+    --surface-alt:  #1D2734;
+    --ink:          #E7EBF2;
+    --muted:        #94A1B4;
+    --line:         #283242;
+    --line-strong:  #3C4959;
+    --accent:       #8AAAF5;
+    --accent-soft:  #1A2540;
+    --ochre:        #E4A05A;
+    --ochre-soft:   #2C2216;
+    --go:           #5FC08C;
+    --stop:         #E88478;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: var(--step-0);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 60rem;
+    margin: 0 auto;
+    padding: clamp(1.5rem, 4vw, 3.5rem) clamp(1.1rem, 4vw, 2.5rem) 5rem;
+  }
+
+  /* ---------- encabezado ---------- */
+
+  .head { display: flex; flex-direction: column; gap: 1rem; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  .head h1 {
+    margin: 0;
+    font-size: var(--step-3);
+    line-height: 1.02;
+    letter-spacing: -0.035em;
+    font-weight: 800;
+    text-wrap: balance;
+  }
+
+  .head h1 em {
+    font-style: normal;
+    color: var(--accent);
+  }
+
+  .head p {
+    margin: 0;
+    max-width: 46ch;
+    font-size: var(--step-1);
+    color: var(--muted);
+    line-height: 1.45;
+  }
+
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--line-strong);
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    color: var(--muted);
+    letter-spacing: 0.03em;
+  }
+
+  .meta b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- resumen de arriba ---------- */
+
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: 1px;
+    margin: 2.75rem 0 3.5rem;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .tile {
+    background: var(--surface);
+    padding: 1.35rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .tile__label {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+  }
+
+  .tile__value {
+    font-size: var(--step-1);
+    font-weight: 750;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+  }
+
+  .tile__note { font-size: var(--step--1); color: var(--muted); }
+
+  /* ---------- fichas ---------- */
+
+  .ficha {
+    display: grid;
+    grid-template-columns: 7.5rem 1fr;
+    gap: 0 2rem;
+    padding: 2.5rem 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .ficha__gutter {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    padding-top: 0.55rem;
+  }
+
+  .ficha__gutter .circ { color: var(--accent); font-weight: 600; }
+
+  .ficha__body { min-width: 0; display: flex; flex-direction: column; gap: 1.35rem; }
+
+  .ficha h2 {
+    margin: 0;
+    font-size: var(--step-2);
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+    font-weight: 800;
+    text-wrap: balance;
+  }
+
+  .ficha h2 span {
+    display: block;
+    font-size: var(--step--1);
+    font-family: var(--mono);
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.55rem;
+  }
+
+  /* frase para el cliente */
+  .pitch {
+    background: var(--accent-soft);
+    border-left: 4px solid var(--accent);
+    padding: 1.1rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .pitch__label {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+  }
+
+  .pitch__line {
+    margin: 0;
+    font-size: var(--step-1);
+    font-weight: 650;
+    line-height: 1.35;
+    letter-spacing: -0.015em;
+    text-wrap: pretty;
+  }
+
+  /* aplica / no aplica */
+  .reglas { display: flex; flex-direction: column; gap: 0.7rem; }
+
+  .regla {
+    display: grid;
+    grid-template-columns: 5.5rem 1fr;
+    gap: 0 1rem;
+    align-items: baseline;
+    padding-bottom: 0.7rem;
+    border-bottom: 1px dashed var(--line);
+  }
+
+  .regla:last-child { border-bottom: 0; padding-bottom: 0; }
+
+  .regla__k {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+  }
+
+  .regla--si .regla__k { color: var(--go); }
+  .regla--no .regla__k { color: var(--stop); }
+  .regla--dato .regla__k { color: var(--muted); }
+
+  .regla__v { margin: 0; }
+  .regla__v strong { font-weight: 700; }
+  .regla__v .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* avisos */
+  .callout {
+    background: var(--ochre-soft);
+    border: 1px solid var(--ochre);
+    padding: 1rem 1.15rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .callout__label {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--ochre);
+    font-weight: 600;
+  }
+
+  .callout p { margin: 0; }
+
+  /* pasos obligatorios */
+  .pasos {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    counter-reset: paso;
+  }
+
+  .pasos__label {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    margin: 0 0 0.15rem;
+  }
+
+  .pasos li {
+    counter-increment: paso;
+    position: relative;
+    padding-left: 2.35rem;
+  }
+
+  .pasos li::before {
+    content: counter(paso);
+    position: absolute;
+    left: 0;
+    top: 0.15rem;
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    font-weight: 700;
+    color: var(--surface);
+    background: var(--ink);
+    width: 1.4rem;
+    height: 1.4rem;
+    line-height: 1.4rem;
+    text-align: center;
+  }
+
+  /* ---------- tabla de descuentos ---------- */
+
+  .tabla-wrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
+
+  table { border-collapse: collapse; width: 100%; min-width: 34rem; }
+
+  caption {
+    text-align: left;
+    padding: 0.9rem 1rem;
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    border-bottom: 1px solid var(--line);
+  }
+
+  th, td { text-align: left; padding: 0.7rem 1rem; border-bottom: 1px solid var(--line); }
+
+  thead th {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    font-weight: 600;
+    background: var(--surface-alt);
+  }
+
+  tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+
+  tbody th { font-weight: 600; }
+
+  td.desc {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 650;
+    white-space: nowrap;
+  }
+
+  /* ---------- errores ---------- */
+
+  .errores {
+    margin-top: 3rem;
+    border: 2px solid var(--stop);
+    background: var(--surface);
+    padding: clamp(1.25rem, 3vw, 1.9rem);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .errores h2 {
+    margin: 0;
+    font-size: var(--step-1);
+    letter-spacing: -0.02em;
+    font-weight: 800;
+  }
+
+  .errores ul { margin: 0; padding-left: 1.15rem; display: flex; flex-direction: column; gap: 0.55rem; }
+
+  .errores li::marker { color: var(--stop); }
+
+  /* ---------- pie ---------- */
+
+  .pie {
+    margin-top: 3rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    color: var(--muted);
+    line-height: 1.7;
+    letter-spacing: 0.02em;
+  }
+
+  .pie ul { margin: 0.5rem 0 0; padding-left: 1.1rem; }
+
+  @media (max-width: 40rem) {
+    .ficha { grid-template-columns: 1fr; gap: 0.9rem; }
+    .ficha__gutter { flex-direction: row; gap: 1rem; padding-top: 0; }
+    .regla { grid-template-columns: 1fr; gap: 0.15rem; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="head">
+    <p class="eyebrow">Tito Gonzalez Automotores · Resumen interno para vendedores</p>
+    <h1>Seguros VW: qué regalamos <em>este mes</em></h1>
+    <p>Tres circulares de VW Brokers, resumidas. Todo vale durante agosto de 2026.</p>
+    <div class="meta">
+      <span>Vigencia <b>agosto 2026</b></span>
+      <span>Aseguradora <b>Zurich (Cobertura VW)</b></span>
+      <span>Circulares <b>OM11-26 · OM12-26 · OM13-26</b></span>
+    </div>
+  </header>
+
+  <section class="tiles" aria-label="Resumen de beneficios">
+    <div class="tile">
+      <span class="tile__label">Polo de contado</span>
+      <span class="tile__value">2 meses de seguro gratis</span>
+      <span class="tile__note">Todo Riesgo, franquicia 6%</span>
+    </div>
+    <div class="tile">
+      <span class="tile__label">Amarok con seguro</span>
+      <span class="tile__value">Plato de seguridad gratis</span>
+      <span class="tile__note">Vale $129.685 + IVA · tenemos 10</span>
+    </div>
+    <div class="tile">
+      <span class="tile__label">Todo el resto 0km</span>
+      <span class="tile__value">50% off, 3 meses</span>
+      <span class="tile__note">Solo si no lleva financiación</span>
+    </div>
+  </section>
+
+  <article class="ficha">
+    <div class="ficha__gutter">
+      <span class="circ">OM12-26</span>
+      <span>03/08/26</span>
+    </div>
+    <div class="ficha__body">
+      <h2><span>Beneficio 1</span>Polo: los 2 primeros meses de seguro, gratis</h2>
+
+      <div class="pitch">
+        <span class="pitch__label">Lo que le decís al cliente</span>
+        <p class="pitch__line">“Te llevás el Polo con dos meses de seguro Todo Riesgo pagos por Volkswagen. Después seguís con 50% de descuento tres meses más, y si en algún momento no te sirve, lo das de baja.”</p>
+      </div>
+
+      <div class="reglas">
+        <div class="regla regla--si">
+          <span class="regla__k">Aplica a</span>
+          <p class="regla__v">Polo 0km vendido <strong>de contado</strong>, sin financiación. El seguro se da de alta por la web de VW Brokers, canal Mercado Abierto.</p>
+        </div>
+        <div class="regla regla--no">
+          <span class="regla__k">No aplica</span>
+          <p class="regla__v">Si el Polo sale con crédito o prenda. Y no lo podés dar de alta por otro lado: es sí o sí por el link de la promo en la web de Brokers.</p>
+        </div>
+        <div class="regla regla--dato">
+          <span class="regla__k">Qué es</span>
+          <p class="regla__v">Todo Riesgo con franquicia del <span class="num">6%</span>, bonificado al <span class="num">100%</span> las dos primeras vigencias.</p>
+        </div>
+        <div class="regla regla--dato">
+          <span class="regla__k">Y después</span>
+          <p class="regla__v">Al terminar los dos meses la póliza <strong>sigue sola</strong>, debitando del medio de pago que cargaste, con <span class="num">50%</span> de descuento por 3 meses y después subiendo de a poco hasta el precio pleno. El cliente puede cambiar de compañía o darla de baja cuando quiera.</p>
+        </div>
+      </div>
+
+      <div>
+        <p class="pasos__label">Cómo se carga</p>
+        <ol class="pasos">
+          <li>Entrás a la web de VW Brokers y clickeás el link de la promo Polo.</li>
+          <li>Cargás los datos del cliente, del vehículo y el medio de pago (CBU o tarjeta de crédito).</li>
+          <li>Emitís el certificado y bajás la nota de aceptación de la promo.</li>
+          <li><strong>El cliente la firma.</strong> Sin esa firma no hay beneficio. Si la nota no baja de la web, mandás el anexo de la circular completo a roman.aliano@vwfs.com.ar.</li>
+        </ol>
+      </div>
+
+      <div class="callout">
+        <span class="callout__label">No prometas 3 meses</span>
+        <p><strong>Son 2 meses.</strong> En la última hoja de la circular hay un título donde por error dice “3 meses”, y la pantalla de ejemplo habla de la Amarok: VW dejó copiado un pedazo de una promo vieja. Si alguien te muestra eso, está mal.</p>
+      </div>
+    </div>
+  </article>
+
+  <article class="ficha">
+    <div class="ficha__gutter">
+      <span class="circ">OM11-26</span>
+      <span class="circ">FS08-26</span>
+      <span>31/07/26</span>
+    </div>
+    <div class="ficha__body">
+      <h2><span>Beneficio 2</span>Amarok: plato de seguridad de regalo</h2>
+
+      <div class="pitch">
+        <span class="pitch__label">Lo que le decís al cliente</span>
+        <p class="pitch__line">“Si asegurás la Amarok con nosotros por Cobertura Volkswagen, te ponemos el plato de seguridad original para la rueda de auxilio sin cargo. Vale más de ciento treinta mil pesos.”</p>
+      </div>
+
+      <div class="reglas">
+        <div class="regla regla--si">
+          <span class="regla__k">Aplica a</span>
+          <p class="regla__v">Amarok 0km asegurada con <strong>Cobertura VW Zurich, cualquier cobertura</strong> (Todo Riesgo o Terceros) y por <strong>cualquier canal</strong>: financiada con VWFS, de contado / mercado abierto, o autoahorro.</p>
+        </div>
+        <div class="regla regla--si">
+          <span class="regla__k">Versiones</span>
+          <p class="regla__v">Trendline 4x4 · Highline · Extreme · Hero · Black Style · Unlimited.</p>
+        </div>
+        <div class="regla regla--no">
+          <span class="regla__k">No aplica</span>
+          <p class="regla__v">A la <strong>Trendline 4x2</strong>. No está en la lista de versiones compatibles: si la ofrecés ahí, el plato lo terminamos pagando nosotros.</p>
+        </div>
+        <div class="regla regla--dato">
+          <span class="regla__k">Qué es</span>
+          <p class="regla__v">Accesorio original VW, pieza <span class="num">V04-011-052</span>. Costo al 31/07: <span class="num">$129.685</span> + IVA. <strong>Tenemos 10 en el concesionario.</strong></p>
+        </div>
+      </div>
+
+      <div>
+        <p class="pasos__label">Cómo se hace</p>
+        <ol class="pasos">
+          <li>Se factura el plato al cliente con <strong>100% de bonificación</strong> (o sea, va en la factura pero en cero).</li>
+          <li>Se coloca en el vehículo antes de entregarlo.</li>
+          <li><strong>El cliente firma la nota de aceptación.</strong> Es obligatoria y va en PDF.</li>
+          <li>A fin de mes se manda a VW Brokers el número de factura, DNI o CUIT del cliente, VIN o dominio, y la nota firmada. Zurich valida y nos devuelve la plata.</li>
+        </ol>
+      </div>
+
+      <div class="callout">
+        <span class="callout__label">Por qué importa la firma</span>
+        <p>El plato lo pone la agencia de su bolsillo y después Zurich nos lo devuelve, pero <strong>solo si mandamos la nota firmada</strong> junto con la factura y el número de chasis. Si falta la firma, ese plato lo terminamos pagando nosotros. Zurich además puede pedir copia de las facturas para controlar.</p>
+      </div>
+    </div>
+  </article>
+
+  <article class="ficha">
+    <div class="ficha__gutter">
+      <span class="circ">OM13-26</span>
+      <span>03/08/26</span>
+    </div>
+    <div class="ficha__body">
+      <h2><span>Beneficio 3</span>Los descuentos de siempre, para todo lo demás</h2>
+
+      <div class="pitch">
+        <span class="pitch__label">Lo que le decís al cliente</span>
+        <p class="pitch__line">“Arrancás con la mitad del seguro los primeros tres meses, y las primeras tres cuotas te quedan al mismo precio: no te sube mes a mes.”</p>
+      </div>
+
+      <div class="tabla-wrap">
+        <table>
+          <caption>Zurich — Cobertura Volkswagen</caption>
+          <thead>
+            <tr><th scope="col">Vehículo</th><th scope="col">Cobertura</th><th scope="col">Descuento</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">0km (todos)</th><td>Todas</td><td class="desc">50% · 3 meses</td></tr>
+            <tr><th scope="row">Usado multimarca</th><td>Todo Riesgo</td><td class="desc">25% · 3 meses</td></tr>
+            <tr><th scope="row">Usado multimarca</th><td>Terceros Completo</td><td class="desc">30% · 3 meses</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="tabla-wrap">
+        <table>
+          <caption>La Caja — solo con débito automático</caption>
+          <thead>
+            <tr><th scope="col">Vehículo</th><th scope="col">Cobertura</th><th scope="col">Descuento</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">Amarok 0km</th><td>Todas</td><td class="desc">50% · 3 meses</td></tr>
+            <tr><th scope="row">Resto 0km</th><td>Todas</td><td class="desc">30% · 3 meses</td></tr>
+            <tr><th scope="row">Usado hasta 5 años</th><td>Todas</td><td class="desc">30% · 3 meses</td></tr>
+            <tr><th scope="row">Usado de 6 a 15 años</th><td>Todas</td><td class="desc">20% · 3 meses</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="reglas">
+        <div class="regla regla--no">
+          <span class="regla__k">Ojo</span>
+          <p class="regla__v">Estos descuentos son para vehículos <strong>no financiados</strong>. Ya vienen aplicados en el precio que te muestra la web de Brokers cuando cotizás: no los sumes aparte.</p>
+        </div>
+        <div class="regla regla--dato">
+          <span class="regla__k">Extra</span>
+          <p class="regla__v">En La Caja, la primera facturación sale trimestral: las <strong>3 primeras cuotas quedan a precio fijo</strong> y recién desde el cuarto mes se actualiza la suma asegurada. Es un buen argumento contra “y esto cuánto me va a subir”.</p>
+        </div>
+        <div class="regla regla--dato">
+          <span class="regla__k">Para vos</span>
+          <p class="regla__v">Toda alta de Cobertura VW Zurich suma puntos para el concurso de viaje <strong>Experiencia 2026/2027</strong>.</p>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <section class="errores">
+    <h2>Las cuatro formas de perder el beneficio</h2>
+    <ul>
+      <li><strong>No hacer firmar la nota de aceptación.</strong> Vale para el Polo y para el plato de la Amarok. Es lo único que VW no perdona.</li>
+      <li><strong>Ofrecer el Polo bonificado en una venta financiada.</strong> La promo es solo contado.</li>
+      <li><strong>Prometer 3 meses de Polo gratis.</strong> Son 2. Donde la circular dice “3 meses” está equivocada.</li>
+      <li><strong>Poner el plato en una Amarok 4x2.</strong> No entra en las versiones compatibles.</li>
+    </ul>
+  </section>
+
+  <footer class="pie">
+    Fuente — circulares de Volkswagen Brokers Argentina:
+    <ul>
+      <li>OM12-26 (03/08/2026) — Polo 0km, seguro bonificado</li>
+      <li>OM11-26 / FS08-26 (31/07/2026) — Plato de seguridad Amarok</li>
+      <li>OM13-26 (03/08/2026) — Promociones agosto, programa Open Market</li>
+    </ul>
+    Ante cualquier duda de carga, el contacto en VW Brokers es Román Aliano — roman.aliano@vwfs.com.ar
+  </footer>
+
+</div>
