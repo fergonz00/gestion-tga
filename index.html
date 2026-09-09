@@ -3747,7 +3747,7 @@ function renderVentasOv() {
       ? '<button onclick="toggleVentasOvCont(\'' + key + '\')" title="' + montoTitle.replace(/"/g, '&quot;') + '" style="border:0;background:none;cursor:pointer;color:inherit;font-weight:600;font-size:12px;padding:0">' + fmtPesos(v.montoFc) + (contPend ? ' <span style="color:#cc3300">●</span>' : ' <span style="color:#0a7a30">✓</span>') + _ar(contAbierto) + '</button>'
       : fmtPesos(v.montoFc);
     h += '<tr>'
-      + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + revBadge + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + (v.emplFabrica ? ' <span title="Venta a empleado de fábrica: la unidad la factura VW. Suma al objetivo de patentamientos pero no deja ganancia (por eso va en $0). Se detecta por el comentario de la PV." style="background:#00437A;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">EMPL. FÁBRICA</span>' : '') + _comisionTGControl(v) + _corpControl(v) + '</td>'
+      + '<td><b>' + escapeHtml(v.preventaNum) + '</b>' + btnCom + revBadge + (v.esAA ? ' <span title="Autoahorro (G-O): no cobra incentivos" style="background:#7a5b00;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">AA</span>' : '') + (v.especial ? ' <span title="PV especial/abierta: excepción manual, no toma incentivos" style="background:#6a1b9a;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">ESP</span>' : '') + (v.emplFabrica ? ' <span title="Venta a empleado de fábrica: la unidad la factura VW. Suma al objetivo de patentamientos pero no deja ganancia (por eso va en $0). Se detecta por el comentario de la PV." style="background:#00437A;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">EMPL. FÁBRICA</span>' : '') + _comisionTGControl(v) + _corpControl(v) + _transfBadge(v) + '</td>'
       + '<td>' + _fechaDMA(v.fechaPvIso) + '</td>'
       + '<td>' + escapeHtml(v.modelo) + '</td>'
       + '<td style="font-size:12px;color:var(--vw-grey-3)">' + escapeHtml(v.color || '—') + '</td>'
@@ -3779,7 +3779,7 @@ function renderVentasOv() {
   }
   if (!rows.length) h += '<tr><td colspan="10" class="empty">Sin ventas.</td></tr>';
   h += '</tbody></table></div>';
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Ganancia = venta − costo de reposición (con incentivos) − comisión − IIBB + accesorios. Los <b>accesorios</b> salen, en ese orden, de lo cargado a mano, del gasto Costo Unidad, o del «Acc» del comentario de la PV (va en miles: «Acc 4.000» = $4.000.000). Se suman sin IVA porque se cobran y no se facturan; en ámbar = autodetectado, editá el campo para fijarlo. Los badges <span style="background:#cc3300;color:#fff;border-radius:8px;padding:0 5px">FyF</span>/<span style="background:#cc3300;color:#fff;border-radius:8px;padding:0 5px">acc$</span> son el costo unidad del circuito que se concilia con saldos: rojo = pendiente de cobro · ámbar OK = Valeria confirmó (mover en Oversoft) · verde ✓ = completo · magenta ⚠ = reventa sin costo unidad. "s/BT" = mes sin BT cargada · "s/precio" = la PV no tiene precio de venta cargado · <span style="background:#00437A;color:#fff;border-radius:8px;padding:0 5px">EMPL. FÁBRICA</span> = la factura VW: cuenta para el objetivo, ganancia $0. <b>Gastos</b>: tocá el monto para ver el desglose por concepto (mismo dato que Adm. ventas); en ámbar "a fact." = cargado en la preventa, sin emitir todavía. (Versión nueva: sale de Oversoft, sin Sheet.)</div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Ganancia = venta − costo de reposición (con incentivos) − comisión − IIBB + accesorios − impuestos de la parte cobrada por transferencia. El badge <span style="background:#9a3412;color:#fff;border-radius:8px;padding:0 5px">TRANSF</span> marca las ventas donde el cliente no depositó todo en SICE ni pagó con cheque a la orden: esa plata entró y salió de nuestro banco y dejó 0,6% + 0,6% + SIRCREB. El monto sale de la consulta de precio, cruzada por el N° de preventa que carga el vendedor al marcar la venta. Los <b>accesorios</b> salen, en ese orden, de lo cargado a mano, del gasto Costo Unidad, o del «Acc» del comentario de la PV (va en miles: «Acc 4.000» = $4.000.000). Se suman sin IVA porque se cobran y no se facturan; en ámbar = autodetectado, editá el campo para fijarlo. Los badges <span style="background:#cc3300;color:#fff;border-radius:8px;padding:0 5px">FyF</span>/<span style="background:#cc3300;color:#fff;border-radius:8px;padding:0 5px">acc$</span> son el costo unidad del circuito que se concilia con saldos: rojo = pendiente de cobro · ámbar OK = Valeria confirmó (mover en Oversoft) · verde ✓ = completo · magenta ⚠ = reventa sin costo unidad. "s/BT" = mes sin BT cargada · "s/precio" = la PV no tiene precio de venta cargado · <span style="background:#00437A;color:#fff;border-radius:8px;padding:0 5px">EMPL. FÁBRICA</span> = la factura VW: cuenta para el objetivo, ganancia $0. <b>Gastos</b>: tocá el monto para ver el desglose por concepto (mismo dato que Adm. ventas); en ámbar "a fact." = cargado en la preventa, sin emitir todavía. (Versión nueva: sale de Oversoft, sin Sheet.)</div>';
   cont.innerHTML = h;
   const u = document.getElementById('updatedAtVentasOv');
   if (u && ventasOvData.updatedAt) u.textContent = 'Actualizado: ' + new Date(ventasOvData.updatedAt).toLocaleString('es-AR');
@@ -5583,6 +5583,18 @@ function toggleVentasOvDet(key) { _vovToggle(ventasOvDetAbiertos, key); }
 // gastosmap → _gastoDetalleHtml / _gastoAFacturarHtml).
 let ventasOvGastoAbiertos = new Set();
 function toggleVentasOvGasto(key) { _vovToggle(ventasOvGastoAbiertos, key); }
+// Badge "TRANSF" en la fila de Ventas: el cliente pago una parte por transferencia
+// en vez de depositar en SICE / pagar con cheque a la orden, y eso dejo impuestos
+// que salen de la ganancia. Sin el badge, esa venta parece peor que las demas sin
+// motivo visible. El monto sale de la consulta de precio, cruzada por N° de PV.
+function _transfBadge(v) {
+  if (!v.transferencia) return '';
+  const t = v.transferencia;
+  const tit = 'Cobró ' + fmtPesos(t.monto) + ' por transferencia: ' + fmtPesos(t.costo)
+    + ' de impuestos (' + (t.alicuota * 100).toFixed(2).replace('.', ',') + '%) que se descuentan de la ganancia. Consulta de precio #' + t.consultaId + '.';
+  return ' <span title="' + tit.replace(/"/g, '&quot;') + '" style="background:#9a3412;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">TRANSF −' + fmtPesos(t.costo) + '</span>';
+}
+
 function _ventaDetHtml(v) {
   const b = v.breakdown;
   let h = '<div style="display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start">';
@@ -5618,11 +5630,26 @@ function _ventaDetHtml(v) {
   else {
     const c = b.costos;
     h += '<table style="font-size:12px;border-collapse:collapse">'
-      + _gKv('Comisión vendedor', c.comision) + _gKv('IIBB', c.iibb) + '</table>'
+      + _gKv('Comisión vendedor', c.comision) + _gKv('IIBB', c.iibb)
+      + (v.transferencia ? _gKv('Imp. transferencia', v.transferencia.costo) : '')
+      + '</table>'
       + (b.sinComision ? '<div style="color:#1b5e20;font-size:11px;margin-top:3px">Venta gerencia (TG): comisión NO computada.</div>' : '')
       + '<div style="color:#888;font-size:11px;margin-top:3px">Costo de reposición: $' + _gMoney(c.costoRep) + '</div>';
   }
   h += '</div>';
+  // Cobro por transferencia: el cliente no deposito en SICE ni pago con cheque a
+  // la orden, asi que esa plata entro y salio de nuestro banco y dejo impuestos.
+  // Sale de la consulta de precio, cruzada por el N° de preventa.
+  if (v.transferencia) {
+    const t = v.transferencia;
+    h += '<div style="min-width:230px">'
+      + '<div style="font-weight:700;font-size:12px;margin-bottom:4px">Cobrado por transferencia</div>'
+      + '<table style="font-size:12px;border-collapse:collapse">'
+      + _gKv('Monto transferido', t.monto) + _gKv('Impuestos (' + (t.alicuota * 100).toFixed(2).replace('.', ',') + '%)', t.costo)
+      + '</table>'
+      + '<div style="color:#888;font-size:11px;margin-top:3px;max-width:230px">0,6% de entrada + 0,6% de salida + SIRCREB. Sale de la consulta de precio #' + t.consultaId + '. Si hubiese entrado por SICE o con cheque endosado, no costaba nada.</div>'
+      + '</div>';
+  }
   h += '</div>';
   return h;
 }
