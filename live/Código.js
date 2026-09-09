@@ -188,12 +188,20 @@ const MADRE_SHEETS_OK = [
 // Fórmulas del Sheet (ventaNeta = lista*(1-dtoTG)):
 //   AH = ventaNeta + FYF(1.110.000)
 //   AM = (ventaNeta - costoRep + cc90Iva + otros*lista) / lista
-//   AN = AM*lista - 0,0135*(ventaNeta/1,21) - 0,014*(ventaNeta/1,21) - 0,006*ventaNeta
-//   AO = AN / lista        (IIBB 1,35% y comisión 1,40% sobre neto de IVA; cheque 0,6% s/ventaNeta)
+//   AN = AM*lista - 0,0135*(ventaNeta/1,21) - 0,014*(ventaNeta/1,21)   (cheque = 0 desde 09-09-2026)
+//   AO = AN / lista        (IIBB 1,35% y comisión 1,40% sobre neto de IVA)
 const PRECIOS_FYF      = 1110000;   // flete y formularios, sumado en AH
 const PRECIOS_IIBB     = 0.0135;    // 1,35% sobre ventaNeta/1,21
 const PRECIOS_COMISION = 0.014;     // 1,40% sobre ventaNeta/1,21
-const PRECIOS_CHEQUE   = 0.006;     // 0,6% sobre ventaNeta (con IVA)  ← bajado de 0,85% el 2026-07-07
+// 0 desde el 09-09-2026. Era una PRECAUCION: se le cargaba 0,6% a TODAS las ventas
+// contemplando que algunas se iban a cobrar por transferencia. Ahora ese costo se
+// calcula donde de verdad ocurre — la consulta de precio pregunta que monto va por
+// transferencia y le aplica la alicuota real del mes (0,6% de entrada + 0,6% de
+// salida + SIRCREB, tabla costos_financieros_mes). Dejarlo aca ademas lo contaba
+// dos veces. Se deja la constante en 0 y no se borra el termino: si algun dia hay
+// que volver, es cambiar este numero. OJO: tiene que coincidir con el CHEQUE de
+// PreciosClient.tsx y AnalisisModelo.tsx del portal de precios.
+const PRECIOS_CHEQUE   = 0;         // sin costo fijo de cheque: ver comentario arriba
 function getPreciosActualBT() {
   const ss = SpreadsheetApp.openById(MADRE_ID);
   const sh = ss.getSheetByName('Actual BT');

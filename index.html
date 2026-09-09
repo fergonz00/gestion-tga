@@ -4644,7 +4644,7 @@ function renderPrecios() {
        + '<td colspan="2"></td></tr>';
   }
   h += '</tbody></table></div>';
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Precio = lista (Supabase) − dto + FYF, más el ajuste a mano si lo hay (✎); ganancia con incentivos, IIBB (1,35%), comisión (1,40%) e imp. cheque (0,6%). Stock y colores en vivo de Oversoft.'
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">Precio = lista (Supabase) − dto + FYF, más el ajuste a mano si lo hay (✎); ganancia con incentivos, IIBB (1,35%) y comisión (1,40%). Stock y colores en vivo de Oversoft.'
      + ' Competencia: 0km publica c/FYF, a Espasa se le suma FYF para comparar; verde = estás más barato.'
      + (preciosData.competenciaActualizado ? ' Competencia actualizada: ' + escapeHtml(String(preciosData.competenciaActualizado)) + '.' : '')
      + '</div>';
@@ -4677,7 +4677,7 @@ function _ajusteDe(m, color) {
 }
 // Ganancia recalculada para un precio de oferta dado (con FYF incluido).
 function _gciaConPrecio(m, precioConFyf) {
-  const C = (preciosData && preciosData.constantes) || { fyf:1110000, iibb:0.0135, comision:0.014, cheque:0.0085, iva:1.21 };
+  const C = (preciosData && preciosData.constantes) || { fyf:1110000, iibb:0.0135, comision:0.014, cheque:0, iva:1.21 };
   const lista = Number(m.sim && m.sim.lista) || 0;
   if (lista <= 0) return null;
   const dto = 1 - (precioConFyf - C.fyf) / lista;
@@ -4749,7 +4749,10 @@ function _precioDetalle(m, key) {
   h += li('Costo reposición', fmtPesos(m.costoRep));
   h += li('IIBB (1,35%)', fmtPesos(cos.iibb));
   h += li('Comisión (1,40%)', fmtPesos(cos.comision));
-  h += li('Imp. cheque (0,6%)', fmtPesos(cos.cheque));
+  // El imp. cheque quedo en 0 el 09-09-2026 (el costo real se calcula en la consulta
+  // de precio, sobre el monto que el cliente pide pagar por transferencia). La fila
+  // solo aparece si alguna vez vuelve a cargarse en el motor.
+  if (Number(cos.cheque) > 0) h += li('Imp. cheque', fmtPesos(cos.cheque));
   h += li('FYF (flete+form.)', fmtPesos(cos.fyf));
   h += li('Stock', (Number(m.stock)||0));
   h += li('Ventas (últ. 4 meses completos)', _ventasVentana(m));
