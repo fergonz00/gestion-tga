@@ -8,7 +8,14 @@ catalogo (SE); tramos performance distintos de 90/100 se anotan en condicion;
 filas en $0 no se cargan.
 Circuito completo: skill circular-vw (C:\\proyectos\\.claude\\skills).
 
-Ultima corrida: 2026-09 circular 99/26. Tacticos, Tiguan/Vento y esquema trimestral
+Ultima corrida: 2026-09 circulares 99/26 + 105/26.
+
+C105/26 (10/09/26) "Condiciones comerciales incrementales Amarok - septiembre":
+tactico INCREMENTAL de 1.381.357 s/Imp (1.526.400 c/Imp) para AGDB33 Comfortline
+CD TDI MT 4X2, AGDB3X Comfortline CD TDI AT 4X2 y AGDC3X Highline CD TDI AT 4X2.
+Se carga como adicional1 con circular propia -> el resto del mes queda igual.
+
+De la 99/26: Tacticos, Tiguan/Vento y esquema trimestral
 IDENTICOS a agosto al peso. Cambios reales del mes:
  - WHOLESALE +1,50% en los 14 (acompana la lista #897).
  - PERFORMANCE reacomodado en las Amarok 4x2: Trendline 4x2 se DERRUMBA de
@@ -31,8 +38,8 @@ import json, urllib.request, sys
 CIRC = "99/26"
 MES = "2026-09"
 R = []
-def add(codigo, nombre, tipo, siva, civa, cond):
-    R.append((codigo, nombre, tipo, siva, civa, cond))
+def add(codigo, nombre, tipo, siva, civa, cond, circ=None):
+    R.append((codigo, nombre, tipo, siva, civa, cond, circ or CIRC))
 
 T50 = "50% objetivo"
 # ---------------- TACTICO (identico a agosto, al peso) ----------------
@@ -95,10 +102,21 @@ add("DF13D3","Tera Comfort 170TSI AT + Pack Safe II","whosale",581508,703624,W)
 add("CH23K3","Nivus Comfortline 200TSI AT","whosale",1026562,1242140,W)
 add("CH24K3","Nivus Highline 200TSI AT","whosale",1108449,1341223,W)
 add("CH24K3","Nivus Outfit 200TSI AT","whosale",1133915,1372038,W)
-# ---------------- ADICIONAL1: SIGUE SIN EXISTIR ----------------
+# ---------------- ADICIONAL1 (incremental) ----------------
 # Desde la circular 89/26 el "Incentivo Tactico Incremental Polo/Tera/Nivus" quedo
-# consolidado DENTRO del tactico. Cargarlo aparte seria contarlo dos veces: el
-# motor suma tactico+whosale+adicional1+adicional2+cupo.
+# consolidado DENTRO del tactico -> para esos modelos NO se carga aparte (seria
+# contarlo dos veces: el motor suma tactico+whosale+adicional1+adicional2+cupo).
+# El 10/09/26 VW saca la circular 105/26 "Condiciones comerciales incrementales
+# Amarok - septiembre": tactico incremental para 3 versiones 4x2. Es plata NUEVA
+# (el tactico de la 99/26 es identico al de agosto al peso, no la traia adentro).
+# Wholesale s/Imp 1.381.357 -> c/Imp 1.526.400 (IVA 10,5% Amarok, cierra al peso).
+# La circular NO pide 50% de objetivo ni restringe por fecha de factura: dice solo
+# "validas para los patentamientos del mes de septiembre 2026".
+C105 = "105/26"
+INCR = "Patentamientos septiembre 2026 (sin requisito de objetivo)"
+add("AGDB33","Amarok Comfortline TDI MT 4x2 SE G2","adicional1",1381357,1526400,INCR,C105)
+add("AGDB3X","Amarok Comfortline TDI AT 4x2 SE G2","adicional1",1381357,1526400,INCR,C105)
+add("AGDC3X","Amarok Highline TDI AT 4x2 SE G2","adicional1",1381357,1526400,INCR,C105)
 # ---------------- PERFORMANCE (90%) y PERFORMANCE100 ----------------
 # La tabla viene como IMAGEN y solo sin IVA -> el c/IVA se calcula (21% / 10,5%).
 P90D50 = "90% objetivo (cobra desde 50%)"
@@ -135,7 +153,7 @@ add("DF11T4","Tera Trend MSI MT + Pack Safe I","performance100",1000000,1210000,
 
 print("filas %s: %d" % (MES, len(R)))
 from collections import Counter
-print(dict(Counter(t for _,_,t,_,_,_ in R)))
+print(dict(Counter(t for _,_,t,_,_,_,_ in R)))
 if "--go" not in sys.argv:
     print("(dry-run; --go para cargar)"); sys.exit(0)
 
@@ -153,8 +171,8 @@ def sql(q):
     return json.load(urllib.request.urlopen(req))
 
 vals = ",".join("('%s','%s','%s','%s',%d,%d,'%s','%s')" %
-                (MES, c, n.replace("'", "''"), t, s, v, cond.replace("'", "''"), CIRC)
-                for c, n, t, s, v, cond in R)
+                (MES, c, n.replace("'", "''"), t, s, v, cond.replace("'", "''"), ci)
+                for c, n, t, s, v, cond, ci in R)
 sql("delete from incentivos where mes='%s'" % MES)
 sql("insert into incentivos (mes,codigo,nombre_corto,tipo,monto_siva,monto_civa,condicion,circular) values " + vals)
 
@@ -163,7 +181,7 @@ chk = sql("select tipo, count(*) as n, sum(monto_siva)::bigint as total from inc
 print("DB %s:" % MES, chk)
 esp = {}
 tot = {}
-for _, _, t, s, _, _ in R:
+for _, _, t, s, _, _, _ in R:
     esp[t] = esp.get(t, 0) + 1; tot[t] = tot.get(t, 0) + s
 okall = True
 for row in chk:
