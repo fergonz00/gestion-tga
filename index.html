@@ -1665,6 +1665,7 @@ table.patent-tbl tr.tbl-sep.pat:hover td  { background: var(--green-soft); }
           <div class="updated" id="updatedAtFin">Cobranza de financiaciones por mes de patentamiento: cuáles ya se cobraron y cuáles faltan, una por una y sumadas. Mismo dato de la grilla de Adm. ventas (Oversoft en vivo).</div>
           <div class="actions">
             <select id="finMes" onchange="finSetMes(this.value)" style="padding:6px 8px;border:1px solid var(--border,#ccc);border-radius:6px"></select>
+            <select id="finVend" onchange="finSetVend(this.value)" title="Filtrar por vendedor" style="padding:6px 8px;border:1px solid var(--border,#ccc);border-radius:6px"></select>
             <button class="refresh" onclick="loadAdmFinanciaciones(true)">Actualizar</button>
           </div>
         </div>
@@ -2505,6 +2506,7 @@ function _admMesDe(v) {
 // suma una por una lo que falta cobrar y agrupa por financiador. Lee
 // admVentasData (mismo fetch de la grilla) — no vuelve a pegarle a Oversoft.
 let finMesSel = '';
+let finVendSel = '';   // filtro por vendedor (vacio = todos)
 
 // La(s) línea(s) "Financia …" del cuadro de una PV = el crédito a cobrar.
 function _finLineaDe(v) {
@@ -2566,6 +2568,9 @@ function _admFinMeses() {
 }
 
 function finSetMes(m) { finMesSel = m; renderAdmFinanciaciones(); }
+function finSetVend(n) { finVendSel = (n === finVendSel ? '' : n) || ''; renderAdmFinanciaciones(); }
+// El vendedor de la PV (Oversoft). Las que no tienen quedan agrupadas juntas.
+function _finVend(v) { return (v && v.vendedor) ? String(v.vendedor).trim() : '(sin vendedor)'; }
 
 // Deshacer la marca de cobrado (botón "↩ deshacer"): delega en saveLiq, que
 // guarda y repinta grilla + Financiaciones juntas. Si alguna vez se llama con
@@ -2601,6 +2606,7 @@ function _finTabla(items, pendiente, total) {
     + '<thead><tr style="color:var(--vw-grey-3)">'
     + '<th style="text-align:left;padding:4px 8px">PV</th>'
     + '<th style="text-align:left;padding:4px 8px">Cliente</th>'
+    + '<th style="text-align:left;padding:4px 8px">Vendedor</th>'
     + '<th style="text-align:left;padding:4px 8px">Modelo</th>'
     + '<th style="text-align:left;padding:4px 8px">Financiador</th>'
     + '<th style="text-align:right;padding:4px 8px">' + (pendiente ? 'A cobrar' : 'Cobrado') + '</th>'
@@ -2624,6 +2630,7 @@ function _finTabla(items, pendiente, total) {
     h += '<tr style="border-top:1px solid #eef1f6' + (x.liq.alerta ? ';background:#fdecea' : '') + '">'
       + '<td style="padding:4px 8px;white-space:nowrap"><b>' + escapeHtml(v.preventa) + '</b></td>'
       + '<td style="padding:4px 8px">' + escapeHtml(v.cliente || '—') + '</td>'
+      + '<td style="padding:4px 8px;white-space:nowrap">' + escapeHtml(_finVend(v)) + '</td>'
       + '<td style="padding:4px 8px">' + escapeHtml(v.modelo || '—') + '</td>'
       + '<td style="padding:4px 8px"><span style="background:' + chip.bg + ';color:#fff;border-radius:8px;padding:1px 7px;font-size:11px;white-space:nowrap">' + escapeHtml(v.financia || chip.txt) + '</span></td>'
       + '<td style="text-align:right;padding:4px 8px;font-weight:700;color:' + (pendiente ? col : '#0a7a30') + '">' + fmtPesos(pendiente ? fl.saldo : _finCobradoEff(x)) + '</td>'
@@ -2640,7 +2647,7 @@ function _finTabla(items, pendiente, total) {
   }
   if (pendiente) {
     h += '<tr style="border-top:2px solid #cc6600;font-weight:700">'
-      + '<td colspan="4" style="padding:5px 8px">TOTAL PENDIENTE DE COBRO</td>'
+      + '<td colspan="5" style="padding:5px 8px">TOTAL PENDIENTE DE COBRO</td>'
       + '<td style="text-align:right;padding:5px 8px;color:#cc6600">' + fmtPesos(total) + '</td>'
       + '<td colspan="3"></td></tr>';
   }
@@ -2662,12 +2669,36 @@ function renderAdmFinanciaciones() {
     sel.value = finMesSel;
   }
   const mes = finMesSel;
-  const list = _admFinList(mes);
+  const listMes = _admFinList(mes);
+
+  // Selector de vendedor: se arma con los vendedores que tienen financiaciones
+  // en el mes elegido. El ranking de mas abajo SIEMPRE muestra el mes completo.
+  const vends = [];
+  for (const x of listMes) { const n = _finVend(x.v); if (vends.indexOf(n) === -1) vends.push(n); }
+  vends.sort();
+  const selV = document.getElementById('finVend');
+  if (vends.indexOf(finVendSel) === -1) finVendSel = '';
+  if (selV) {
+    const fillV = mes + '|' + vends.join('|');
+    if (selV.dataset.fill !== fillV) {
+      selV.innerHTML = '<option value="">Todos los vendedores</option>'
+        + vends.map(n => '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>').join('');
+      selV.dataset.fill = fillV;
+    }
+    selV.value = finVendSel;
+  }
+  const list = finVendSel ? listMes.filter(x => _finVend(x.v) === finVendSel) : listMes;
 
   const up = document.getElementById('updatedAtFin');
   if (up && admVentasData.updatedAt) up.textContent = 'Cobranza de financiaciones · ' + _mesLabel(mes) + ' · Oversoft en vivo · actualizado ' + new Date(admVentasData.updatedAt).toLocaleString('es-AR');
 
-  if (!list.length) { if (resu) resu.innerHTML = ''; cont.innerHTML = '<div class="empty">Sin financiaciones en ' + _mesLabel(mes) + '.</div>'; return; }
+  if (!list.length) {
+    if (resu) resu.innerHTML = '';
+    cont.innerHTML = '<div class="empty">Sin financiaciones en ' + _mesLabel(mes)
+      + (finVendSel ? ' para ' + escapeHtml(finVendSel) + '. <button onclick="finSetVend(\'\')" style="border:1px solid var(--vw-grey-2);background:#fff;border-radius:5px;padding:2px 8px;font-size:12px;cursor:pointer">Ver todos</button>' : '.')
+      + '</div>';
+    return;
+  }
 
   // "Cobrada efectiva" = tiene recibo real O Moni la marcó SI (crédito liquidado).
   const pend = list.filter(x => !x.liq.cobradaEfectiva);
@@ -2734,6 +2765,53 @@ function renderAdmFinanciaciones() {
     + '<td style="padding:5px 8px">' + fmtPesos(totPlan) + '</td>'
     + '<td style="padding:5px 8px;color:#0a7a30">' + fmtPesos(totCobr) + '</td>'
     + '<td style="padding:5px 8px;color:' + (totPend > 1 ? '#cc6600' : '#0a7a30') + '">' + (totPend > 1 ? fmtPesos(totPend) : '✓') + '</td></tr>';
+  h += '</tbody></table>';
+
+  // === RANKING POR VENDEDOR (siempre el mes completo, no lo toca el filtro) ===
+  const porVend = {};
+  for (const x of listMes) {
+    const k = _finVend(x.v);
+    if (!porVend[k]) porVend[k] = { vend: k, cant: 0, plan: 0, cobrado: 0, cobrCant: 0, pend: 0, pendCant: 0, fins: {} };
+    const g = porVend[k];
+    g.cant++; g.plan += x.fl.plan; g.cobrado += _finCobradoEff(x);
+    const f = x.v.financia || x.v.tipo; g.fins[f] = (g.fins[f] || 0) + 1;
+    if (x.liq.cobradaEfectiva) g.cobrCant++; else { g.pend += x.fl.saldo; g.pendCant++; }
+  }
+  const rank = Object.keys(porVend).map(k => porVend[k]).sort((a, b) => b.cant - a.cant || b.plan - a.plan);
+  const MEDALLA = ['\uD83E\uDD47', '\uD83E\uDD48', '\uD83E\uDD49'];
+  h += '<div style="font-weight:700;font-size:14px;color:#001e50;margin:16px 0 6px">\uD83C\uDFC6 Ranking por vendedor \u2014 ' + _mesLabel(mes)
+    + ' <small style="font-weight:400;color:var(--vw-grey-3)">(clic en una fila para filtrar el detalle)</small></div>';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:14px">'
+    + '<thead><tr style="color:var(--vw-grey-3);text-align:right">'
+    + '<th style="text-align:left;padding:4px 8px">#</th>'
+    + '<th style="text-align:left;padding:4px 8px">Vendedor</th>'
+    + '<th style="padding:4px 8px" title="Cantidad de creditos del mes">Créditos</th>'
+    + '<th style="padding:4px 8px">Total financiado</th>'
+    + '<th style="padding:4px 8px">Cobrado</th>'
+    + '<th style="padding:4px 8px">Pendiente</th>'
+    + '<th style="text-align:left;padding:4px 8px">Financiadores</th></tr></thead><tbody>';
+  rank.forEach((g, i) => {
+    const act = finVendSel === g.vend;
+    const mix = Object.keys(g.fins).sort((a, b) => g.fins[b] - g.fins[a])
+      .map(f => escapeHtml(f) + ' ' + g.fins[f]).join(' \u00b7 ');
+    h += '<tr data-vend="' + escapeHtml(g.vend) + '" onclick="finSetVend(this.dataset.vend)" title="Filtrar el detalle por ' + escapeHtml(g.vend) + '"'
+      + ' style="border-top:1px solid #e6ecf5;text-align:right;cursor:pointer' + (act ? ';background:#eaf2ff' : '') + '">'
+      + '<td style="text-align:left;padding:4px 8px;color:var(--vw-grey-3)">' + (MEDALLA[i] || (i + 1)) + '</td>'
+      + '<td style="text-align:left;padding:4px 8px;font-weight:' + (act ? '700' : '600') + '">' + escapeHtml(g.vend) + '</td>'
+      + '<td style="padding:4px 8px;font-weight:700">' + g.cant + '</td>'
+      + '<td style="padding:4px 8px">' + fmtPesos(g.plan) + '</td>'
+      + '<td style="padding:4px 8px;color:#0a7a30">' + fmtPesos(g.cobrado) + ' <small style="color:var(--vw-grey-3)">(' + g.cobrCant + ')</small></td>'
+      + '<td style="padding:4px 8px;font-weight:700;color:' + (g.pend > 1 ? '#cc6600' : '#0a7a30') + '">' + (g.pend > 1 ? fmtPesos(g.pend) + ' <small style="font-weight:400;color:var(--vw-grey-3)">(' + g.pendCant + ')</small>' : '\u2713') + '</td>'
+      + '<td style="text-align:left;padding:4px 8px;color:var(--vw-grey-3);font-size:11.5px">' + mix + '</td>'
+      + '</tr>';
+  });
+  h += '<tr style="border-top:2px solid #001e50;font-weight:700;text-align:right">'
+    + '<td colspan="2" style="text-align:left;padding:5px 8px">TOTAL ' + rank.length + (rank.length === 1 ? ' vendedor' : ' vendedores') + '</td>'
+    + '<td style="padding:5px 8px">' + listMes.length + '</td>'
+    + '<td style="padding:5px 8px">' + fmtPesos(listMes.reduce((a, x) => a + x.fl.plan, 0)) + '</td>'
+    + '<td style="padding:5px 8px;color:#0a7a30">' + fmtPesos(listMes.reduce((a, x) => a + _finCobradoEff(x), 0)) + '</td>'
+    + '<td style="padding:5px 8px;color:#cc6600">' + fmtPesos(listMes.reduce((a, x) => a + (x.liq.cobradaEfectiva ? 0 : x.fl.saldo), 0)) + '</td>'
+    + '<td></td></tr>';
   h += '</tbody></table>';
 
   // === COBRADAS ===
