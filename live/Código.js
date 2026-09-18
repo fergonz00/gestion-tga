@@ -27,7 +27,65 @@
  * Publicación: Deploy → Web app · Execute as: Me · Who: Anyone (con token)
  */
 
-const TOKEN = 'tga-gestion-R7nQ4xK8jL';
+// ── Acceso ──────────────────────────────────────────────────────────────────
+// El `token` que llega (query o body) es UNO de estos dos:
+//   1. La sesión firmada del SSO del portal: "usuario.exp.sig", donde
+//      sig = hex(HMAC_SHA256("usuario.exp", app_config.tga_session_secret)).
+//      Es la misma firma que emite login_tasador y viaja en la cookie tga_session.
+//      "usuario" es el DUEÑO de la firma (session_usuario si hay impersonación).
+//   2. El token de servidor (app_config.gestion_server_token) para consumidores
+//      server-side: portal-precios, simulador VWFS, facturas-vw, listas-precios.
+// Ningún secreto vive en este archivo (el repo es público).
+const TOKEN_LEGACY = 'tga-gestion-R7nQ4xK8jL'; // TRANSICIÓN: se borra al terminar la migración
+
+// Quiénes pueden usar este backend con su sesión: los de gestion.titogonzalez.online
+// (dueños + mgerez de Adm. ventas) y los de saldos.titogonzalez.online, que lee
+// compras_vw / flujo de acá (marianom, vreyna).
+const USUARIOS_SESION = ['fngonzalez', 'fgonzalez', 'cgonzalez', 'mgerez', 'marianom', 'vreyna'];
+
+// Lee una clave de app_config (wjfgl) con la service key. Cacheada 6 h: el
+// secreto casi nunca cambia y así no gastamos urlfetch por request.
+function _appConfig_(clave) {
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('cfg_' + clave);
+  if (hit) return hit;
+  const svc = PropertiesService.getScriptProperties().getProperty('SUPA_SERVICE');
+  if (!svc) return '';
+  const res = UrlFetchApp.fetch(SUPA_URL + '/app_config?clave=eq.' + encodeURIComponent(clave) + '&select=valor',
+    { headers: { apikey: svc, Authorization: 'Bearer ' + svc }, muteHttpExceptions: true });
+  if (res.getResponseCode() >= 300) return '';
+  const rows = JSON.parse(res.getContentText());
+  const v = (rows && rows[0] && rows[0].valor) ? String(rows[0].valor) : '';
+  if (v) cache.put('cfg_' + clave, v, 21600);
+  return v;
+}
+
+// Devuelve el usuario dueño de la firma si la sesión es válida y vigente, o null.
+function verificarSesionTGA_(tok) {
+  tok = String(tok || '').trim();
+  const i = tok.lastIndexOf('.');
+  if (i < 0) return null;
+  const cuerpo = tok.slice(0, i), sig = tok.slice(i + 1).toLowerCase();
+  const j = cuerpo.lastIndexOf('.');
+  if (j <= 0) return null;
+  const exp = Number(cuerpo.slice(j + 1));
+  if (!exp || exp < Math.floor(Date.now() / 1000)) return null;
+  const secret = _appConfig_('tga_session_secret');
+  if (!secret) return null;
+  const hex = Utilities.computeHmacSha256Signature(cuerpo, secret)
+    .map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('');
+  return hex === sig ? cuerpo.slice(0, j) : null;
+}
+
+function _autorizado_(tok) {
+  tok = String(tok || '').trim();
+  if (!tok) return false;
+  const srv = _appConfig_('gestion_server_token');
+  if (srv && tok === srv) return true;
+  const u = verificarSesionTGA_(tok);
+  if (u && USUARIOS_SESION.indexOf(u.toLowerCase()) >= 0) return true;
+  return tok === TOKEN_LEGACY; // TRANSICIÓN
+}
 
 // Flete y Formularios: total fijo que la oferta del portal trae incluido.
 // Para comparar contra factura+accesorios hay que descontárselo a la oferta.
@@ -54,7 +112,7 @@ const VENDEDORES_OFICIALES = [
 
 function doGet(e) {
   const params = (e && e.parameter) || {};
-  if (String(params.token || '').trim() !== TOKEN) {
+  if (!_autorizado_(params.token)) {
     return jsonResponse({ error: 'forbidden' });
   }
 
@@ -90,7 +148,6 @@ function doGet(e) {
     if (tipo === 'migrarcomprasvw') return jsonResponse(migrarComprasVW()); // una-vez: vuelca lo de saldos (>=2026) a compras_vw, conciliado con Oversoft
     if (tipo === 'flujo')           return jsonResponse(_cached('flujo', CACHE_TTL_SEC, fresh, getFlujoFinanciero)); // flujo de caja: cobros pendientes (ingresos) vs pagos a VW (egresos)
     if (tipo === 'exposicion')      return jsonResponse(getExposicion());          // stock en exposición por salón (tabla exposicion_unidades, wjfgl)
-    if (tipo === 'reponer')         return jsonResponse(reponerExposicion(params)); // repone una unidad de exposición vendida y avisa por WhatsApp
     if (tipo === 'unidades')        return jsonResponse(_cached('unidades', CACHE_TTL_SEC, fresh, getStockUnidades)); // stock por CHASIS enriquecido (modelo BT, color, antigüedad) para precio especial por unidad
     if (tipo === 'analisisstock')   return jsonResponse(_cached('analisisstock', CACHE_TTL_SEC, fresh, getAnalisisStock)); // stock por modelo+color + rotación 6 meses + meses de stock
     return jsonResponse({ error: 'tipo desconocido: ' + tipo });
@@ -2261,7 +2318,7 @@ function delCompraVW(body) {
 // (snapshotBTDiario): si el mes corriente ya tiene BT en Supabase no hace
 // nada; si falta, copia la "Actual BT" vigente. Escribe con la service key
 // guardada en Script Properties (SUPA_SERVICE — NO está en el repo público;
-// se setea una vez vía doPost acción setsecret).
+// se carga a mano en Configuración del proyecto → Propiedades de la secuencia de comandos).
 // SYNC idempotente del mes: inserta lo que falta y ACTUALIZA lo que cambió,
 // pero solo filas de origen snapshot — lo cargado curado desde circulares no
 // se toca nunca (si difiere, se reporta en difCurados). Así, si "Actual BT"
@@ -2278,7 +2335,7 @@ function snapshotBTMensual(mesOverride, hojaOverride, dryRun, force) {
   if (!force) return { ok: true, apagado: true, nota: 'Sync BT->Supabase apagado: los precios se cargan en el portal (solapa Precios).' };
   const mes = mesOverride || _yyyyMm(new Date());
   const svc = PropertiesService.getScriptProperties().getProperty('SUPA_SERVICE');
-  if (!svc) return { error: 'falta SUPA_SERVICE en Script Properties (doPost setsecret)' };
+  if (!svc) return { error: 'falta SUPA_SERVICE en Script Properties (Configuración del proyecto)' };
   const hW = { apikey: svc, Authorization: 'Bearer ' + svc, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
   const dif = (a, b) => Math.abs((Number(a) || 0) - (Number(b) || 0)) > 0.5;
 
@@ -2390,17 +2447,6 @@ function _instalarTriggerSnapshot() {
   if (ya) return { ok: true, yaExistia: true };
   ScriptApp.newTrigger('snapshotBTDiario').timeBased().everyDays(1).atHour(7).create();
   return { ok: true, creado: true };
-}
-
-// Guarda un secreto en Script Properties (escritura solamente — no hay forma de
-// leerlos por la API pública). Solo nombres whitelisteados.
-function _setSecret(body) {
-  const nombre = String(body.nombre || '').trim();
-  if (['SUPA_SERVICE'].indexOf(nombre) === -1) return { error: 'nombre no permitido' };
-  const valor = String(body.valor || '').trim();
-  if (!valor) return { error: 'falta valor' };
-  PropertiesService.getScriptProperties().setProperty(nombre, valor);
-  return { ok: true, nombre: nombre };
 }
 
 // Precios de la competencia desde SUPABASE (tabla competencia_precios, que llena
@@ -2916,7 +2962,7 @@ function doPost(e) {
       // Formato 2: body crudo JSON
       try { body = JSON.parse(e.postData.contents); } catch (_) { body = {}; }
     }
-    if (String(body.token || '').trim() !== TOKEN) {
+    if (!_autorizado_(body.token)) {
       return jsonResponse({ error: 'forbidden' });
     }
     const accion = String(body.accion || 'guardar').toLowerCase();
@@ -2938,7 +2984,7 @@ function doPost(e) {
     if (accion === 'resetbaratito')        return jsonResponse(resetBaratitoBaseline());
     if (accion === 'initbaratitobaseline') return jsonResponse(initBaratitoBaselineIfEmpty());
     if (accion === 'setajustecolor')       return jsonResponse(saveAjusteColor(body));
-    if (accion === 'setsecret')            return jsonResponse(_setSecret(body));
+    if (accion === 'reponer')              return jsonResponse(reponerExposicion(body)); // repone una unidad de exposición vendida y avisa por WhatsApp
     if (accion === 'setadmventa')          return jsonResponse(saveAdmVenta(body));
     if (accion === 'setventamanual')       return jsonResponse(saveVentaManual(body));
     if (accion === 'setpreciolista')       return jsonResponse(savePrecioLista(body));        // editar 1 fila de precios_lista
@@ -3208,10 +3254,11 @@ function getOversoftSync() {
 // pago a VW. Pasa por acá (server-side) para evitar CORS y cachear el response.
 // Devolvemos solo lo necesario (response chico para que entre en el cache).
 const SALDOS_URL   = 'https://script.google.com/macros/s/AKfycbyRTqqpQMjKDL82Z5Cjd9IJWPQnINF0LAEvji8FizfXMBO8Cz0IVbTSnQnNmH_rRxz9yg/exec';
-const SALDOS_TOKEN = 'tga-saldos-K9Mx2P7vQ';
+const SALDOS_TOKEN_LEGACY = 'tga-saldos-K9Mx2P7vQ'; // TRANSICIÓN: hasta que exista app_config.saldos_server_token
 
 function getSaldosCompras() {
-  const url = SALDOS_URL + '?token=' + encodeURIComponent(SALDOS_TOKEN) + '&tipo=compras';
+  const tok = _appConfig_('saldos_server_token') || SALDOS_TOKEN_LEGACY;
+  const url = SALDOS_URL + '?token=' + encodeURIComponent(tok) + '&tipo=compras';
   const res  = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true });
   const code = res.getResponseCode();
   if (code < 200 || code >= 300) {

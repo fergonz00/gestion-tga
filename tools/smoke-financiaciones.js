@@ -56,7 +56,10 @@ const chequear = (nombre, cond) => {
   }
   chequear('no explota con data vacia/parcial', true);
 
-  const url = 'https://gestion-next-fergonz00s-projects.vercel.app/api/admventas?token=gtok_IE740qxp4uBANagjGH6MheFw';
+  // Token de servidor: fuera del repo (es publico), en .secrets/gestion.env.
+  const env = fs.readFileSync('C:/proyectos/.secrets/gestion.env', 'utf8');
+  const tok = (env.match(/^GESTION_NEXT_SERVER_TOKEN=(.+)$/m) || [])[1].trim();
+  const url = 'https://gestion-next-fergonz00s-projects.vercel.app/api/admventas?token=' + encodeURIComponent(tok);
   const data = await (await fetch(url)).json();
   if (!data || !Array.isArray(data.ventas)) { console.error('la API no devolvio ventas'); process.exit(1); }
   console.log('\ndatos reales: ' + data.ventas.length + ' carpetas');

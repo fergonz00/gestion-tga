@@ -22,7 +22,10 @@ Circuito completo: skill circular-vw."""
 import json, urllib.request, sys, re
 
 EXEC = "https://script.google.com/macros/s/AKfycby13NRmtve2ojB0IMZgFPnKh3HsLSBLDca4kOduRenO97KLH3W3ILbiJfDzGYVLAUpwpQ/exec"
-TOKEN = "tga-gestion-R7nQ4xK8jL"
+# Token de SERVIDOR del Apps Script: vive en C:\proyectos\.secrets\gestion.env (fuera
+# del repo, que es publico). El viejo tga-gestion-... quedo muerto el 18-sep-2026.
+TOKEN = [l.split("=", 1)[1].strip() for l in open(r"C:\proyectos\.secrets\gestion.env", encoding="utf-8")
+         if l.startswith("GESTION_SERVER_TOKEN=")][0]
 MES_BASE, MES, LISTA_NUM = "2026-08", "2026-09", 202609
 
 def aumento(nombre_corto):
