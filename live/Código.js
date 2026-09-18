@@ -2118,6 +2118,10 @@ const VWFS_VTO_PUNTUAL = {
   // BZ31T4 va al 01/10, el resto al habitual de 30 días) y el mapa es por fecha.
   '2026-08-21': '2026-10-01', '2026-08-24': '2026-10-01', '2026-08-25': '2026-09-30',
   '2026-08-31': '2026-09-23',
+  // sep-2026 — esquema "día libre" que pasó el zonal el 15/9 (ANTES de la circular
+  // oficial, pendiente OK de Ari): si la circular cambia algo, ajustar acá.
+  '2026-09-18': '2026-11-03', '2026-09-25': '2026-11-02', '2026-09-28': '2026-11-02',
+  '2026-09-30': '2026-10-23',
 };
 const _VWFS_MESAB = { ene: 1, feb: 2, mar: 3, abr: 4, may: 5, jun: 6, jul: 7, ago: 8, sep: 9, set: 9, oct: 10, nov: 11, dic: 12 };
 // Normaliza la fecha de factura a ISO: ya viene "2026-08-21" del selector, pero
