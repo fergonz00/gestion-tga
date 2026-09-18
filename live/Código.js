@@ -36,7 +36,6 @@
 //   2. El token de servidor (app_config.gestion_server_token) para consumidores
 //      server-side: portal-precios, simulador VWFS, facturas-vw, listas-precios.
 // Ningún secreto vive en este archivo (el repo es público).
-const TOKEN_LEGACY = 'tga-gestion-R7nQ4xK8jL'; // TRANSICIÓN: se borra al terminar la migración
 
 // Quiénes pueden usar este backend con su sesión: los de gestion.titogonzalez.online
 // (dueños + mgerez de Adm. ventas) y los de saldos.titogonzalez.online, que lee
@@ -83,8 +82,7 @@ function _autorizado_(tok) {
   const srv = _appConfig_('gestion_server_token');
   if (srv && tok === srv) return true;
   const u = verificarSesionTGA_(tok);
-  if (u && USUARIOS_SESION.indexOf(u.toLowerCase()) >= 0) return true;
-  return tok === TOKEN_LEGACY; // TRANSICIÓN
+  return !!u && USUARIOS_SESION.indexOf(u.toLowerCase()) >= 0;
 }
 
 // Flete y Formularios: total fijo que la oferta del portal trae incluido.
