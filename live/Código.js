@@ -347,10 +347,13 @@ function getPreciosActualBT() {
 // (RLS read-only en esas 4 tablas), así el endpoint público no puede escribir.
 const SUPA_URL  = 'https://wjfglsafgaltusmbnccl.supabase.co/rest/v1';
 const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndqZmdsc2FmZ2FsdHVzbWJuY2NsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MzM2OTksImV4cCI6MjA4OTAwOTY5OX0.OOwgyKDNQsbBaGDaL0OhJfc8eOsCClvvAPW0VFBKrOA';
+// Server-side usamos el service_role (Script Property SUPA_SERVICE) para poder
+// cerrar el acceso anon (RLS) a las tablas financieras. Fallback a anon si falta.
+var SUPA_KEY = PropertiesService.getScriptProperties().getProperty('SUPA_SERVICE') || SUPA_ANON;
 
 function _supaGet(path) {
   const res = UrlFetchApp.fetch(SUPA_URL + path, {
-    headers: { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON },
+    headers: { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY },
     muteHttpExceptions: true });
   const code = res.getResponseCode();
   if (code < 200 || code >= 300) throw new Error('supa ' + code + ': ' + res.getContentText().slice(0, 160));
@@ -1694,7 +1697,7 @@ function congelarMes(mes) {
     });
   }
   if (!rows.length) return { ok: true, congeladas: 0, mes: mes, nota: 'sin ventas para ese mes' };
-  const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
+  const hh = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
   let ok = 0;
   for (let i = 0; i < rows.length; i += 200) {
     const lote = rows.slice(i, i + 200);
@@ -1894,7 +1897,7 @@ function migrarAdmVentasDesdeHoja() {
     }
   }
   if (rows.length) {
-    const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates' };
+    const hh = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates' };
     const res = UrlFetchApp.fetch(SUPA_URL + '/adm_ventas?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(rows), muteHttpExceptions: true });
     if (res.getResponseCode() >= 300) return { error: 'insert falló: ' + res.getContentText().slice(0, 300) };
   }
@@ -1923,7 +1926,7 @@ function saveVentaManual(body) {
     const cp = body.corporativo;
     row.corporativo = (cp === '' || cp == null || cp === 'auto') ? null : (cp === true || cp === 'true' || cp === 'si');
   }
-  const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
+  const hh = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
   const res = UrlFetchApp.fetch(SUPA_URL + '/ventas_manual?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(row), muteHttpExceptions: true });
   if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200) };
   return { ok: true, preventa: pv };
@@ -1957,7 +1960,7 @@ function saveAdmVenta(body) {
   const campos = body.campos || {};
   const guardados = {};
   for (const k of permitidos) if (campos[k] !== undefined) { row[k] = (campos[k] === '' ? null : campos[k]); guardados[k] = campos[k]; }
-  const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
+  const hh = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
   const res = UrlFetchApp.fetch(SUPA_URL + '/adm_ventas?on_conflict=preventa', { method: 'post', headers: hh, payload: JSON.stringify(row), muteHttpExceptions: true });
   if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200) };
   // admventas: parche in-place (el cache queda caliente); patentamientos se
@@ -2146,7 +2149,7 @@ function migrarComprasVW() {
       updated_at: now, updated_by: 'migracion',
     };
   });
-  const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates' };
+  const hh = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates' };
   let insertados = 0;
   for (let i = 0; i < rows.length; i += 100) {
     const lote = rows.slice(i, i + 100);
@@ -2215,7 +2218,7 @@ function saveCompraVW(body) {
     const vtoAuto = _vwfsVtoPuntual(row.fecha_fc);
     if (vtoAuto) row.vence = vtoAuto;
   }
-  const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
+  const hh = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' };
   const res = UrlFetchApp.fetch(SUPA_URL + '/compras_vw?on_conflict=serie', { method: 'post', headers: hh, payload: JSON.stringify(row), muteHttpExceptions: true });
   if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200) };
   try { _cacheDrop('comprasvw'); } catch (e) {}
@@ -2301,7 +2304,7 @@ function getFlujoFinanciero() {
 function delCompraVW(body) {
   const serie = String(body.serie || '').trim().toUpperCase();
   if (!serie) return { error: 'falta serie' };
-  const hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON };
+  const hh = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY };
   const res = UrlFetchApp.fetch(SUPA_URL + '/compras_vw?serie=eq.' + encodeURIComponent(serie), { method: 'delete', headers: hh, muteHttpExceptions: true });
   if (res.getResponseCode() >= 300) return { error: 'borrar falló: ' + res.getContentText().slice(0, 200) };
   try { _cacheDrop('comprasvw'); } catch (e) {}
@@ -2928,7 +2931,7 @@ function saveAjusteColor(body) {
   const color = String(body.color || '*').trim() || '*';
   const ajuste = Number(body.ajuste) || 0;
   if (!nc) return { error: 'falta modelo' };
-  const h = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json' };
+  const h = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json' };
   let res;
   if (!ajuste) {
     const filtro = '?nombre_corto=eq.' + encodeURIComponent(nc) + '&color=eq.' + encodeURIComponent(color);
@@ -4160,7 +4163,7 @@ function savePagosVW(pagos) {
     });
   }
   if (rows.length) {
-    const h = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' };
+    const h = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' };
     for (let i = 0; i < rows.length; i += 300) {
       const res = UrlFetchApp.fetch(SUPA_URL + '/pagos_vw?on_conflict=nc_num', { method: 'post', headers: h, payload: JSON.stringify(rows.slice(i, i + 300)), muteHttpExceptions: true });
       if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200), guardados: i };
@@ -4244,7 +4247,7 @@ function setObjetivoPat(body) {
   const valor = Number(body.valor);
   if (!/^\d{4}-\d{2}$/.test(mesKey)) return { error: 'mesKey inválido: ' + mesKey };
   if (isNaN(valor) || valor < 0) return { error: 'valor inválido: ' + body.valor };
-  const h = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' };
+  const h = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' };
   const row = { mes: mesKey, objetivo: valor, actualizado_at: new Date().toISOString() };
   const res = UrlFetchApp.fetch(SUPA_URL + '/objetivos_pat?on_conflict=mes', { method: 'post', headers: h, payload: JSON.stringify([row]), muteHttpExceptions: true });
   if (res.getResponseCode() >= 300) return { error: 'guardar falló: ' + res.getContentText().slice(0, 200) };
@@ -4739,7 +4742,7 @@ function _sembrarComprasVWdesdeReparto(vins) {
     };
   }).filter(function (x) { return x.serie; });
   if (!payload.length) return 0;
-  var hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' };
+  var hh = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' };
   var r2 = UrlFetchApp.fetch(SUPA_URL + '/compras_vw?on_conflict=serie', { method: 'post', headers: hh, payload: JSON.stringify(payload), muteHttpExceptions: true });
   try { _cacheDrop('comprasvw'); } catch (e) {}
   return (r2.getResponseCode() < 300) ? payload.length : 0;
@@ -4762,7 +4765,7 @@ function darOkReparto(body) {
   // Dar OK = ya conciliado con Oversoft → marco la compra como conciliada para que
   // en Compras VW tome modelo/color de Oversoft en vez del default de VW.
   try {
-    var hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
+    var hh = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
     UrlFetchApp.fetch(SUPA_URL + '/compras_vw?serie=eq.' + encodeURIComponent(_serieDeVin(vin)), {
       method: 'patch', headers: hh, payload: JSON.stringify({ conciliado: true }), muteHttpExceptions: true });
     _cacheDrop('comprasvw');
@@ -4820,7 +4823,7 @@ function agregarUnidadManual(body) {
     color: colores[colorCod] || colorCod,
     conciliado: false, updated_at: now, updated_by: 'reparto-manual'
   };
-  var hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
+  var hh = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
   UrlFetchApp.fetch(SUPA_URL + '/compras_vw', { method: 'post', headers: hh, payload: JSON.stringify(compra), muteHttpExceptions: true });
   try { _cacheDrop('comprasvw'); } catch (e) {}
   return { ok: true, id: id };
@@ -4841,7 +4844,7 @@ function setSerieCompra(body) {
     var ex = _supaGet('/compras_vw?select=serie&serie=eq.' + encodeURIComponent(serie8)) || [];
     if (ex.length) return { ok: false, error: 'Ya existe una compra con la serie ' + serie8 };
   } catch (e) {}
-  var hh = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
+  var hh = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
   var rc = UrlFetchApp.fetch(SUPA_URL + '/compras_vw?serie=eq.' + encodeURIComponent(oldS), {
     method: 'patch', headers: hh,
     payload: JSON.stringify({ serie: serie8, updated_at: new Date().toISOString(), updated_by: String((body && body.usuario) || '') }),
@@ -5065,7 +5068,7 @@ function getReparto() {
         method: 'patch', headers: Object.assign(_repartoWHeaders(), { Prefer: 'return=minimal' }),
         payload: JSON.stringify({ estado_compra: 'ok' }), muteHttpExceptions: true });
       var serAuto = autoVins.map(function (v) { return _serieDeVin(v); });
-      var hhA = { apikey: SUPA_ANON, Authorization: 'Bearer ' + SUPA_ANON, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
+      var hhA = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
       UrlFetchApp.fetch(SUPA_URL + '/compras_vw?serie=in.(' + _repartoInList(serAuto) + ')', {
         method: 'patch', headers: hhA, payload: JSON.stringify({ conciliado: true }), muteHttpExceptions: true });
       try { _cacheDrop('comprasvw'); } catch (e) {}
