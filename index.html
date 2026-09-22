@@ -1366,6 +1366,12 @@ table.patent-tbl tr.tbl-sep.pat:hover td  { background: var(--green-soft); }
 .rep-margen { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .rep-margen-in { display: flex; align-items: center; gap: 3px; }
 .rep-margen-out { font-size: 12px; }
+.rep-marg-flecha { border: 1px solid var(--vw-grey-2); background: #fff; border-radius: 6px;
+  width: 22px; height: 26px; cursor: pointer; font-size: 10px; line-height: 1; color: var(--vw-grey-3); padding: 0; }
+.rep-marg-flecha:hover { background: var(--vw-grey-1); color: #000; }
+.rep-marg-masivo { gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 10px;
+  background: var(--vw-grey-1); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+.reparto-chk { width: 28px; text-align: center; }
 .reparto-link { background: none; border: 0; color: var(--vw-grey-4); text-decoration: underline; cursor: pointer; font-size: 12px; }
 .reparto-link:hover { color: var(--vw-grey-5, #000); }
 .reparto-ok { background: #1a7f37 !important; padding: 4px 12px !important; font-size: 12px !important; }
@@ -6270,6 +6276,7 @@ let repartoNombres = {};  // edición de nombres de color (codigo -> nombre)
 let repartoCopia = '';    // texto armado para mandar a VW
 let repartoMsg = '';      // mensaje del cargador
 let repartoMargenes = {}; // vin -> margen % elegido al comprar (ver _repPrecioDeMargen)
+let repartoMargSel = {};  // vin -> true (tildadas para ponerles el margen de a varias)
 
 // --- Margen por unidad: precio con el que va a entrar el auto -----------------
 // Misma fórmula que Ventas y que el Baratito (_gciaVentaPct del backend), portada
@@ -6641,13 +6648,87 @@ function _repMargenCelda(it) {
   const hoyPct = (Number(pm.gciaPct) || 0) * 100;
   const hoyPrecio = Number(pm.oferta) || 0;
   let h = '<div class="rep-margen">';
-  h += '<div class="rep-margen-in"><input type="number" step="0.1" min="0" max="60" id="repMarg_' + vin + '" value="' + val + '"'
+  // Escribís el número (el % ya está puesto al lado) o lo movés con las flechas,
+  // de a 0,5 puntos. El botón "hoy" arranca desde el margen que tiene el modelo.
+  h += '<div class="rep-margen-in">';
+  h += '<button class="rep-marg-flecha" title="Bajar 0,5" onclick="repMargenPaso(\'' + vin + '\', -0.5)">▼</button>';
+  h += '<input type="number" step="0.5" min="0" max="60" id="repMarg_' + vin + '" value="' + val + '"'
     + ' placeholder="' + hoyPct.toFixed(1) + '" oninput="repMargenCambio(\'' + vin + '\')"'
-    + ' style="width:62px;padding:5px 6px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px;text-align:right"><span>%</span></div>';
+    + ' style="width:58px;padding:5px 6px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px;text-align:right">';
+  h += '<span>%</span>';
+  h += '<button class="rep-marg-flecha" title="Subir 0,5" onclick="repMargenPaso(\'' + vin + '\', 0.5)">▲</button>';
+  h += '</div>';
   h += '<div class="rep-margen-out" id="repMargOut_' + vin + '">' + _repMargenTexto(vin, pm) + '</div>';
-  h += '<div class="reparto-fam" title="Precio y margen que tiene hoy el modelo">hoy ' + hoyPct.toFixed(1) + '% · ' + fmtPesos(hoyPrecio) + '</div>';
+  h += '<button class="reparto-link" title="Arrancar desde el margen que tiene hoy el modelo: ' + fmtPesos(hoyPrecio) + '"'
+    + ' onclick="repMargenPoner(\'' + vin + '\', ' + hoyPct.toFixed(1) + ')">hoy ' + hoyPct.toFixed(1) + '% · ' + fmtPesos(hoyPrecio) + '</button>';
   h += '</div>';
   return h;
+}
+// --- Margen de a varias unidades juntas -------------------------------------
+// Las tildadas (o todas las elegidas, si no hay ninguna tildada).
+function _repMargenObjetivo() {
+  const eleg = ((repartoData && repartoData.items) || []).filter(i => i.estado_compra === 'elegida');
+  const tildadas = eleg.filter(i => repartoMargSel[i.vin]);
+  return tildadas.length ? tildadas : eleg;
+}
+function repMargenSel(vin, on) { if (on) repartoMargSel[vin] = true; else delete repartoMargSel[vin]; }
+function repMargenSelTodas(on) {
+  const eleg = ((repartoData && repartoData.items) || []).filter(i => i.estado_compra === 'elegida');
+  repartoMargSel = {};
+  if (on) eleg.forEach(i => { repartoMargSel[i.vin] = true; });
+  renderReparto();
+}
+function _repMargMsg(txt) { const m = document.getElementById('repMargMasivoMsg'); if (m) m.textContent = txt; }
+function repMargenMasivoPaso(paso) {
+  const inp = document.getElementById('repMargMasivo'); if (!inp) return;
+  const v = Math.max(0, Math.round(((Number(inp.value) || 0) + paso) * 10) / 10);
+  inp.value = v.toFixed(1);
+}
+// Mismo margen para todas las del objetivo.
+function repMargenMasivoAplicar() {
+  const inp = document.getElementById('repMargMasivo');
+  const pct = Number(inp && inp.value);
+  if (!(pct > 0)) { _repMargMsg('Poné un margen primero'); return; }
+  const objetivo = _repMargenObjetivo();
+  let n = 0;
+  objetivo.forEach(it => {
+    if (!(it.precioModelo && it.precioModelo.sim)) return;   // modelo sin lista: no se le puede calcular
+    repartoMargenes[it.vin] = pct; n++;
+  });
+  renderReparto();
+  _repMargMsg('✓ ' + n + ' unidad' + (n !== 1 ? 'es' : '') + ' en ' + pct.toFixed(1) + '%');
+}
+// A cada una le pone el margen que tiene HOY SU modelo, más el paso. Cada auto
+// queda con un margen distinto (el suyo mejorado), no todos con el mismo número.
+function repMargenMasivoSubir(paso) {
+  const objetivo = _repMargenObjetivo();
+  let n = 0;
+  objetivo.forEach(it => {
+    const pm = it.precioModelo; if (!(pm && pm.sim)) return;
+    repartoMargenes[it.vin] = Math.max(0, Math.round(((Number(pm.gciaPct) || 0) * 100 + paso) * 10) / 10);
+    n++;
+  });
+  renderReparto();
+  _repMargMsg('✓ ' + n + ' unidad' + (n !== 1 ? 'es' : '') + ' con +' + paso + ' sobre su margen de hoy');
+}
+function repMargenLimpiar() {
+  _repMargenObjetivo().forEach(it => { delete repartoMargenes[it.vin]; });
+  renderReparto();
+  _repMargMsg('Margen sacado: vuelven al precio del modelo');
+}
+
+// Mover el margen de una fila de a pasos. Si está vacío arranca del margen que
+// tiene hoy el modelo, que es lo que uno quiere mejorar.
+function repMargenPaso(vin, paso) {
+  const inp = document.getElementById('repMarg_' + vin); if (!inp) return;
+  const it = (repartoData.items || []).find(i => i.vin === vin);
+  const base = inp.value === '' ? ((Number(it && it.precioModelo && it.precioModelo.gciaPct) || 0) * 100) : Number(inp.value);
+  repMargenPoner(vin, Math.max(0, Math.round((base + paso) * 10) / 10));
+}
+function repMargenPoner(vin, pct) {
+  const inp = document.getElementById('repMarg_' + vin); if (!inp) return;
+  inp.value = (Math.round(pct * 10) / 10).toFixed(1);
+  repMargenCambio(vin);
 }
 // Texto del precio que sale del margen tipeado (con FyF, como la vidriera).
 function _repMargenTexto(vin, pm) {
@@ -6713,12 +6794,26 @@ function repartoElegidasSec(items) {
   h += '<p class="reparto-hint">Unidades que elegiste comprar, todavía sin confirmarle a VW. Cuando se las comprás, tocá <strong>Comprada</strong> (o "Marcar todas compradas"): ahí se arma el texto para mandarles y pasan a "Comprado · a conciliar".</p>';
   const vinsJson = JSON.stringify(eleg.map(i => i.vin));
   h += '<div class="reparto-row" style="margin-bottom:8px"><button class="refresh reparto-comprar" onclick=\'repartoComprarElegidas(' + vinsJson + ')\'>Marcar todas compradas (' + eleg.length + ')</button></div>';
+  // Margen de a varias: tildás las que querés y les ponés el mismo margen de una.
+  // Sin tildar ninguna, "Aplicar" se lo pone a todas las de la lista.
+  h += '<div class="reparto-row rep-marg-masivo">';
+  h += '<span>Poner el mismo margen a varias:</span>';
+  h += '<button class="rep-marg-flecha" title="Bajar 0,5" onclick="repMargenMasivoPaso(-0.5)">▼</button>';
+  h += '<input type="number" step="0.5" min="0" max="60" id="repMargMasivo" placeholder="%" style="width:64px;padding:5px 6px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px;text-align:right"><span>%</span>';
+  h += '<button class="rep-marg-flecha" title="Subir 0,5" onclick="repMargenMasivoPaso(0.5)">▲</button>';
+  h += '<button class="refresh" onclick="repMargenMasivoAplicar()">Aplicar</button>';
+  h += '<button class="reparto-link" onclick="repMargenMasivoSubir(0.5)" title="Le suma medio punto al margen que tiene hoy CADA modelo (cada auto queda con el suyo)">+0,5 sobre el margen de hoy</button>';
+  h += '<button class="reparto-link" onclick="repMargenLimpiar()">Limpiar</button>';
+  h += '<span class="reparto-fam" id="repMargMasivoMsg"></span>';
+  h += '</div>';
   h += '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
+    + '<th class="reparto-chk"><input type="checkbox" onchange="repMargenSelTodas(this.checked)" title="Tildar todas"></th>'
     + '<th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num" title="Meses de stock = stock ÷ venta mensual promedio (misma ventana que la sección Rotación: mes en curso + los 3 anteriores)">Meses stock</th>'
     + '<th class="num" title="Margen con el que se va a vender ESTA unidad. Queda fijado al chasis: cuando la unidad entra a Oversoft, el vendedor ya la cotiza a ese precio. Vacío = usa el precio del modelo.">Margen de esta unidad</th>'
     + '<th class="num">Acción</th></tr></thead><tbody>';
   eleg.forEach(it => {
     h += '<tr>';
+    h += '<td class="reparto-chk"><input type="checkbox" ' + (repartoMargSel[it.vin] ? 'checked' : '') + ' onchange="repMargenSel(\'' + it.vin + '\', this.checked)"></td>';
     h += '<td><div class="reparto-modelo">' + escapeHtml((it.descripcion || '').replace(/^VW /, '')) + '</div><div class="reparto-fam">' + escapeHtml(it.familia || '') + '</div></td>';
     h += '<td>' + escapeHtml(it.color_nombre || '') + '</td>';
     h += '<td class="reparto-vin">' + escapeHtml(it.vin) + '</td>';
