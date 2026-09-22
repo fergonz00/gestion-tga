@@ -6643,8 +6643,8 @@ function _repMargenCelda(it) {
     return '<span class="reparto-fam" title="El modelo no está en el armado de precios, no hay lista con qué calcular">s/precio</span>';
   }
   const vin = it.vin;
-  const guardado = repartoMargenes[vin];
-  const val = guardado === undefined ? '' : guardado;
+  const yaComprada = it.estado_compra === 'comprado' || it.estado_compra === 'ok';
+  const val = _repMargenValor(it);
   const hoyPct = (Number(pm.gciaPct) || 0) * 100;
   const hoyPrecio = Number(pm.oferta) || 0;
   let h = '<div class="rep-margen">';
@@ -6659,49 +6659,103 @@ function _repMargenCelda(it) {
   h += '<button class="rep-marg-flecha" title="Subir 0,5" onclick="repMargenPaso(\'' + vin + '\', 0.5)">▲</button>';
   h += '</div>';
   h += '<div class="rep-margen-out" id="repMargOut_' + vin + '">' + _repMargenTexto(vin, pm) + '</div>';
+  // En las ya compradas el cambio hay que GUARDARLO (en las elegidas se guarda
+  // solo al tocar "Comprada"). El botón sale cuando lo tipeado difiere de lo
+  // guardado, así se ve de un vistazo qué quedó pendiente.
+  if (yaComprada && _repMargenPendiente(it)) {
+    h += '<button class="refresh reparto-ok rep-marg-guardar" onclick="repMargenGuardarUna(\'' + vin + '\')">Guardar</button>';
+  }
+  // Lo que la unidad tiene HOY guardado (lo que ve el vendedor cuando entra).
+  const g = _repMargenGuardado(it);
+  if (g !== null && it.margenUnidad) {
+    h += '<div class="reparto-fam" title="Precio guardado para este chasis">guardado ' + fmtPesos((Number(it.margenUnidad.precio) || 0) + REPARTO_FYF) + '</div>';
+  }
   h += '<button class="reparto-link" title="Arrancar desde el margen que tiene hoy el modelo: ' + fmtPesos(hoyPrecio) + '"'
     + ' onclick="repMargenPoner(\'' + vin + '\', ' + hoyPct.toFixed(1) + ')">hoy ' + hoyPct.toFixed(1) + '% · ' + fmtPesos(hoyPrecio) + '</button>';
   h += '</div>';
   return h;
 }
+
+// Barra de margen para varias unidades juntas. `estado` = qué sección: 'elegida'
+// (se guarda al comprar) o 'comprado'/'ok' (hay que guardar los cambios).
+function _repMargenBarra(estado) {
+  const guardable = estado !== 'elegida';
+  let h = '<div class="reparto-row rep-marg-masivo">';
+  h += '<span>Poner el mismo margen a varias:</span>';
+  h += '<button class="rep-marg-flecha" title="Bajar 0,5" onclick="repMargenMasivoPaso(\'' + estado + '\', -0.5)">▼</button>';
+  h += '<input type="number" step="0.5" min="0" max="60" id="repMargMasivo_' + estado + '" placeholder="%" style="width:64px;padding:5px 6px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px;text-align:right"><span>%</span>';
+  h += '<button class="rep-marg-flecha" title="Subir 0,5" onclick="repMargenMasivoPaso(\'' + estado + '\', 0.5)">▲</button>';
+  h += '<button class="refresh" onclick="repMargenMasivoAplicar(\'' + estado + '\')">Aplicar</button>';
+  h += '<button class="reparto-link" onclick="repMargenMasivoSubir(\'' + estado + '\', 0.5)" title="Le suma medio punto al margen que tiene hoy CADA modelo (cada auto queda con el suyo)">+0,5 sobre el margen de hoy</button>';
+  h += '<button class="reparto-link" onclick="repMargenLimpiar(\'' + estado + '\')">' + (guardable ? 'Sacar el margen' : 'Limpiar') + '</button>';
+  if (guardable) {
+    h += '<button class="refresh reparto-comprar" id="repMargSave_' + estado + '" onclick="repMargenGuardarSeccion(\'' + estado + '\')">Guardar cambios</button>';
+    h += '<span class="warn" id="repMargMsg_' + estado + '"></span>';
+  } else {
+    h += '<span class="reparto-fam" id="repMargMsg_' + estado + '"></span>';
+  }
+  h += '</div>';
+  return h;
+}
+// Valor que va en el casillero: lo que estés tipeando; si no tocaste nada, el
+// margen ya guardado para ese chasis; si no hay ninguno, vacío.
+function _repMargenValor(it) {
+  const v = repartoMargenes[it.vin];
+  if (v !== undefined) return v === 0 ? '' : v;
+  const m = it.margenUnidad;
+  if (m && m.activo && m.gciaPct != null) return (m.gciaPct * 100).toFixed(1);
+  return '';
+}
+/** Margen guardado hoy para ese chasis, en % (null = no tiene). */
+function _repMargenGuardado(it) {
+  const m = it.margenUnidad;
+  return (m && m.activo && m.gciaPct != null) ? Math.round(m.gciaPct * 1000) / 10 : null;
+}
+/** true si lo tipeado difiere de lo guardado (hay algo para guardar). */
+function _repMargenPendiente(it) {
+  const v = repartoMargenes[it.vin];
+  if (v === undefined) return false;
+  const g = _repMargenGuardado(it);
+  const tipeado = v === 0 || v === '' ? null : Math.round(Number(v) * 10) / 10;
+  return tipeado !== g;
+}
 // --- Margen de a varias unidades juntas -------------------------------------
-// Las tildadas (o todas las elegidas, si no hay ninguna tildada).
-function _repMargenObjetivo() {
-  const eleg = ((repartoData && repartoData.items) || []).filter(i => i.estado_compra === 'elegida');
-  const tildadas = eleg.filter(i => repartoMargSel[i.vin]);
-  return tildadas.length ? tildadas : eleg;
+// Las tildadas de esa sección (o todas las de la sección, si no hay ninguna).
+function _repMargenObjetivo(estado) {
+  const dela = ((repartoData && repartoData.items) || []).filter(i => i.estado_compra === estado);
+  const tildadas = dela.filter(i => repartoMargSel[i.vin]);
+  return tildadas.length ? tildadas : dela;
 }
 function repMargenSel(vin, on) { if (on) repartoMargSel[vin] = true; else delete repartoMargSel[vin]; }
-function repMargenSelTodas(on) {
-  const eleg = ((repartoData && repartoData.items) || []).filter(i => i.estado_compra === 'elegida');
-  repartoMargSel = {};
-  if (on) eleg.forEach(i => { repartoMargSel[i.vin] = true; });
+function repMargenSelTodas(estado, on) {
+  const dela = ((repartoData && repartoData.items) || []).filter(i => i.estado_compra === estado);
+  dela.forEach(i => { if (on) repartoMargSel[i.vin] = true; else delete repartoMargSel[i.vin]; });
   renderReparto();
 }
-function _repMargMsg(txt) { const m = document.getElementById('repMargMasivoMsg'); if (m) m.textContent = txt; }
-function repMargenMasivoPaso(paso) {
-  const inp = document.getElementById('repMargMasivo'); if (!inp) return;
+function _repMargMsg(estado, txt) { const m = document.getElementById('repMargMsg_' + estado); if (m) m.textContent = txt; }
+function repMargenMasivoPaso(estado, paso) {
+  const inp = document.getElementById('repMargMasivo_' + estado); if (!inp) return;
   const v = Math.max(0, Math.round(((Number(inp.value) || 0) + paso) * 10) / 10);
   inp.value = v.toFixed(1);
 }
 // Mismo margen para todas las del objetivo.
-function repMargenMasivoAplicar() {
-  const inp = document.getElementById('repMargMasivo');
+function repMargenMasivoAplicar(estado) {
+  const inp = document.getElementById('repMargMasivo_' + estado);
   const pct = Number(inp && inp.value);
-  if (!(pct > 0)) { _repMargMsg('Poné un margen primero'); return; }
-  const objetivo = _repMargenObjetivo();
+  if (!(pct > 0)) { _repMargMsg(estado, 'Poné un margen primero'); return; }
+  const objetivo = _repMargenObjetivo(estado);
   let n = 0;
   objetivo.forEach(it => {
     if (!(it.precioModelo && it.precioModelo.sim)) return;   // modelo sin lista: no se le puede calcular
     repartoMargenes[it.vin] = pct; n++;
   });
   renderReparto();
-  _repMargMsg('✓ ' + n + ' unidad' + (n !== 1 ? 'es' : '') + ' en ' + pct.toFixed(1) + '%');
+  _repMargMsg(estado, '✓ ' + n + ' unidad' + (n !== 1 ? 'es' : '') + ' en ' + pct.toFixed(1) + '%' + (estado !== 'elegida' ? ' — falta Guardar' : ''));
 }
 // A cada una le pone el margen que tiene HOY SU modelo, más el paso. Cada auto
 // queda con un margen distinto (el suyo mejorado), no todos con el mismo número.
-function repMargenMasivoSubir(paso) {
-  const objetivo = _repMargenObjetivo();
+function repMargenMasivoSubir(estado, paso) {
+  const objetivo = _repMargenObjetivo(estado);
   let n = 0;
   objetivo.forEach(it => {
     const pm = it.precioModelo; if (!(pm && pm.sim)) return;
@@ -6709,12 +6763,17 @@ function repMargenMasivoSubir(paso) {
     n++;
   });
   renderReparto();
-  _repMargMsg('✓ ' + n + ' unidad' + (n !== 1 ? 'es' : '') + ' con +' + paso + ' sobre su margen de hoy');
+  _repMargMsg(estado, '✓ ' + n + ' unidad' + (n !== 1 ? 'es' : '') + ' con +' + paso + ' sobre su margen de hoy' + (estado !== 'elegida' ? ' — falta Guardar' : ''));
 }
-function repMargenLimpiar() {
-  _repMargenObjetivo().forEach(it => { delete repartoMargenes[it.vin]; });
+// En elegidas: vacía el casillero. En compradas: les saca el precio propio (0),
+// que al guardar las devuelve al precio del modelo.
+function repMargenLimpiar(estado) {
+  _repMargenObjetivo(estado).forEach(it => {
+    if (estado !== 'elegida' && _repMargenGuardado(it) !== null) repartoMargenes[it.vin] = 0;
+    else delete repartoMargenes[it.vin];
+  });
   renderReparto();
-  _repMargMsg('Margen sacado: vuelven al precio del modelo');
+  _repMargMsg(estado, estado === 'elegida' ? 'Margen sacado: quedan al precio del modelo' : 'Quedan sin precio propio — falta Guardar');
 }
 
 // Mover el margen de una fila de a pasos. Si está vacío arranca del margen que
@@ -6730,59 +6789,98 @@ function repMargenPoner(vin, pct) {
   inp.value = (Math.round(pct * 10) / 10).toFixed(1);
   repMargenCambio(vin);
 }
-// Texto del precio que sale del margen tipeado (con FyF, como la vidriera).
+// Texto del precio que sale del margen del casillero (con FyF, como la vidriera).
+// Si todavía no se guardó, lo aclara — así no se confunde lo que se está por
+// poner con lo que la unidad ya tiene.
 function _repMargenTexto(vin, pm) {
-  const v = repartoMargenes[vin];
+  const it = (repartoData.items || []).find(i => i.vin === vin);
+  const v = it ? _repMargenValor(it) : repartoMargenes[vin];
   if (v === undefined || v === '' || !(Number(v) > 0)) return '<span class="reparto-fam">precio del modelo</span>';
   const vn = _repPrecioDeMargen(Number(v) / 100, pm.sim);
   if (!vn) return '<span class="warn">no calcula</span>';
   const dto = 1 - vn / (Number(pm.sim.lista) || 1);
-  return '<b>' + fmtPesos(vn + REPARTO_FYF) + '</b> <span class="reparto-fam">(' + (dto * 100).toFixed(1) + '% dto)</span>';
+  const pend = it ? _repMargenPendiente(it) : false;
+  return '<b>' + fmtPesos(vn + REPARTO_FYF) + '</b> <span class="reparto-fam">(' + (dto * 100).toFixed(1) + '% dto'
+    + (pend ? ' · <span class="warn">sin guardar</span>' : '') + ')</span>';
 }
 function repMargenCambio(vin) {
   const inp = document.getElementById('repMarg_' + vin); if (!inp) return;
-  repartoMargenes[vin] = inp.value === '' ? undefined : Number(inp.value);
-  if (inp.value === '') delete repartoMargenes[vin];
   const it = (repartoData.items || []).find(i => i.vin === vin);
+  if (inp.value === '') {
+    // Vaciarlo en una unidad que YA tiene margen significa sacárselo (0), no
+    // "no lo toqué": si no, no habría forma de volver al precio del modelo.
+    if (it && _repMargenGuardado(it) !== null) repartoMargenes[vin] = 0;
+    else delete repartoMargenes[vin];
+  } else repartoMargenes[vin] = Number(inp.value);
   const out = document.getElementById('repMargOut_' + vin);
   if (out && it && it.precioModelo) out.innerHTML = _repMargenTexto(vin, it.precioModelo);
+  if (it && (it.estado_compra === 'comprado' || it.estado_compra === 'ok')) _repMargenRefrescarBotones();
+}
+// Muestra/esconde los botones de Guardar sin re-dibujar la tabla entera (que
+// haría perder el foco del casillero mientras se tipea).
+function _repMargenRefrescarBotones() {
+  clearTimeout(_repMargBtnT);
+  _repMargBtnT = setTimeout(() => {
+    (repartoData.items || []).forEach(it => {
+      if (it.estado_compra !== 'comprado' && it.estado_compra !== 'ok') return;
+      const cont = document.getElementById('repMarg_' + it.vin);
+      if (!cont) return;
+      const celda = cont.closest('.rep-margen'); if (!celda) return;
+      const btn = celda.querySelector('.rep-marg-guardar');
+      const hace = _repMargenPendiente(it);
+      if (hace && !btn) {
+        const b = document.createElement('button');
+        b.className = 'refresh reparto-ok rep-marg-guardar';
+        b.textContent = 'Guardar';
+        b.onclick = () => repMargenGuardarUna(it.vin);
+        celda.insertBefore(b, celda.lastElementChild);
+      } else if (!hace && btn) btn.remove();
+    });
+    _repMargenBarraMsg();
+  }, 150);
+}
+let _repMargBtnT = null;
+// Cuántos cambios sin guardar hay en cada sección de compradas.
+function _repMargenBarraMsg() {
+  ['comprado', 'ok'].forEach(est => {
+    const el = document.getElementById('repMargMsg_' + est); if (!el) return;
+    const n = (repartoData.items || []).filter(i => i.estado_compra === est && _repMargenPendiente(i)).length;
+    el.textContent = n ? n + ' sin guardar' : '';
+    const b = document.getElementById('repMargSave_' + est);
+    if (b) { b.disabled = !n; b.textContent = n ? 'Guardar los ' + n + ' cambios' : 'Guardar cambios'; }
+  });
+}
+async function repMargenGuardarUna(vin) {
+  const it = (repartoData.items || []).find(i => i.vin === vin); if (!it) return;
+  const v = repartoMargenes[vin];
+  const pct = (v === 0 || v === '' || v === undefined) ? 0 : Number(v) / 100;
+  repartoMsg = 'Guardando margen…'; renderReparto();
+  const r = await _repartoPost({ accion: 'setmargenunidad', vin: vin, pct: pct });
+  if (r && r.ok) { delete repartoMargenes[vin]; repartoMsg = pct ? '✓ Margen guardado' : '✓ Precio propio sacado'; await loadReparto(true); }
+  else { repartoMsg = ''; alert('Error: ' + ((r && r.error) || 'falló')); renderReparto(); }
+}
+// Guarda de una todos los cambios pendientes de una sección (comprado / ok).
+async function repMargenGuardarSeccion(estado) {
+  const pend = (repartoData.items || []).filter(i => i.estado_compra === estado && _repMargenPendiente(i));
+  if (!pend.length) return;
+  const margenes = {};
+  pend.forEach(it => {
+    const v = repartoMargenes[it.vin];
+    margenes[it.vin] = (v === 0 || v === '' || v === undefined) ? 0 : Number(v) / 100;
+  });
+  repartoMsg = 'Guardando ' + pend.length + ' margen(es)…'; renderReparto();
+  const r = await _repartoPost({ accion: 'setmargenesunidad', margenes: margenes });
+  if (r && r.ok) {
+    pend.forEach(it => { delete repartoMargenes[it.vin]; });
+    repartoMsg = '✓ ' + (r.guardados || 0) + ' guardado(s)' + (r.sacados ? ' · ' + r.sacados + ' sin precio propio' : '')
+      + (r.faltaron ? ' · ⚠ ' + r.faltaron + ' sin lista, no se pudo calcular' : '');
+    await loadReparto(true);
+  } else { repartoMsg = ''; alert('Error: ' + ((r && r.error) || 'falló')); renderReparto(); }
 }
 
 // Precio ya fijado para un chasis comprado (viene de portal_precios_unidad). Se
 // puede cambiar o sacar mientras la unidad no se vendió: "Cambiar" pide el margen
 // nuevo, vacío lo saca y la unidad vuelve al precio del modelo.
-function _repMargenFijado(it) {
-  const m = it.margenUnidad;
-  const pm = it.precioModelo;
-  const puede = !!(pm && pm.sim && Number(pm.sim.lista) > 0);
-  if (!m || !m.activo) {
-    if (!puede) return '<span class="reparto-fam">—</span>';
-    return '<div class="rep-margen"><span class="reparto-fam">precio del modelo</span>'
-      + '<button class="reparto-link" onclick="repMargenEditar(\'' + it.vin + '\')">Poner margen</button></div>';
-  }
-  const pct = m.gciaPct === null ? null : (m.gciaPct * 100);
-  let h = '<div class="rep-margen">';
-  h += '<div><b>' + fmtPesos((Number(m.precio) || 0) + REPARTO_FYF) + '</b></div>';
-  h += '<div class="reparto-fam">' + (pct === null ? 'precio fijo' : 'margen ' + pct.toFixed(1) + '%') + (m.origen === 'reparto' ? ' · del reparto' : '') + '</div>';
-  h += '<button class="reparto-link" onclick="repMargenEditar(\'' + it.vin + '\')">Cambiar</button>';
-  h += '</div>';
-  return h;
-}
-async function repMargenEditar(vin) {
-  const it = (repartoData.items || []).find(i => i.vin === vin); if (!it) return;
-  const m = it.margenUnidad;
-  const actual = (m && m.gciaPct != null) ? (m.gciaPct * 100).toFixed(1) : '';
-  const txt = prompt('Margen para el chasis ' + String(vin).slice(-8) + '\n\n'
-    + (it.descripcion || '') + '\nHoy el modelo está en ' + ((Number(it.precioModelo && it.precioModelo.gciaPct) || 0) * 100).toFixed(1) + '%.\n\n'
-    + 'Dejalo vacío para sacarle el precio propio (vuelve al precio del modelo).', actual);
-  if (txt === null) return;                       // canceló
-  const pct = txt.trim() === '' ? 0 : Number(txt.replace(',', '.'));
-  if (txt.trim() !== '' && !(pct > 0)) { alert('Margen inválido'); return; }
-  const r = await _repartoPost({ accion: 'setmargenunidad', vin: vin, pct: pct ? pct / 100 : 0 });
-  if (r && r.ok) { repartoMsg = pct ? '✓ Margen guardado' : '✓ Precio propio sacado'; await loadReparto(true); }
-  else alert('Error: ' + ((r && r.error) || 'falló'));
-}
-
 function repartoElegidasSec(items) {
   const eleg = (items || []).filter(i => i.estado_compra === 'elegida');
   let h = '<div class="reparto-sep"></div>';
@@ -6796,18 +6894,9 @@ function repartoElegidasSec(items) {
   h += '<div class="reparto-row" style="margin-bottom:8px"><button class="refresh reparto-comprar" onclick=\'repartoComprarElegidas(' + vinsJson + ')\'>Marcar todas compradas (' + eleg.length + ')</button></div>';
   // Margen de a varias: tildás las que querés y les ponés el mismo margen de una.
   // Sin tildar ninguna, "Aplicar" se lo pone a todas las de la lista.
-  h += '<div class="reparto-row rep-marg-masivo">';
-  h += '<span>Poner el mismo margen a varias:</span>';
-  h += '<button class="rep-marg-flecha" title="Bajar 0,5" onclick="repMargenMasivoPaso(-0.5)">▼</button>';
-  h += '<input type="number" step="0.5" min="0" max="60" id="repMargMasivo" placeholder="%" style="width:64px;padding:5px 6px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px;text-align:right"><span>%</span>';
-  h += '<button class="rep-marg-flecha" title="Subir 0,5" onclick="repMargenMasivoPaso(0.5)">▲</button>';
-  h += '<button class="refresh" onclick="repMargenMasivoAplicar()">Aplicar</button>';
-  h += '<button class="reparto-link" onclick="repMargenMasivoSubir(0.5)" title="Le suma medio punto al margen que tiene hoy CADA modelo (cada auto queda con el suyo)">+0,5 sobre el margen de hoy</button>';
-  h += '<button class="reparto-link" onclick="repMargenLimpiar()">Limpiar</button>';
-  h += '<span class="reparto-fam" id="repMargMasivoMsg"></span>';
-  h += '</div>';
+  h += _repMargenBarra('elegida');
   h += '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
-    + '<th class="reparto-chk"><input type="checkbox" onchange="repMargenSelTodas(this.checked)" title="Tildar todas"></th>'
+    + '<th class="reparto-chk"><input type="checkbox" onchange="repMargenSelTodas(\'elegida\', this.checked)" title="Tildar todas"></th>'
     + '<th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num" title="Meses de stock = stock ÷ venta mensual promedio (misma ventana que la sección Rotación: mes en curso + los 3 anteriores)">Meses stock</th>'
     + '<th class="num" title="Margen con el que se va a vender ESTA unidad. Queda fijado al chasis: cuando la unidad entra a Oversoft, el vendedor ya la cotiza a ese precio. Vacío = usa el precio del modelo.">Margen de esta unidad</th>'
     + '<th class="num">Acción</th></tr></thead><tbody>';
@@ -6855,7 +6944,9 @@ function repartoCompradoSec(items) {
     return h;
   }
   h += '<p class="reparto-hint">Lo que le compraste a VW. Cuando la unidad aparece en Oversoft y <strong>coincide todo</strong> (modelo, color y chasis) se confirma <strong>sola</strong> y pasa a <strong>Confirmados</strong>. Si algo <strong>difiere (⚠)</strong>, quedan acá para que lo revises y le des <strong>OK</strong> vos. Las <strong>manuales</strong> esperan a que Valeria cargue el chasis en Compras VW; ahí recién cruzan con Oversoft.</p>';
+  h += _repMargenBarra('comprado');
   h += '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
+    + '<th class="reparto-chk"><input type="checkbox" onchange="repMargenSelTodas(\'comprado\', this.checked)" title="Tildar todas"></th>'
     + '<th>Modelo</th><th>Color pedido</th><th>Chasis (VIN)</th><th>Conciliación (Oversoft)</th>'
     + '<th class="num" title="Precio fijado para ESTE chasis. Cuando la unidad entra a Oversoft el vendedor ya la cotiza así.">Precio de esta unidad</th>'
     + '<th class="num">Acción</th></tr></thead><tbody>';
@@ -6863,6 +6954,7 @@ function repartoCompradoSec(items) {
     const ov = it.oversoft || {};
     const rowCls = it.alerta ? 'reparto-tr-alerta' : (it.enOversoft ? 'reparto-tr-ovs' : '');
     h += '<tr class="' + rowCls + '">';
+    h += '<td class="reparto-chk"><input type="checkbox" ' + (repartoMargSel[it.vin] ? 'checked' : '') + ' onchange="repMargenSel(\'' + it.vin + '\', this.checked)"></td>';
     const sinChasis = it.manual && String(it.vin || '').startsWith('MAN-');
     h += '<td><div class="reparto-modelo">' + escapeHtml((it.descripcion || '').replace(/^VW /, '')) + '</div><div class="reparto-fam">' + escapeHtml(it.familia || '') + (it.manual ? ' · <span style="color:#9a7d00">manual</span>' : '') + '</div></td>';
     h += '<td>' + escapeHtml(it.color_nombre || '') + '</td>';
@@ -6879,7 +6971,7 @@ function repartoCompradoSec(items) {
         + '</div>';
     } else conc = '<span class="reparto-est-wait">esperando Oversoft' + (it.diasComprado != null ? ' (' + it.diasComprado + 'd)' : '') + '</span>';
     h += '<td>' + conc + '</td>';
-    h += '<td class="num">' + _repMargenFijado(it) + '</td>';
+    h += '<td class="num">' + _repMargenCelda(it) + '</td>';
     let acc = '<div class="reparto-acc">';
     if (it.enOversoft) acc += '<button class="refresh reparto-ok" onclick="repartoOk(\'' + it.vin + '\')" title="Confirmar conciliación: pasa a Confirmados (sigue contando)">OK</button>';
     acc += '<button class="reparto-link" onclick="repartoDeshacer(\'' + it.vin + '\')">Deshacer</button></div>';
@@ -6898,16 +6990,19 @@ function repartoConfirmadosSec(items) {
   let h = '<div class="reparto-sep"></div>';
   h += '<div class="reparto-head"><h3>✓ Confirmados</h3><span class="reparto-sub">' + ok.length + ' unidad' + (ok.length !== 1 ? 'es' : '') + ' · cuentan como compra del mes</span></div>';
   h += '<p class="reparto-hint">Ya conciliadas con Oversoft. Si te confundiste, tocá <strong>Deshacer</strong> y vuelven a "Comprado · a conciliar".</p>';
+  h += _repMargenBarra('ok');
   h += '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
+    + '<th class="reparto-chk"><input type="checkbox" onchange="repMargenSelTodas(\'ok\', this.checked)" title="Tildar todas"></th>'
     + '<th>Modelo</th><th>Color pedido</th><th>Chasis (VIN)</th><th>Oversoft</th><th class="num">Precio de esta unidad</th><th class="num">Acción</th></tr></thead><tbody>';
   ok.forEach(it => {
     const ov = it.oversoft || {};
     h += '<tr class="reparto-tr-ovs">';
+    h += '<td class="reparto-chk"><input type="checkbox" ' + (repartoMargSel[it.vin] ? 'checked' : '') + ' onchange="repMargenSel(\'' + it.vin + '\', this.checked)"></td>';
     h += '<td><div class="reparto-modelo">' + escapeHtml((it.descripcion || '').replace(/^VW /, '')) + '</div><div class="reparto-fam">' + escapeHtml(it.familia || '') + '</div></td>';
     h += '<td>' + escapeHtml(it.color_nombre || '') + '</td>';
     h += '<td class="reparto-vin">' + escapeHtml(it.vin) + '</td>';
     h += '<td><span class="reparto-est-ok">✓ ' + escapeHtml(ov.modelo || '?') + (ov.serie ? ' · serie ' + escapeHtml(ov.serie) : '') + '</span></td>';
-    h += '<td class="num">' + _repMargenFijado(it) + '</td>';
+    h += '<td class="num">' + _repMargenCelda(it) + '</td>';
     h += '<td class="num"><button class="reparto-link" onclick="repartoReabrir(\'' + it.vin + '\')">Deshacer</button></td></tr>';
   });
   h += '</tbody></table></div></div>';

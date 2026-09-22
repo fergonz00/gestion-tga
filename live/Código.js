@@ -3004,6 +3004,7 @@ function doPost(e) {
     if (accion === 'reabrirreparto')       return jsonResponse(reabrirReparto(body));
     if (accion === 'agregarmanualreparto') return jsonResponse(agregarUnidadManual(body));
     if (accion === 'setmargenunidad')      return jsonResponse(setMargenUnidad(body));
+    if (accion === 'setmargenesunidad')    return jsonResponse(setMargenesUnidad(body));
     if (accion === 'setseriecompra')       return jsonResponse(setSerieCompra(body));
     if (accion === 'guardarcoloresreparto') return jsonResponse(guardarColoresReparto(body));
     if (accion === 'setindustria')         return jsonResponse(setIndustria(body));
@@ -4825,6 +4826,36 @@ function _sembrarPrecioUnidad(vins, margenes) {
   var res = UrlFetchApp.fetch(SUPA_URL + '/portal_precios_unidad?on_conflict=serie', {
     method: 'post', headers: hh, payload: JSON.stringify(payload), muteHttpExceptions: true });
   return res.getResponseCode() < 300 ? payload.length : 0;
+}
+
+// Guardar el margen de VARIAS unidades ya compradas de una sola vez (mismo
+// circuito que setMargenUnidad, pero sin una llamada por fila: el reparto se
+// edita de a tandas). margenes = { vin: pct } — pct 0 saca el precio propio.
+function setMargenesUnidad(body) {
+  var margenes = (body && body.margenes) || {};
+  var vins = Object.keys(margenes);
+  if (!vins.length) return { ok: true, guardados: 0, sacados: 0 };
+  var poner = {}, sacar = [];
+  vins.forEach(function (v) {
+    var pct = Number(margenes[v]);
+    if (pct > 0) poner[v] = pct; else sacar.push(v);
+  });
+  var guardados = 0;
+  if (Object.keys(poner).length) {
+    try { guardados = _sembrarPrecioUnidad(Object.keys(poner), poner); } catch (e) { return { ok: false, error: String(e) }; }
+  }
+  if (sacar.length) {
+    var series = sacar.map(function (v) { return _serieDeVin(v); });
+    var hh = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
+    var res = UrlFetchApp.fetch(SUPA_URL + '/portal_precios_unidad?serie=in.(' + _repartoInList(series) + ')', {
+      method: 'patch', headers: hh,
+      payload: JSON.stringify({ activo: false, updated_at: new Date().toISOString(), updated_by: 'reparto' }), muteHttpExceptions: true });
+    if (res.getResponseCode() >= 300) return { ok: false, error: 'supa ' + res.getResponseCode() };
+  }
+  // Si alguna pedía margen y no se pudo calcular (modelo sin lista en el motor),
+  // se avisa en vez de decir que se guardó todo.
+  var faltaron = Object.keys(poner).length - guardados;
+  return { ok: true, guardados: guardados, sacados: sacar.length, faltaron: faltaron > 0 ? faltaron : 0 };
 }
 
 // Cambiar (o sacar) el margen de una unidad ya comprada, desde el reparto.
