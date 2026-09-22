@@ -657,10 +657,7 @@ function _gciaVentaPct(monto, iva, lista, costoRep, ccIva, otros, sinComision, n
   const U = costoRep - ccIva - otros;                 // costo rep tomando incentivos
   const dto = 1 - monto / lista;
   // sinComision: venta TG de gerencia confirmada SIN comisión → no se cuenta como costo.
-  // Comisión = 1% s/IVA + 50% de cargas = 1,5% del NETO (Fer, 22-sep-2026). La hoja
-  // la tomaba sobre el precio c/IVA si el dto era ≤5%: solo en la convención vieja.
-  const convVieja = Math.abs(neto - (1 - iva)) < 1e-12;
-  const com = sinComision ? 0 : ((dto > 0.05 || !convVieja) ? (monto / (1 + iva)) * 0.015 : 0.015 * monto);
+  const com = sinComision ? 0 : ((dto > 0.05) ? (monto / (1 + iva)) * 0.015 : 0.015 * monto);
   const iibb = Math.max(0.014 * monto * neto, 0.1 * (monto - costoRep) * neto);
   const gcia = monto * neto - U * neto - com - iibb;
   return gcia / (lista * neto);
@@ -2850,7 +2847,7 @@ function getBaratitoMotor() {
     const netoM = 1 / (1 + ivaM);
     const pctM = _gciaVentaPct(vn, ivaM, lista, costo, cc90Iva, otros, false, netoM) || 0;
     const an = pctM * lista * netoM;
-    const comision = vn * netoM * 0.015; // 1% s/IVA + 50% de cargas
+    const comision = (1 - vn / lista > 0.05) ? vn * netoM * 0.015 : 0.015 * vn;
     const iibb = Math.max(0.014 * vn * netoM, 0.1 * (vn - costo) * netoM);
     const cheque = 0;
 
