@@ -3046,6 +3046,9 @@ function _cached(key, ttlSec, fresh, fn) {
     }
   }
   const data = fn();
+  // Un error NO se cachea: si no, un fallo transitorio de la fuente queda pegado
+  // todo el TTL (el precalentado usa CACHE_TTL_WARM = 25 min) y parece un dato.
+  if (data && data.error) return data;
   try {
     cache.put(key, JSON.stringify(data), ttlSec);
   } catch (e) { /* >100KB o cuota, no cacheable */ }
@@ -3106,6 +3109,7 @@ function _cachedBig(key, ttlSec, fresh, fn) {
     }
   }
   const data = fn();
+  if (data && data.error) return data;   // mismo criterio que _cached: el error no se cachea
   try { _cacheBigPut(key, JSON.stringify(data), ttlSec); } catch (e) { /* no cacheable */ }
   return data;
 }
@@ -3280,15 +3284,28 @@ function getOversoftSync() {
 // pago a VW. Pasa por acá (server-side) para evitar CORS y cachear el response.
 // Devolvemos solo lo necesario (response chico para que entre en el cache).
 const SALDOS_URL   = 'https://script.google.com/macros/s/AKfycbyRTqqpQMjKDL82Z5Cjd9IJWPQnINF0LAEvji8FizfXMBO8Cz0IVbTSnQnNmH_rRxz9yg/exec';
-const SALDOS_TOKEN_LEGACY = 'tga-saldos-K9Mx2P7vQ'; // TRANSICIÓN: hasta que exista app_config.saldos_server_token
-
 function getSaldosCompras() {
-  const tok = _appConfig_('saldos_server_token') || SALDOS_TOKEN_LEGACY;
+  // El token viejo murió el 22-9-2026: SALDOS solo acepta este token de servidor
+  // (Script Property SERVER_TOKEN del otro lado) o una sesión firmada del SSO.
+  const tok = _appConfig_('saldos_server_token');
+  if (!tok) return { error: 'saldos: falta app_config.saldos_server_token', unidades: [] };
   const url = SALDOS_URL + '?token=' + encodeURIComponent(tok) + '&tipo=compras';
-  const res  = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true });
-  const code = res.getResponseCode();
-  if (code < 200 || code >= 300) {
-    return { error: 'saldos ' + code, unidades: [] };
+
+  // El /exec de SALDOS le contesta 404 a UrlFetchApp de a ratos (medido 22-9:
+  // ~1 de cada 3, con el mismo token andando por curl y desde gestion-next).
+  // Sin reintento, un 404 suelto del precalentador dejaba Stock Oversoft sin
+  // vencimientos hasta 25 min, porque _cached() se guardaba también el error.
+  let res = null, code = 0;
+  for (let intento = 0; intento < 3; intento++) {
+    if (intento) Utilities.sleep(800 * intento);
+    try {
+      res  = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true });
+      code = res.getResponseCode();
+      if (code >= 200 && code < 300) break;
+    } catch (e) { res = null; code = 0; }
+  }
+  if (!res || code < 200 || code >= 300) {
+    return { error: 'saldos ' + (code || 'sin respuesta'), unidades: [] };
   }
   let data;
   try { data = JSON.parse(res.getContentText()); }
