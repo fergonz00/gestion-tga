@@ -6669,7 +6669,8 @@ function _repMargenCelda(it) {
   // Lo que la unidad tiene HOY guardado (lo que ve el vendedor cuando entra).
   const g = _repMargenGuardado(it);
   if (g !== null && it.margenUnidad) {
-    h += '<div class="reparto-fam" title="Precio guardado para este chasis">guardado ' + fmtPesos((Number(it.margenUnidad.precio) || 0) + REPARTO_FYF) + '</div>';
+    // El precio guardado YA viene con FyF (misma convención que la oferta del modelo).
+    h += '<div class="reparto-fam" title="Precio guardado para este chasis">guardado ' + fmtPesos(Number(it.margenUnidad.precio) || 0) + '</div>';
   }
   h += '<button class="reparto-link" title="Arrancar desde el margen que tiene hoy el modelo: ' + fmtPesos(hoyPrecio) + '"'
     + ' onclick="repMargenPoner(\'' + vin + '\', ' + hoyPct.toFixed(1) + ')">hoy ' + hoyPct.toFixed(1) + '% · ' + fmtPesos(hoyPrecio) + '</button>';

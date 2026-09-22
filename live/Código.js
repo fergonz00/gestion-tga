@@ -4810,8 +4810,12 @@ function _sembrarPrecioUnidad(vins, margenes) {
   rows.forEach(function (r) {
     var pct = Number(margenes[r.vin]);
     var sim = simByNorm[_repartoNtrim(r.descripcion)];
-    var precio = _precioDeMargen(pct, sim);
-    if (!precio) return;   // sin modelo en el motor no hay con qué calcular: no se inventa
+    var vn = _precioDeMargen(pct, sim);
+    if (!vn) return;   // sin modelo en el motor no hay con qué calcular: no se inventa
+    // ⚠️ portal_precios_unidad.precio es el precio FINAL, con flete y formularios
+    // (misma convención que portal_ofertas.oferta_fyf: el presupuesto lo usa tal
+    // cual para pisar la oferta). _precioDeMargen devuelve el precio SIN FyF.
+    var precio = vn + FYF;
     payload.push({
       serie: _serieDeVin(r.vin), vin: String(r.vin || '').toUpperCase(),
       modelo: String(r.descripcion || '').trim(),
