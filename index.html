@@ -1372,6 +1372,7 @@ table.patent-tbl tr.tbl-sep.pat:hover td  { background: var(--green-soft); }
 .rep-marg-masivo { gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 10px;
   background: var(--vw-grey-1); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
 .reparto-chk { width: 28px; text-align: center; }
+.rep-marg-sep { border-left: 1px solid var(--vw-grey-2); padding-left: 10px; margin-left: 4px; color: var(--vw-grey-3); }
 .reparto-link { background: none; border: 0; color: var(--vw-grey-4); text-decoration: underline; cursor: pointer; font-size: 12px; }
 .reparto-link:hover { color: var(--vw-grey-5, #000); }
 .reparto-ok { background: #1a7f37 !important; padding: 4px 12px !important; font-size: 12px !important; }
@@ -6681,12 +6682,17 @@ function _repMargenCelda(it) {
 function _repMargenBarra(estado) {
   const guardable = estado !== 'elegida';
   let h = '<div class="reparto-row rep-marg-masivo">';
-  h += '<span>Poner el mismo margen a varias:</span>';
-  h += '<button class="rep-marg-flecha" title="Bajar 0,5" onclick="repMargenMasivoPaso(\'' + estado + '\', -0.5)">▼</button>';
-  h += '<input type="number" step="0.5" min="0" max="60" id="repMargMasivo_' + estado + '" placeholder="%" style="width:64px;padding:5px 6px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px;text-align:right"><span>%</span>';
-  h += '<button class="rep-marg-flecha" title="Subir 0,5" onclick="repMargenMasivoPaso(\'' + estado + '\', 0.5)">▲</button>';
-  h += '<button class="refresh" onclick="repMargenMasivoAplicar(\'' + estado + '\')">Aplicar</button>';
-  h += '<button class="reparto-link" onclick="repMargenMasivoSubir(\'' + estado + '\', 0.5)" title="Le suma medio punto al margen que tiene hoy CADA modelo (cada auto queda con el suyo)">+0,5 sobre el margen de hoy</button>';
+  // Lo normal es MEJORAR el margen que ya tiene el modelo, no ponerle uno fijo:
+  // cada auto queda con el suyo (Taos 0,98% + 2,5 = 3,48%; Vento 3,15% + 2,5 = 5,65%).
+  // Si el modelo no tiene stock, la base es igual su precio de oferta de hoy.
+  h += '<span><strong>Sumar</strong> al margen de hoy:</span>';
+  h += '<button class="rep-marg-flecha" title="Bajar 0,5" onclick="repMargenSumarPaso(\'' + estado + '\', -0.5)">▼</button>';
+  h += '<input type="number" step="0.5" min="0" max="30" id="repMargSumar_' + estado + '" value="2.5" style="width:64px;padding:5px 6px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px;text-align:right"><span>puntos</span>';
+  h += '<button class="rep-marg-flecha" title="Subir 0,5" onclick="repMargenSumarPaso(\'' + estado + '\', 0.5)">▲</button>';
+  h += '<button class="refresh" onclick="repMargenMasivoSubir(\'' + estado + '\')" title="A cada auto le pone el margen que tiene HOY su modelo más estos puntos. Cada uno queda con el suyo.">Sumar</button>';
+  h += '<span class="rep-marg-sep">o margen fijo:</span>';
+  h += '<input type="number" step="0.5" min="0" max="60" id="repMargMasivo_' + estado + '" placeholder="%" style="width:58px;padding:5px 6px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px;text-align:right"><span>%</span>';
+  h += '<button class="reparto-link" onclick="repMargenMasivoAplicar(\'' + estado + '\')" title="El mismo margen para todas, sin mirar el que tienen hoy">Aplicar</button>';
   h += '<button class="reparto-link" onclick="repMargenLimpiar(\'' + estado + '\')">' + (guardable ? 'Sacar el margen' : 'Limpiar') + '</button>';
   if (guardable) {
     h += '<button class="refresh reparto-comprar" id="repMargSave_' + estado + '" onclick="repMargenGuardarSeccion(\'' + estado + '\')">Guardar cambios</button>';
@@ -6752,18 +6758,27 @@ function repMargenMasivoAplicar(estado) {
   renderReparto();
   _repMargMsg(estado, '✓ ' + n + ' unidad' + (n !== 1 ? 'es' : '') + ' en ' + pct.toFixed(1) + '%' + (estado !== 'elegida' ? ' — falta Guardar' : ''));
 }
-// A cada una le pone el margen que tiene HOY SU modelo, más el paso. Cada auto
-// queda con un margen distinto (el suyo mejorado), no todos con el mismo número.
-function repMargenMasivoSubir(estado, paso) {
+function repMargenSumarPaso(estado, paso) {
+  const inp = document.getElementById('repMargSumar_' + estado); if (!inp) return;
+  inp.value = Math.max(0, Math.round(((Number(inp.value) || 0) + paso) * 10) / 10).toFixed(1);
+}
+// A cada una le pone el margen que tiene HOY SU modelo MÁS los puntos indicados.
+// Cada auto queda con un margen distinto (el suyo mejorado), no todos con el mismo
+// número: es la forma normal de usar esto. Si el modelo está sin stock, su precio
+// de oferta sigue existiendo, así que la base es la misma.
+function repMargenMasivoSubir(estado) {
+  const inp = document.getElementById('repMargSumar_' + estado);
+  const pts = Number(inp && inp.value);
+  if (!(pts > 0)) { _repMargMsg(estado, 'Poné cuántos puntos sumar'); return; }
   const objetivo = _repMargenObjetivo(estado);
   let n = 0;
   objetivo.forEach(it => {
     const pm = it.precioModelo; if (!(pm && pm.sim)) return;
-    repartoMargenes[it.vin] = Math.max(0, Math.round(((Number(pm.gciaPct) || 0) * 100 + paso) * 10) / 10);
+    repartoMargenes[it.vin] = Math.max(0, Math.round(((Number(pm.gciaPct) || 0) * 100 + pts) * 100) / 100);
     n++;
   });
   renderReparto();
-  _repMargMsg(estado, '✓ ' + n + ' unidad' + (n !== 1 ? 'es' : '') + ' con +' + paso + ' sobre su margen de hoy' + (estado !== 'elegida' ? ' — falta Guardar' : ''));
+  _repMargMsg(estado, '✓ ' + n + ' unidad' + (n !== 1 ? 'es' : '') + ' con +' + pts + ' puntos sobre su margen de hoy' + (estado !== 'elegida' ? ' — falta Guardar' : ''));
 }
 // En elegidas: vacía el casillero. En compradas: les saca el precio propio (0),
 // que al guardar las devuelve al precio del modelo.
