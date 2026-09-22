@@ -3003,6 +3003,7 @@ function doPost(e) {
     if (accion === 'okreparto')            return jsonResponse(darOkReparto(body));
     if (accion === 'reabrirreparto')       return jsonResponse(reabrirReparto(body));
     if (accion === 'agregarmanualreparto') return jsonResponse(agregarUnidadManual(body));
+    if (accion === 'setmargenunidad')      return jsonResponse(setMargenUnidad(body));
     if (accion === 'setseriecompra')       return jsonResponse(setSerieCompra(body));
     if (accion === 'guardarcoloresreparto') return jsonResponse(guardarColoresReparto(body));
     if (accion === 'setindustria')         return jsonResponse(setIndustria(body));
@@ -4743,7 +4744,106 @@ function marcarComprado(body) {
   // Que aparezcan YA en Compras VW de Valeria, antes de entrar a Oversoft.
   var sembradas = 0;
   try { sembradas = _sembrarComprasVWdesdeReparto(vins); } catch (e) {}
-  return { ok: true, comprasVW: sembradas };
+  // Margen con el que se compró cada unidad → precio por chasis, listo ANTES de
+  // que la unidad entre a Oversoft (ver _sembrarPrecioUnidad).
+  var precios = 0;
+  try { precios = _sembrarPrecioUnidad(vins, (body && body.margenes) || {}); } catch (e) {}
+  return { ok: true, comprasVW: sembradas, preciosUnidad: precios };
+}
+
+// ---------------------------------------------------------------------------
+// MARGEN POR UNIDAD (pedido de Fer 22-sep-2026): al comprarle la unidad a VW se
+// elige con qué margen se va a vender, y el precio de ESE chasis queda fijado
+// antes de que entre a Oversoft. Se guarda el MARGEN (no el precio): el precio
+// se recalcula con la lista/costo/incentivos vigentes, así la unidad no queda
+// con el precio viejo cuando entra la lista del mes que viene.
+// ---------------------------------------------------------------------------
+
+// Precio (SIN FyF) que da un margen objetivo, invirtiendo _gciaVentaPct por
+// bisección. No se despeja a mano a propósito: la fórmula tiene un max() (IIBB)
+// y un salto en la comisión según el dto, así que el álgebra se rompe callada
+// cuando cambia una de esas reglas; la bisección sigue la fórmula que haya.
+// `sim` = {lista, costoRep, cc90Iva, otros, iva} del motor, donde `otros` viene
+// como FRACCIÓN de la lista (no en pesos).
+function _precioDeMargen(pctObj, sim) {
+  if (!sim) return null;
+  var lista = Number(sim.lista) || 0, costo = Number(sim.costoRep) || 0;
+  var iva = Number(sim.iva) || 0.21, cc = Number(sim.cc90Iva) || 0;
+  var otros = (Number(sim.otros) || 0) * lista;
+  if (!(lista > 0)) return null;
+  var neto = 1 / (1 + iva);
+  var lo = costo * 0.5, hi = lista * 1.6;
+  for (var i = 0; i < 200; i++) {
+    var mid = (lo + hi) / 2;
+    var y = _gciaVentaPct(mid, iva, lista, costo, cc, otros, false, neto);
+    if (y === null || y < pctObj) lo = mid; else hi = mid;
+  }
+  return Math.round((lo + hi) / 2);
+}
+
+// Crea/actualiza el precio por chasis de las unidades recién compradas, con el
+// margen que eligió Fer en el reparto. serie = últimos 8 del VIN (la misma que
+// va a tener en Oversoft), así que cuando la unidad entra el precio ya está
+// puesto y el vendedor la cotiza sola. Sin margen elegido no toca nada.
+function _sembrarPrecioUnidad(vins, margenes) {
+  if (!vins || !vins.length || !margenes) return 0;
+  var conMargen = vins.filter(function (v) { return Number(margenes[v]) > 0; });
+  if (!conMargen.length) return 0;
+  var rows = _repartoRead('/reparto_vw?select=vin,descripcion,color_codigo&vin=in.(' + _repartoInList(conMargen) + ')') || [];
+  if (!rows.length) return 0;
+  var coloresDb = {};
+  try { (_repartoRead('/reparto_colores?select=codigo,nombre') || []).forEach(function (c) { coloresDb[c.codigo] = c.nombre; }); } catch (e) {}
+  var colores = Object.assign({}, REPARTO_COLORES_BASE, coloresDb);
+  // sim por modelo, del motor (misma fuente que el panel de precios).
+  var simByNorm = {};
+  try {
+    var motor = _cached('motor', CACHE_TTL_SEC, false, getBaratitoMotor);
+    (motor.modelos || []).forEach(function (m) {
+      if (!m.sim) return;
+      if (m.modelo) simByNorm[_repartoNtrim(m.modelo)] = m.sim;
+      if (m.nombreCorto) simByNorm[_repartoNtrim(m.nombreCorto)] = m.sim;
+    });
+  } catch (e) {}
+  var now = new Date().toISOString();
+  var payload = [];
+  rows.forEach(function (r) {
+    var pct = Number(margenes[r.vin]);
+    var sim = simByNorm[_repartoNtrim(r.descripcion)];
+    var precio = _precioDeMargen(pct, sim);
+    if (!precio) return;   // sin modelo en el motor no hay con qué calcular: no se inventa
+    payload.push({
+      serie: _serieDeVin(r.vin), vin: String(r.vin || '').toUpperCase(),
+      modelo: String(r.descripcion || '').trim(),
+      color: colores[r.color_codigo] || String(r.color_codigo || ''),
+      gcia_pct: pct, precio: precio, precio_calc_at: now,
+      activo: true, origen: 'reparto', comprado_at: now,
+      updated_at: now, updated_by: 'reparto'
+    });
+  });
+  if (!payload.length) return 0;
+  var hh = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' };
+  var res = UrlFetchApp.fetch(SUPA_URL + '/portal_precios_unidad?on_conflict=serie', {
+    method: 'post', headers: hh, payload: JSON.stringify(payload), muteHttpExceptions: true });
+  return res.getResponseCode() < 300 ? payload.length : 0;
+}
+
+// Cambiar (o sacar) el margen de una unidad ya comprada, desde el reparto.
+// pct vacío/0 = se saca el precio especial y la unidad vuelve al precio del modelo.
+function setMargenUnidad(body) {
+  var vin = String((body && body.vin) || '').trim().toUpperCase();
+  if (!vin) return { ok: false, error: 'falta vin' };
+  var pct = Number(body && body.pct);
+  var serie = _serieDeVin(vin);
+  var hh = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
+  if (!(pct > 0)) {
+    var del = UrlFetchApp.fetch(SUPA_URL + '/portal_precios_unidad?serie=eq.' + encodeURIComponent(serie), {
+      method: 'patch', headers: hh, payload: JSON.stringify({ activo: false, updated_at: new Date().toISOString(), updated_by: 'reparto' }), muteHttpExceptions: true });
+    return del.getResponseCode() < 300 ? { ok: true, sacado: true } : { ok: false, error: 'supa ' + del.getResponseCode() };
+  }
+  var marg = {}; marg[vin] = pct;
+  var n = 0;
+  try { n = _sembrarPrecioUnidad([vin], marg); } catch (e) { return { ok: false, error: String(e) }; }
+  return n ? { ok: true } : { ok: false, error: 'no se pudo calcular el precio (modelo sin lista en el motor)' };
 }
 
 // serie = últimos 8 del VIN (ej 8AWJD62H6TA012322 → TA012322); así matchea la
@@ -4944,7 +5044,9 @@ function getReparto() {
   try {
     motor = _cached('motor', CACHE_TTL_SEC, false, getBaratitoMotor);
     (motor.modelos || []).forEach(function (m) {
-      var v = { ventasPorMes: m.ventasPorMes, stock: m.stock, colores: m.colores || [], chasis: m.chasis || [], nombreCorto: m.nombreCorto, diasVenta: m.diasVenta || null };
+      var v = { ventasPorMes: m.ventasPorMes, stock: m.stock, colores: m.colores || [], chasis: m.chasis || [], nombreCorto: m.nombreCorto, diasVenta: m.diasVenta || null,
+        // insumos para elegir el margen al comprar (ver _precioDeMargen)
+        sim: m.sim || null, lista: m.lista || 0, precioOferta: m.precioOferta || 0, gananciaPct: m.gananciaPct || 0 };
       if (m.modelo) motorByNorm[_repartoNtrim(m.modelo)] = v;
       if (m.nombreCorto) motorByNorm[_repartoNtrim(m.nombreCorto)] = v;
     });
@@ -5016,6 +5118,23 @@ function getReparto() {
     });
   }
 
+  // Margen/precio ya fijado por chasis (portal_precios_unidad), para mostrarlo en
+  // el reparto y poder corregirlo antes de que la unidad entre a Oversoft.
+  var margenPorSerie = {};
+  try {
+    var seriesTodas = rows.map(function (r) { return _serieDeVin(r.vin); }).filter(function (s) { return s && s.indexOf('MAN-') < 0; });
+    for (var mi = 0; mi < seriesTodas.length; mi += 100) {
+      (_repartoRead('/portal_precios_unidad?select=serie,precio,gcia_pct,activo,origen&serie=in.(' + _repartoInList(seriesTodas.slice(mi, mi + 100)) + ')') || [])
+        .forEach(function (u) {
+          margenPorSerie[String(u.serie || '').toUpperCase()] = {
+            precio: Number(u.precio) || 0,
+            gciaPct: u.gcia_pct === null || u.gcia_pct === undefined ? null : Number(u.gcia_pct),
+            activo: u.activo !== false, origen: u.origen || null
+          };
+        });
+    }
+  } catch (e) {}
+
   var norm = function (s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); };
   var incl = function (a, b) { a = norm(a); b = norm(b); return !!a && !!b && (a === b || a.indexOf(b) >= 0 || b.indexOf(a) >= 0); };
 
@@ -5081,6 +5200,12 @@ function getReparto() {
       chasisStock: chasisStock,
       tieneAntiguedad: chasisStock.some(function (c) { return c.viejo; }),
       enOversoft: !!ov, oversoft: ov, diasComprado: dias, manual: esManual,
+      // Precio del MODELO hoy + insumos para calcular el precio de un margen
+      // objetivo en el front (elegir margen al comprar). `sim.otros` es fracción
+      // de la lista, no pesos — ver _precioDeMargen.
+      precioModelo: mm ? { lista: mm.lista, oferta: mm.precioOferta, gciaPct: mm.gananciaPct, sim: mm.sim } : null,
+      // margen ya fijado para ESTE chasis (si ya se compró con margen elegido)
+      margenUnidad: margenPorSerie[_serieDeVin(r.vin)] || null,
       // coincide si el codigo base de Oversoft == el modelo_codigo del reparto (lo
       // mas confiable, aguanta MY nuevos sin catalogar), o si los nombres matchean.
       modeloMatch: ov ? (

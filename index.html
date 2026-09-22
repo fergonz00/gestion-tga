@@ -1362,6 +1362,10 @@ table.patent-tbl tr.tbl-sep.pat:hover td  { background: var(--green-soft); }
 .reparto-est-alerta { color: #93231f; font-weight: 600; font-size: 12px; }
 .reparto-est-wait { color: #8a5a00; font-size: 12px; }
 .reparto-acc { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+/* Margen por unidad (elegir el precio con el que va a entrar el auto) */
+.rep-margen { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.rep-margen-in { display: flex; align-items: center; gap: 3px; }
+.rep-margen-out { font-size: 12px; }
 .reparto-link { background: none; border: 0; color: var(--vw-grey-4); text-decoration: underline; cursor: pointer; font-size: 12px; }
 .reparto-link:hover { color: var(--vw-grey-5, #000); }
 .reparto-ok { background: #1a7f37 !important; padding: 4px 12px !important; font-size: 12px !important; }
@@ -6265,6 +6269,38 @@ let repartoSel = {};      // vin -> true (selección para comprar)
 let repartoNombres = {};  // edición de nombres de color (codigo -> nombre)
 let repartoCopia = '';    // texto armado para mandar a VW
 let repartoMsg = '';      // mensaje del cargador
+let repartoMargenes = {}; // vin -> margen % elegido al comprar (ver _repPrecioDeMargen)
+
+// --- Margen por unidad: precio con el que va a entrar el auto -----------------
+// Misma fórmula que Ventas y que el Baratito (_gciaVentaPct del backend), portada
+// acá para mostrar el precio EN VIVO mientras Fer tipea el margen. `sim` viene en
+// cada item del reparto (precioModelo.sim) y su campo `otros` es una FRACCIÓN de
+// la lista, no pesos.
+function _repGciaPct(monto, sim) {
+  if (!sim) return null;
+  const lista = Number(sim.lista) || 0, costo = Number(sim.costoRep) || 0;
+  const iva = Number(sim.iva) || 0.21, cc = Number(sim.cc90Iva) || 0;
+  const otros = (Number(sim.otros) || 0) * lista;
+  if (!(lista > 0) || !(monto > 0)) return null;
+  const neto = 1 / (1 + iva);
+  const U = costo - cc - otros;
+  const dto = 1 - monto / lista;
+  const com = (dto > 0.05) ? (monto / (1 + iva)) * 0.015 : 0.015 * monto;
+  const iibb = Math.max(0.014 * monto * neto, 0.1 * (monto - costo) * neto);
+  return (monto * neto - U * neto - com - iibb) / (lista * neto);
+}
+// Precio SIN FyF que da ese margen (bisección sobre _repGciaPct).
+function _repPrecioDeMargen(pct, sim) {
+  if (!sim || !(Number(sim.lista) > 0)) return null;
+  let lo = (Number(sim.costoRep) || 0) * 0.5, hi = Number(sim.lista) * 1.6;
+  for (let i = 0; i < 120; i++) {
+    const mid = (lo + hi) / 2;
+    const y = _repGciaPct(mid, sim);
+    if (y === null || y < pct) lo = mid; else hi = mid;
+  }
+  return Math.round((lo + hi) / 2);
+}
+const REPARTO_FYF = 1110000;   // el precio de vidriera lleva flete y formularios
 
 // "Vendido" del reparto: ventas del modelo en los MISMOS 4 meses que usa la
 // sección Rotación — mes EN CURSO + los 3 anteriores (repartoData.rotacion.meses,
@@ -6314,7 +6350,7 @@ async function _repartoPost(obj) {
 // revierte y avisa. Antes cada botón hacía `await _repartoPost(); await loadReparto(true)`
 // (recarga completa en frío del panel en vivo, ~30s, sin ningún feedback): la página
 // parecía congelada y el cambio recién aparecía cuando terminaba la recarga.
-async function _repAccionOptim(vins, accion, cambio) {
+async function _repAccionOptim(vins, accion, cambio, extra) {
   const esLista = Array.isArray(vins);
   const lista = esLista ? vins : [vins];
   const items = (repartoData && repartoData.items) || [];
@@ -6328,7 +6364,7 @@ async function _repAccionOptim(vins, accion, cambio) {
   });
   renderReparto();
   try {
-    const r = await _repartoPost(Object.assign({ accion: accion }, esLista ? { vins: lista } : { vin: lista[0] }));
+    const r = await _repartoPost(Object.assign({ accion: accion }, esLista ? { vins: lista } : { vin: lista[0] }, extra || {}));
     if (r && r.ok === false) throw new Error(r.error || 'error');
   } catch (e) {
     tocados.forEach(t => Object.assign(t.it, t.prev));
@@ -6404,7 +6440,13 @@ async function repartoComprarElegidas(vins) {
   if (!vins || !vins.length) return;
   const sel = repartoData.items.filter(i => vins.indexOf(i.vin) >= 0);
   repartoCopia = ['Modelo\tChasis (VIN)\tColor'].concat(sel.map(i => i.descripcion + '\t' + i.vin + '\t' + i.color_nombre)).join('\n');
-  await _repAccionOptim(vins, 'comprarreparto', { estado_compra: 'comprado' });
+  // Margen elegido para cada chasis (en fracción, como lo guarda la tabla). El
+  // backend calcula el precio con la lista vigente y lo deja en portal_precios_unidad.
+  const margenes = {};
+  vins.forEach(v => { const m = Number(repartoMargenes[v]); if (m > 0) margenes[v] = m / 100; });
+  await _repAccionOptim(vins, 'comprarreparto', { estado_compra: 'comprado' },
+    Object.keys(margenes).length ? { margenes: margenes } : null);
+  vins.forEach(v => { delete repartoMargenes[v]; });
 }
 async function repartoDeshacer(vin) { await _repAccionOptim(vin, 'deshacerreparto', { estado_compra: 'pendiente', comprado_at: null }); }
 async function repartoOk(vin) { await _repAccionOptim(vin, 'okreparto', { estado_compra: 'ok' }); }
@@ -6584,6 +6626,82 @@ function renderReparto() {
 // Sección con las unidades ELEGIDAS (las quiero comprar, todavía sin confirmar a
 // VW). Desde acá se pasan a "comprado" (una o todas) y recién ahí se arma el
 // texto para VW. "Volver a pendiente" las devuelve a la tabla de arriba.
+// Celda para elegir el margen de UNA unidad antes de comprarla. Muestra el margen
+// y el precio que tiene hoy el modelo como referencia, y el precio que sale del
+// margen tipeado (en vivo). Vacío = sin precio propio: la unidad entra al precio
+// del modelo, como hasta ahora.
+function _repMargenCelda(it) {
+  const pm = it.precioModelo;
+  if (!pm || !pm.sim || !(Number(pm.sim.lista) > 0)) {
+    return '<span class="reparto-fam" title="El modelo no está en el armado de precios, no hay lista con qué calcular">s/precio</span>';
+  }
+  const vin = it.vin;
+  const guardado = repartoMargenes[vin];
+  const val = guardado === undefined ? '' : guardado;
+  const hoyPct = (Number(pm.gciaPct) || 0) * 100;
+  const hoyPrecio = Number(pm.oferta) || 0;
+  let h = '<div class="rep-margen">';
+  h += '<div class="rep-margen-in"><input type="number" step="0.1" min="0" max="60" id="repMarg_' + vin + '" value="' + val + '"'
+    + ' placeholder="' + hoyPct.toFixed(1) + '" oninput="repMargenCambio(\'' + vin + '\')"'
+    + ' style="width:62px;padding:5px 6px;border:1px solid var(--vw-grey-2);border-radius:6px;font-size:13px;text-align:right"><span>%</span></div>';
+  h += '<div class="rep-margen-out" id="repMargOut_' + vin + '">' + _repMargenTexto(vin, pm) + '</div>';
+  h += '<div class="reparto-fam" title="Precio y margen que tiene hoy el modelo">hoy ' + hoyPct.toFixed(1) + '% · ' + fmtPesos(hoyPrecio) + '</div>';
+  h += '</div>';
+  return h;
+}
+// Texto del precio que sale del margen tipeado (con FyF, como la vidriera).
+function _repMargenTexto(vin, pm) {
+  const v = repartoMargenes[vin];
+  if (v === undefined || v === '' || !(Number(v) > 0)) return '<span class="reparto-fam">precio del modelo</span>';
+  const vn = _repPrecioDeMargen(Number(v) / 100, pm.sim);
+  if (!vn) return '<span class="warn">no calcula</span>';
+  const dto = 1 - vn / (Number(pm.sim.lista) || 1);
+  return '<b>' + fmtPesos(vn + REPARTO_FYF) + '</b> <span class="reparto-fam">(' + (dto * 100).toFixed(1) + '% dto)</span>';
+}
+function repMargenCambio(vin) {
+  const inp = document.getElementById('repMarg_' + vin); if (!inp) return;
+  repartoMargenes[vin] = inp.value === '' ? undefined : Number(inp.value);
+  if (inp.value === '') delete repartoMargenes[vin];
+  const it = (repartoData.items || []).find(i => i.vin === vin);
+  const out = document.getElementById('repMargOut_' + vin);
+  if (out && it && it.precioModelo) out.innerHTML = _repMargenTexto(vin, it.precioModelo);
+}
+
+// Precio ya fijado para un chasis comprado (viene de portal_precios_unidad). Se
+// puede cambiar o sacar mientras la unidad no se vendió: "Cambiar" pide el margen
+// nuevo, vacío lo saca y la unidad vuelve al precio del modelo.
+function _repMargenFijado(it) {
+  const m = it.margenUnidad;
+  const pm = it.precioModelo;
+  const puede = !!(pm && pm.sim && Number(pm.sim.lista) > 0);
+  if (!m || !m.activo) {
+    if (!puede) return '<span class="reparto-fam">—</span>';
+    return '<div class="rep-margen"><span class="reparto-fam">precio del modelo</span>'
+      + '<button class="reparto-link" onclick="repMargenEditar(\'' + it.vin + '\')">Poner margen</button></div>';
+  }
+  const pct = m.gciaPct === null ? null : (m.gciaPct * 100);
+  let h = '<div class="rep-margen">';
+  h += '<div><b>' + fmtPesos((Number(m.precio) || 0) + REPARTO_FYF) + '</b></div>';
+  h += '<div class="reparto-fam">' + (pct === null ? 'precio fijo' : 'margen ' + pct.toFixed(1) + '%') + (m.origen === 'reparto' ? ' · del reparto' : '') + '</div>';
+  h += '<button class="reparto-link" onclick="repMargenEditar(\'' + it.vin + '\')">Cambiar</button>';
+  h += '</div>';
+  return h;
+}
+async function repMargenEditar(vin) {
+  const it = (repartoData.items || []).find(i => i.vin === vin); if (!it) return;
+  const m = it.margenUnidad;
+  const actual = (m && m.gciaPct != null) ? (m.gciaPct * 100).toFixed(1) : '';
+  const txt = prompt('Margen para el chasis ' + String(vin).slice(-8) + '\n\n'
+    + (it.descripcion || '') + '\nHoy el modelo está en ' + ((Number(it.precioModelo && it.precioModelo.gciaPct) || 0) * 100).toFixed(1) + '%.\n\n'
+    + 'Dejalo vacío para sacarle el precio propio (vuelve al precio del modelo).', actual);
+  if (txt === null) return;                       // canceló
+  const pct = txt.trim() === '' ? 0 : Number(txt.replace(',', '.'));
+  if (txt.trim() !== '' && !(pct > 0)) { alert('Margen inválido'); return; }
+  const r = await _repartoPost({ accion: 'setmargenunidad', vin: vin, pct: pct ? pct / 100 : 0 });
+  if (r && r.ok) { repartoMsg = pct ? '✓ Margen guardado' : '✓ Precio propio sacado'; await loadReparto(true); }
+  else alert('Error: ' + ((r && r.error) || 'falló'));
+}
+
 function repartoElegidasSec(items) {
   const eleg = (items || []).filter(i => i.estado_compra === 'elegida');
   let h = '<div class="reparto-sep"></div>';
@@ -6596,7 +6714,9 @@ function repartoElegidasSec(items) {
   const vinsJson = JSON.stringify(eleg.map(i => i.vin));
   h += '<div class="reparto-row" style="margin-bottom:8px"><button class="refresh reparto-comprar" onclick=\'repartoComprarElegidas(' + vinsJson + ')\'>Marcar todas compradas (' + eleg.length + ')</button></div>';
   h += '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
-    + '<th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num" title="Meses de stock = stock ÷ venta mensual promedio (misma ventana que la sección Rotación: mes en curso + los 3 anteriores)">Meses stock</th><th class="num">Acción</th></tr></thead><tbody>';
+    + '<th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th><th class="num" title="Meses de stock = stock ÷ venta mensual promedio (misma ventana que la sección Rotación: mes en curso + los 3 anteriores)">Meses stock</th>'
+    + '<th class="num" title="Margen con el que se va a vender ESTA unidad. Queda fijado al chasis: cuando la unidad entra a Oversoft, el vendedor ya la cotiza a ese precio. Vacío = usa el precio del modelo.">Margen de esta unidad</th>'
+    + '<th class="num">Acción</th></tr></thead><tbody>';
   eleg.forEach(it => {
     h += '<tr>';
     h += '<td><div class="reparto-modelo">' + escapeHtml((it.descripcion || '').replace(/^VW /, '')) + '</div><div class="reparto-fam">' + escapeHtml(it.familia || '') + '</div></td>';
@@ -6606,6 +6726,7 @@ function repartoElegidasSec(items) {
       : it.stockActual + (it.tieneAntiguedad ? ' <span class="reparto-antig-flag" title="Tenés unidad(es) con +90 días en stock">⏳</span>' : '');
     h += '<td class="num">' + stk + '</td>';
     h += '<td class="num">' + _rotMesesCell(_repMesesStock(it), it.stockActual) + '</td>';
+    h += '<td class="num">' + _repMargenCelda(it) + '</td>';
     h += '<td class="num"><div class="reparto-acc"><button class="refresh reparto-ok" onclick="repartoComprarElegidas([\'' + it.vin + '\'])" title="Marcar comprada: arma el texto para VW y pasa a conciliar">Comprada</button>';
     h += '<button class="reparto-link" onclick="repartoDeshacer(\'' + it.vin + '\')">Volver a pendiente</button></div></td></tr>';
   });
@@ -6640,7 +6761,9 @@ function repartoCompradoSec(items) {
   }
   h += '<p class="reparto-hint">Lo que le compraste a VW. Cuando la unidad aparece en Oversoft y <strong>coincide todo</strong> (modelo, color y chasis) se confirma <strong>sola</strong> y pasa a <strong>Confirmados</strong>. Si algo <strong>difiere (⚠)</strong>, quedan acá para que lo revises y le des <strong>OK</strong> vos. Las <strong>manuales</strong> esperan a que Valeria cargue el chasis en Compras VW; ahí recién cruzan con Oversoft.</p>';
   h += '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
-    + '<th>Modelo</th><th>Color pedido</th><th>Chasis (VIN)</th><th>Conciliación (Oversoft)</th><th class="num">Acción</th></tr></thead><tbody>';
+    + '<th>Modelo</th><th>Color pedido</th><th>Chasis (VIN)</th><th>Conciliación (Oversoft)</th>'
+    + '<th class="num" title="Precio fijado para ESTE chasis. Cuando la unidad entra a Oversoft el vendedor ya la cotiza así.">Precio de esta unidad</th>'
+    + '<th class="num">Acción</th></tr></thead><tbody>';
   comp.forEach(it => {
     const ov = it.oversoft || {};
     const rowCls = it.alerta ? 'reparto-tr-alerta' : (it.enOversoft ? 'reparto-tr-ovs' : '');
@@ -6661,6 +6784,7 @@ function repartoCompradoSec(items) {
         + '</div>';
     } else conc = '<span class="reparto-est-wait">esperando Oversoft' + (it.diasComprado != null ? ' (' + it.diasComprado + 'd)' : '') + '</span>';
     h += '<td>' + conc + '</td>';
+    h += '<td class="num">' + _repMargenFijado(it) + '</td>';
     let acc = '<div class="reparto-acc">';
     if (it.enOversoft) acc += '<button class="refresh reparto-ok" onclick="repartoOk(\'' + it.vin + '\')" title="Confirmar conciliación: pasa a Confirmados (sigue contando)">OK</button>';
     acc += '<button class="reparto-link" onclick="repartoDeshacer(\'' + it.vin + '\')">Deshacer</button></div>';
@@ -6680,7 +6804,7 @@ function repartoConfirmadosSec(items) {
   h += '<div class="reparto-head"><h3>✓ Confirmados</h3><span class="reparto-sub">' + ok.length + ' unidad' + (ok.length !== 1 ? 'es' : '') + ' · cuentan como compra del mes</span></div>';
   h += '<p class="reparto-hint">Ya conciliadas con Oversoft. Si te confundiste, tocá <strong>Deshacer</strong> y vuelven a "Comprado · a conciliar".</p>';
   h += '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
-    + '<th>Modelo</th><th>Color pedido</th><th>Chasis (VIN)</th><th>Oversoft</th><th class="num">Acción</th></tr></thead><tbody>';
+    + '<th>Modelo</th><th>Color pedido</th><th>Chasis (VIN)</th><th>Oversoft</th><th class="num">Precio de esta unidad</th><th class="num">Acción</th></tr></thead><tbody>';
   ok.forEach(it => {
     const ov = it.oversoft || {};
     h += '<tr class="reparto-tr-ovs">';
@@ -6688,6 +6812,7 @@ function repartoConfirmadosSec(items) {
     h += '<td>' + escapeHtml(it.color_nombre || '') + '</td>';
     h += '<td class="reparto-vin">' + escapeHtml(it.vin) + '</td>';
     h += '<td><span class="reparto-est-ok">✓ ' + escapeHtml(ov.modelo || '?') + (ov.serie ? ' · serie ' + escapeHtml(ov.serie) : '') + '</span></td>';
+    h += '<td class="num">' + _repMargenFijado(it) + '</td>';
     h += '<td class="num"><button class="reparto-link" onclick="repartoReabrir(\'' + it.vin + '\')">Deshacer</button></td></tr>';
   });
   h += '</tbody></table></div></div>';
