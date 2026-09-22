@@ -4745,10 +4745,11 @@ function marcarComprado(body) {
   // Que aparezcan YA en Compras VW de Valeria, antes de entrar a Oversoft.
   var sembradas = 0;
   try { sembradas = _sembrarComprasVWdesdeReparto(vins); } catch (e) {}
-  // Margen con el que se compró cada unidad → precio por chasis, listo ANTES de
-  // que la unidad entre a Oversoft (ver _sembrarPrecioUnidad).
+  // Precio por chasis, listo ANTES de que la unidad entre a Oversoft. REGLA: si
+  // no se eligió margen a mano, va el del Baratito de hoy + 2,5 puntos
+  // (_repartoMargenExtra). Ver _sembrarPrecioUnidad.
   var precios = 0;
-  try { precios = _sembrarPrecioUnidad(vins, (body && body.margenes) || {}); } catch (e) {}
+  try { precios = _sembrarPrecioUnidad(vins, (body && body.margenes) || {}, true); } catch (e) {}
   return { ok: true, comprasVW: sembradas, preciosUnidad: precios };
 }
 
@@ -4786,30 +4787,54 @@ function _precioDeMargen(pctObj, sim) {
 // margen que eligió Fer en el reparto. serie = últimos 8 del VIN (la misma que
 // va a tener en Oversoft), así que cuando la unidad entra el precio ya está
 // puesto y el vendedor la cotiza sola. Sin margen elegido no toca nada.
-function _sembrarPrecioUnidad(vins, margenes) {
-  if (!vins || !vins.length || !margenes) return 0;
-  var conMargen = vins.filter(function (v) { return Number(margenes[v]) > 0; });
+// Puntos de margen que se le suman al del Baratito cuando se compra un auto sin
+// elegir nada a mano. Regla de Fer (22-sep-2026): "siempre 2,5% arriba del
+// baratito actual". Se puede cambiar sin deploy con la clave `reparto_margen_extra`
+// en app_config (en puntos: 2.5 = dos puntos y medio).
+var REPARTO_MARGEN_EXTRA_DEFAULT = 0.025;
+function _repartoMargenExtra() {
+  try {
+    var v = Number(String(_appConfig_('reparto_margen_extra') || '').replace(',', '.'));
+    if (v > 0 && v < 60) return v / 100;
+  } catch (e) {}
+  return REPARTO_MARGEN_EXTRA_DEFAULT;
+}
+
+// usarDefault=true (al comprar): las unidades sin margen elegido a mano toman el
+// margen del Baratito + los puntos de la regla. Con usarDefault=false (editar),
+// un margen 0 significa "sacarle el precio propio" y no se siembra nada.
+function _sembrarPrecioUnidad(vins, margenes, usarDefault) {
+  if (!vins || !vins.length) return 0;
+  margenes = margenes || {};
+  var conMargen = usarDefault ? vins.slice() : vins.filter(function (v) { return Number(margenes[v]) > 0; });
   if (!conMargen.length) return 0;
   var rows = _repartoRead('/reparto_vw?select=vin,descripcion,color_codigo&vin=in.(' + _repartoInList(conMargen) + ')') || [];
   if (!rows.length) return 0;
   var coloresDb = {};
   try { (_repartoRead('/reparto_colores?select=codigo,nombre') || []).forEach(function (c) { coloresDb[c.codigo] = c.nombre; }); } catch (e) {}
   var colores = Object.assign({}, REPARTO_COLORES_BASE, coloresDb);
-  // sim por modelo, del motor (misma fuente que el panel de precios).
-  var simByNorm = {};
+  // sim + margen de hoy por modelo, del motor (misma fuente que el panel de precios).
+  var simByNorm = {}, gciaByNorm = {};
   try {
     var motor = _cached('motor', CACHE_TTL_SEC, false, getBaratitoMotor);
     (motor.modelos || []).forEach(function (m) {
       if (!m.sim) return;
-      if (m.modelo) simByNorm[_repartoNtrim(m.modelo)] = m.sim;
-      if (m.nombreCorto) simByNorm[_repartoNtrim(m.nombreCorto)] = m.sim;
+      if (m.modelo) { simByNorm[_repartoNtrim(m.modelo)] = m.sim; gciaByNorm[_repartoNtrim(m.modelo)] = Number(m.gananciaPct) || 0; }
+      if (m.nombreCorto) { simByNorm[_repartoNtrim(m.nombreCorto)] = m.sim; gciaByNorm[_repartoNtrim(m.nombreCorto)] = Number(m.gananciaPct) || 0; }
     });
   } catch (e) {}
+  var extra = usarDefault ? _repartoMargenExtra() : 0;
   var now = new Date().toISOString();
   var payload = [];
   rows.forEach(function (r) {
+    var clave = _repartoNtrim(r.descripcion);
     var pct = Number(margenes[r.vin]);
-    var sim = simByNorm[_repartoNtrim(r.descripcion)];
+    // Sin margen elegido a mano: el del Baratito de hoy + los puntos de la regla.
+    if (!(pct > 0) && usarDefault) {
+      if (gciaByNorm[clave] === undefined) return;   // modelo sin armado de precios: no se inventa
+      pct = gciaByNorm[clave] + extra;
+    }
+    var sim = simByNorm[clave];
     var vn = _precioDeMargen(pct, sim);
     if (!vn) return;   // sin modelo en el motor no hay con qué calcular: no se inventa
     // ⚠️ portal_precios_unidad.precio es el precio FINAL, con flete y formularios
@@ -5003,6 +5028,10 @@ function agregarUnidadManual(body) {
   var hh = { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
   UrlFetchApp.fetch(SUPA_URL + '/compras_vw', { method: 'post', headers: hh, payload: JSON.stringify(compra), muteHttpExceptions: true });
   try { _cacheDrop('comprasvw'); } catch (e) {}
+  // 3) precio de la unidad: misma regla que cualquier compra (Baratito + 2,5 pts).
+  // La serie es el id sintético MAN-*; cuando Valeria carga el chasis real, se
+  // renombra la fila de compras_vw pero el precio queda colgado del MAN- viejo,
+  // así que acá NO se siembra: se hace al pasar el chasis (setSerieCompra).
   return { ok: true, id: id };
 }
 
@@ -5027,12 +5056,16 @@ function setSerieCompra(body) {
     payload: JSON.stringify({ serie: serie8, updated_at: new Date().toISOString(), updated_by: String((body && body.usuario) || '') }),
     muteHttpExceptions: true });
   if (rc.getResponseCode() >= 300) return { ok: false, error: 'compras ' + rc.getResponseCode() + ': ' + rc.getContentText().slice(0, 150) };
+  var newVin = raw.length >= 12 ? raw : serie8;
   try {
-    var newVin = raw.length >= 12 ? raw : serie8;
     UrlFetchApp.fetch(SUPA_URL + '/reparto_vw?vin=eq.' + encodeURIComponent(oldS), {
       method: 'patch', headers: Object.assign(_repartoWHeaders(), { Prefer: 'return=minimal' }),
       payload: JSON.stringify({ vin: newVin, status: 'Manual' }), muteHttpExceptions: true });
   } catch (e) {}
+  // Recién ahora la unidad manual tiene chasis real: se le pone el precio con la
+  // regla (Baratito + 2,5 pts), como cualquier compra. Antes no se podía, porque
+  // la serie era el id sintético MAN-*.
+  try { _sembrarPrecioUnidad([newVin], {}, true); } catch (e) {}
   try { _cacheDrop('comprasvw'); } catch (e) {}
   return { ok: true, serie: serie8 };
 }
@@ -5288,7 +5321,10 @@ function getReparto() {
   // ya esta resuelto (con el auto-OK aplicado) y el catalogo ya se leyo.
   var compradasMes = { porModelo: {}, porColor: {}, total: 0 };
   try { compradasMes = _repartoCompradasMes(items, periodo, _catalogoPorNorm()); } catch (e) {}
-  return { periodo: periodo, items: items, colores: colores, rotacion: _repartoRotacion(motor, virt, compradasMes), autoConciliadas: autoVins.length };
+  return { periodo: periodo, items: items, colores: colores, rotacion: _repartoRotacion(motor, virt, compradasMes), autoConciliadas: autoVins.length,
+    // Puntos que se le suman al margen del Baratito cuando se compra sin elegir
+    // margen a mano (regla fija, editable en app_config.reparto_margen_extra).
+    margenExtra: _repartoMargenExtra() };
 }
 
 // =======================================================================
