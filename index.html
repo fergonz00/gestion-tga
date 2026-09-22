@@ -1759,7 +1759,7 @@ const APPS_SCRIPT_TOKEN = _sessTok;
 // pagar VW", que vive en la planilla de tesorería 1qIP4OT5 (hoja INFORME, fila
 // "SALDOS DISPONIBLES VW") y no existe en ningún lado de gestión.
 const SALDOS_URL   = 'https://script.google.com/macros/s/AKfycbyRTqqpQMjKDL82Z5Cjd9IJWPQnINF0LAEvji8FizfXMBO8Cz0IVbTSnQnNmH_rRxz9yg/exec';
-const SALDOS_TOKEN = 'tga-saldos-K9Mx2P7vQ'; // TRANSICIÓN: pasa a _sessTok cuando el Apps Script de saldos verifique la sesión
+const SALDOS_TOKEN = _sessTok; // El Apps Script de SALDOS ya verifica la sesión firmada (aún acepta el token viejo durante la transición, hasta que Fer lo saque)
 
 // Motor nuevo (gestion-next, Next+Supabase en Vercel) que reemplaza al Apps Script.
 // Cubre las solapas Ventas (default desde 1-jul, validado) y Adm. ventas (default
