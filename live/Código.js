@@ -5135,7 +5135,11 @@ function getReparto() {
     }
   } catch (e) {}
 
-  var norm = function (s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); };
+  // Saca tildes ANTES de limpiar (NFD + combining marks). Sin esto "Volcan" (como
+  // lo carga Oversoft) y "Volcán" (como viene el reparto de VW) quedaban "volcan"
+  // vs "volcn" → colorMatch false → ⚠ revisá eterno por una sola tilde. Mismo
+  // criterio que _stockColNorm.
+  var norm = function (s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, ''); };
   var incl = function (a, b) { a = norm(a); b = norm(b); return !!a && !!b && (a === b || a.indexOf(b) >= 0 || b.indexOf(a) >= 0); };
 
   rows.sort(function (a, b) { return (a.familia || '').localeCompare(b.familia || '') || (a.descripcion || '').localeCompare(b.descripcion || ''); });
