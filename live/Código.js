@@ -651,15 +651,29 @@ function _diasEnVenta(ncDe, colorDe, h) {
 // venta vs costo neta). Diferencias documentadas vs la hoja: costo histórico ≈
 // costo rep del mes (Oversoft tiene costounidad=0) — solo pesa cuando se vende
 // arriba del costo (4/201 casos); accesorios y "ahorro compra" no disponibles.
-function _gciaVentaPct(monto, iva, lista, costoRep, ccIva, otros, sinComision) {
+function _gciaVentaPct(monto, iva, lista, costoRep, ccIva, otros, sinComision, neto) {
   if (!(lista > 0) || !(monto > 0)) return null;
+  if (neto === undefined) neto = 1 - iva;             // convención vieja de la hoja (ver _factorNeto)
   const U = costoRep - ccIva - otros;                 // costo rep tomando incentivos
   const dto = 1 - monto / lista;
   // sinComision: venta TG de gerencia confirmada SIN comisión → no se cuenta como costo.
   const com = sinComision ? 0 : ((dto > 0.05) ? (monto / (1 + iva)) * 0.015 : 0.015 * monto);
-  const iibb = Math.max(0.014 * monto * (1 - iva), 0.1 * (monto - costoRep) * (1 - iva));
-  const gcia = monto * (1 - iva) - U * (1 - iva) - com - iibb;
-  return gcia / (lista * (1 - iva));
+  const iibb = Math.max(0.014 * monto * neto, 0.1 * (monto - costoRep) * neto);
+  const gcia = monto * neto - U * neto - com - iibb;
+  return gcia / (lista * neto);
+}
+
+// Factor para pasar un importe CON IVA a neto. Lo correcto es ÷(1+IVA) ($1.210.000
+// c/IVA = $1.000.000 neto). La hoja PVs usaba ×(1−IVA) (×0,79), que resta IVA de
+// más y subestima el margen ~4,4%. Corregido desde septiembre 2026 (22-sep, al
+// unificar Baratito con Ventas — misma regla que gestion-next lib/ventas.ts).
+const IVA_NETO_DESDE = '2026-09';
+function _factorNeto(iva, mes) {
+  return mes >= IVA_NETO_DESDE ? 1 / (1 + iva) : 1 - iva;
+}
+// IVA de la unidad: pickups/comerciales (Amarok, Saveiro) 10,5%, el resto 21%.
+function _ivaModelo(txt) {
+  return /amarok|saveiro/i.test(String(txt || '')) ? 0.105 : 0.21;
 }
 
 // =======================================================================
@@ -2824,8 +2838,18 @@ function getBaratitoMotor() {
     const otros = (Number(ii.tactico)||0) + (Number(ii.whosale)||0) + (Number(ii.adicional1)||0) + (Number(ii.adicional2)||0) + (Number(ii.cupo)||0);
     const dto = dtoByNc[c.nombre_corto] || 0;
     const vn = lista * (1 - dto);
-    const iibb = PRECIOS_IIBB * (vn / 1.21), comision = PRECIOS_COMISION * (vn / 1.21), cheque = PRECIOS_CHEQUE * vn;
-    const an = ((vn - costo + cc90Iva + otros) / lista) * lista - iibb - comision - cheque;
+    // Ganancia proyectada = MISMA fórmula que la solapa Ventas (_gciaVentaPct),
+    // valuando la unidad al precio de oferta sin FyF (22-sep-2026, pedido de Fer:
+    // antes el Baratito no le sacaba el IVA al margen y usaba comisión 1,40% /
+    // IIBB 1,35%, así que una venta que acá daba empate en Ventas daba pérdida).
+    // Pesos y % en NETO de IVA: % = gcia / lista neta, igual que Ventas.
+    const ivaM = _ivaModelo((c.nombre_bt || '') + ' ' + c.nombre_corto + ' ' + (c.familia || ''));
+    const netoM = 1 / (1 + ivaM);
+    const pctM = _gciaVentaPct(vn, ivaM, lista, costo, cc90Iva, otros, false, netoM) || 0;
+    const an = pctM * lista * netoM;
+    const comision = (1 - vn / lista > 0.05) ? vn * netoM * 0.015 : 0.015 * vn;
+    const iibb = Math.max(0.014 * vn * netoM, 0.1 * (vn - costo) * netoM);
+    const cheque = 0;
 
     // Prom. gcia/venta REAL: cada venta de Oversoft valuada con la BT de SU mes.
     // Ventas de meses sin BT cargada (ej. marzo) quedan afuera y se cuentan aparte.
@@ -2838,7 +2862,7 @@ function getBaratitoMotor() {
       // Autoahorro no cobra condiciones comerciales (igual que getVentasV2).
       const ccM = vd.esAA ? 0 : (Number(im.performance) || 0);
       const otrosM = vd.esAA ? 0 : ((Number(im.tactico)||0) + (Number(im.whosale)||0) + (Number(im.adicional1)||0) + (Number(im.adicional2)||0) + (Number(im.cupo)||0));
-      const y = _gciaVentaPct(vd.monto, vd.iva, listaM, Number(btMes.costo_concesionario) || 0, ccM, otrosM);
+      const y = _gciaVentaPct(vd.monto, vd.iva, listaM, Number(btMes.costo_concesionario) || 0, ccM, otrosM, false, _factorNeto(vd.iva, vd.mes));
       if (y === null) { gciaSinBt++; continue; }
       gciaSum += y; gciaN++;
     }
@@ -2857,12 +2881,13 @@ function getBaratitoMotor() {
     const ccAct = Number(iiAct.performance) || 0;
     const otrosAct = (Number(iiAct.tactico)||0) + (Number(iiAct.whosale)||0) + (Number(iiAct.adicional1)||0) + (Number(iiAct.adicional2)||0) + (Number(iiAct.cupo)||0);
     const ventasMesDet = (ventasMesPorTrim[c.nombre_corto] || []).map(function (v) {
-      const pct = _gciaVentaPct(v.monto, v.iva, listaAct, costoAct, v.esAA ? 0 : ccAct, v.esAA ? 0 : otrosAct);
+      const netoV = _factorNeto(v.iva, mesActual);
+      const pct = _gciaVentaPct(v.monto, v.iva, listaAct, costoAct, v.esAA ? 0 : ccAct, v.esAA ? 0 : otrosAct, false, netoV);
       return {
         pv: v.pv, fecha: v.fecha, serie: v.serie, color: v.color, monto: v.monto,
         esAA: v.esAA,
         gciaPct: pct,
-        gciaPesos: pct === null ? null : Math.round(pct * listaAct * (1 - v.iva)),
+        gciaPesos: pct === null ? null : Math.round(pct * listaAct * netoV),
       };
     });
 
@@ -2873,8 +2898,8 @@ function getBaratitoMotor() {
       dtoVw:         costo > 0 ? (cc90Iva + otros) / costo : 0,
       precioOferta:  vn + PRECIOS_FYF,
       costoRep:      costo,
-      gananciaPct:   an / lista,
-      gananciaPesos: an,
+      gananciaPct:   pctM,          // gcia neta / lista neta (misma base que Ventas)
+      gananciaPesos: an,            // gcia NETA de IVA
       stock:         stk,
       vendidos:      0, vendidos60: 0,
       promGcia:      gciaN ? gciaSum / gciaN : 0,
@@ -2901,7 +2926,7 @@ function getBaratitoMotor() {
       ajustes:       ajustesByNc[c.nombre_corto] || {},
       nombreCorto:   c.nombre_corto,    // clave para guardar ajustes
       competencia:   comp.porModelo[_ntrim(c.nombre_bt || c.nombre_corto)] || comp.porModelo[_ntrim(c.nombre_corto)] || null,
-      sim:           { lista: lista, costoRep: costo, cc90Iva: cc90Iva, otros: lista > 0 ? otros / lista : 0 },
+      sim:           { lista: lista, costoRep: costo, cc90Iva: cc90Iva, otros: lista > 0 ? otros / lista : 0, iva: ivaM },
       codigo:        c.codigo, familia: c.familia,
     });
   }
@@ -2917,7 +2942,7 @@ function getBaratitoMotor() {
     stockCatalogado: stockCatalogado,         // las que caen en un modelo del catálogo
     sinCatalogo: sinCatalogo,                 // descripciones de Oversoft que no matchean el catálogo
     competenciaActualizado: comp.actualizado, // sello de la última corrida del scraper de competencia
-    constantes: { fyf: PRECIOS_FYF, iibb: PRECIOS_IIBB, comision: PRECIOS_COMISION, cheque: PRECIOS_CHEQUE, iva: 1.21 },
+    constantes: { fyf: PRECIOS_FYF, iibb: 0.014, comision: 0.015, cheque: 0, iva: 1.21, formula: 'ventas' },
     updatedAt: new Date().toISOString(),
   };
 }

@@ -4620,14 +4620,21 @@ function _ventasVentana(m) {
   return _ventanaMeses4().reduce((a, mk) => a + (Number(v[mk]) || 0), 0);
 }
 function _precioKey(modelo) { return String(modelo).replace(/[^a-zA-Z0-9]/g, '_'); }
-// Recalcula la ganancia replicando EXACTO las fórmulas del Sheet (verificado: reproduce AO al peso).
+// Recalcula la ganancia con la MISMA fórmula que la solapa Ventas (_gciaVentaPct del
+// backend, 22-sep-2026): neto de IVA, comisión 1,5%, IIBB max(1,4% venta neta; 10%
+// del margen neto). % = gcia neta / lista neta. sim.iva = 0,21 autos / 0,105 pickups.
 function _simGcia(sim, dto, C) {
   const lista = Number(sim.lista) || 0;
   if (lista <= 0) return { gananciaPct: 0, gananciaPesos: 0, precioOferta: 0 };
+  const iva = Number(sim.iva) || 0.21;
+  const neto = 1 / (1 + iva);
   const vn = lista * (1 - dto);
-  const am = (vn - Number(sim.costoRep) + Number(sim.cc90Iva) + Number(sim.otros) * lista) / lista;
-  const an = am * lista - C.iibb * (vn / C.iva) - C.comision * (vn / C.iva) - C.cheque * vn;
-  return { gananciaPct: an / lista, gananciaPesos: an, precioOferta: vn + C.fyf };
+  const costo = Number(sim.costoRep) || 0;
+  const U = costo - (Number(sim.cc90Iva) || 0) - (Number(sim.otros) || 0) * lista;
+  const com = dto > 0.05 ? vn * neto * 0.015 : 0.015 * vn;
+  const iibb = Math.max(0.014 * vn * neto, 0.1 * (vn - costo) * neto);
+  const an = (vn - U) * neto - com - iibb;
+  return { gananciaPct: an / (lista * neto), gananciaPesos: an, precioOferta: vn + C.fyf };
 }
 function _gClsP(g) { return g < 0 ? '#c00' : (g < 0.02 ? '#cc6600' : '#0a7a30'); }
 async function loadPrecios(forzar) {
