@@ -1453,6 +1453,15 @@ table.patent-tbl tr.tbl-sep.pat:hover td  { background: var(--green-soft); }
   .rot-tabla tbody tr:not(.reparto-detalle) td:first-child { position: static; box-shadow: none; }
   .rot-tabla thead th:first-child { left: auto; }
 }
+
+/* Tabla de pendientes del reparto: misma idea que la Rotacion. Scrollea ADENTRO
+   suyo en vez de arrastrar la pagina, asi los titulos de las columnas quedan
+   pegados arriba mientras se baja tildando unidad por unidad (son ~200 filas y
+   sin esto no se sabe que columna se esta mirando). Hace falta que el contenedor
+   tenga altura propia: con `position:sticky` a secas no alcanza porque
+   .table-wrap tiene overflow:hidden y se come el pegado. */
+.rep-scroll { max-height: 72vh; overflow: auto; }
+.rep-sticky thead th { position: sticky; top: 0; z-index: 3; background: var(--vw-grey-1); box-shadow: inset 0 -1px 0 var(--vw-grey-2); }
 </style>
 
 <!-- pdf.js para parsing client-side de los NCs -->
@@ -7072,7 +7081,7 @@ function repartoFiltrar() {
     wrap.innerHTML = '<div class="empty">' + msg + '</div>';
     return;
   }
-  let h = '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla"><thead><tr>'
+  let h = '<div class="table-wrap"><div class="table-scroll rep-scroll"><table class="reparto-tabla rep-sticky"><thead><tr>'
     + '<th></th><th>Modelo</th><th>Color</th><th>Chasis (VIN)</th><th class="num">Stock</th>'
     + '<th class="num" title="Unidades de este modelo vendidas en el mes en curso (' + _mesLabel(_mesKeyHoy()) + ', parcial). Ventas desde Oversoft.">Vend. mes</th>'
     + '<th class="num" title="Ventas del modelo en los últimos 4 meses: el mes en curso (parcial) + los 3 anteriores. Misma ventana que Meses stock y la Rotación.">Vendido (4m)</th>'
