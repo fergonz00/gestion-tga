@@ -1,49 +1,74 @@
 # -*- coding: utf-8 -*-
-"""PLANTILLA mensual: carga la tabla incentivos (wjfgl) desde la circular de
+r"""PLANTILLA mensual: carga la tabla incentivos (wjfgl) desde la circular de
 Condiciones Comerciales. Cada mes: reescribir CIRC y el bloque de datos con la
 circular nueva; dry-run y --go (delete+insert del mes + verificacion count/sum).
 Criterios fijos: montos TEXTUALES de la circular (no recalcular IVA); variantes
 "+ Pack Safe" heredan del modelo base; nombres Amarok = variante ACTIVA del
 catalogo (SE); tramos performance distintos de 90/100 se anotan en condicion;
 filas en $0 no se cargan.
-Circuito completo: skill circular-vw (C:\\proyectos\\.claude\\skills).
+Circuito completo: skill circular-vw (C:\proyectos\.claude\skills).
 
-Ultima corrida: 2026-09 circulares 99/26 + 105/26.
+Ultima corrida: 2026-10 circular 109/26.
 
-C105/26 (10/09/26) "Condiciones comerciales incrementales Amarok - septiembre":
-tactico INCREMENTAL de 1.381.357 s/Imp (1.526.400 c/Imp) para AGDB33 Comfortline
-CD TDI MT 4X2, AGDB3X Comfortline CD TDI AT 4X2 y AGDC3X Highline CD TDI AT 4X2.
-Se carga como adicional1 con circular propia -> el resto del mes queda igual.
-
-De la 99/26: Tacticos, Tiguan/Vento y esquema trimestral
-IDENTICOS a agosto al peso. Cambios reales del mes:
- - WHOLESALE +1,50% en los 14 (acompana la lista #897).
- - PERFORMANCE reacomodado en las Amarok 4x2: Trendline 4x2 se DERRUMBA de
-   2.600.000 a 1.000.000; Comfortline AT 4x2 sube de 900.000 a 2.000.000; ALTA de
-   Comfortline MT 4x2 (2.000.000, cobra desde el 80%); Highline AT 4x2 sube a
-   3.200.000 con tramos propios 50%=2.200.000 y 80%=2.600.000. Los V6, el Polo
-   Track y la Tera Trend no se movieron.
- - ALTA Amarok Unlimited V6 AT 4x4 G2: tactico = Extreme, performance = Black Style.
- - El performance viene como IMAGEN en el PDF (pag. 5) y SOLO sin IVA, asi que el
-   c/IVA se calcula (21% autos, 10,5% Amarok), como se viene haciendo.
- - Regimen viejo Amarok (circ 40, facturadas 01/11/25-30/04/26): la circular lo
-   repite y coincide 10/10 con lo cargado en 2026-04. ULTIMO MES: vence para
-   patentamientos el 30/09/26.
- - Gastos: fletes autos +8,69%, medianos +4,35%, admin +1,1%, seguros y
-   formularios 0%. Revisar si el FyF de $1.110.000 sigue cubriendo.
- - C67 (proteccion stock Virtus/Saveiro) extendida a patentamientos hasta 31/10/26.
+De la 109/26 (24/09/26): el mes mas quieto del anio. Se compararon las 82 filas
+de la circular contra las 84 cargadas de septiembre: CERO cambios de monto.
+Tacticos, Tiguan/Vento, wholesale y performance identicos al peso a septiembre
+(el wholesale tampoco subio, a diferencia de sep que habia ido +1,50% con la
+lista #897). Las 48 filas con doble columna cierran 48/48 el chequeo de IVA.
+Cambios reales del mes:
+ - ALTA "Polo Track MSI MT + PNT": tactico 3.900.672 s/Imp (1.309.457 MENOS que
+   el Track pelado) + performance 1.000.000 en todos los tramos. OJO: "PNT" no
+   existe en catalogo_modelos, ni en la lista #897, ni en los modelos de
+   Oversoft, ni en la circular de septiembre. Se carga por fidelidad pero la
+   fila es INERTE: el motor indexa por nombre_corto contra el catalogo activo y
+   _normModeloKey conserva el "+", asi que "POLOTRACKMSIMT+PNT" no matchea la
+   descripcion de Oversoft ("VW Polo Track MSI MT G1 MY26" -> "POLOTRACKMSIMT").
+   Si alguna vez se da de alta la version en catalogo_modelos, el incentivo ya
+   esta. PREGUNTA ABIERTA para Fer: que es el PNT.
+ - ALTA performance Polo Robust MSI MT (BZ3RT4) 1.000.000 en todos los tramos.
+   Esta SI corre: BZ3RT4 esta activo en el catalogo y en la lista #897. En
+   septiembre el Robust no tenia ningun incentivo.
+ - El INCREMENTAL dejo de venir suelto: en sep llego por las circulares 105/26
+   (Amarok 4x2) y 107/26 (Nivus/Tera); ahora es el punto 8 de la 109, con los
+   mismos montos. Chequeado que NO quedo consolidado adentro del tactico (el
+   tactico de octubre es identico al de septiembre al peso) -> se cargan los dos
+   por separado, sin doble conteo. Ademas mejora: el de Nivus/Tera en septiembre
+   valia solo del 17 al 30; en octubre vale todo el mes.
+ - SE TERMINO el doble regimen de Amarok: la circular 40 (facturadas 01/11/25 -
+   30/04/26) ya no figura entre las excepciones, vencio el 30/09/26. Por eso la
+   condicion de los tacticos Amarok vuelve a ser el "50% objetivo" pelado, sin
+   el "fact. desde lista 887". (La logica de doble regimen del motor esta
+   acotada a 2026-04/05/06, asi que es solo el texto.)
+ - Trimestre NUEVO: octubre-noviembre-diciembre, octubre es el mes 1. Criterios
+   sin cambios (trimestre >=100%, bimestre >=80%, mes 3 >=100%).
+ - Gastos: Seguros +1,5% y Gastos Administrativos +1,5%; fletes (autos y
+   medianos) y formularios 0%.
+ - Proteccion Vento & Tiguan (circ 33 del 09/03/26, punto 3) aparece explicita
+   como excepcion vigente; en septiembre no se mencionaba.
+ - VW llama "N.64 del 22/05/26" a la proteccion de stock Virtus/Saveiro, que en
+   la circular de septiembre era "N.67 del 18/05/26" (y el PDF archivado es el
+   67). Misma vigencia (patentamientos hasta 31/10/26): es un error de VW en
+   algun lado, no cambia nada operativo.
+ - VW NO mando lista de precios nueva: octubre corre con los precios de la #897.
+   Como el motor elige el mes de INCENTIVOS segun el mes que exista en
+   precios_lista (mesUsado), hay que cargar igual una lista de octubre con
+   cargar_precios_provisorio.py (0% de aumento, lista_num 202610) o estos
+   incentivos nunca se usan.
 """
 import json, urllib.request, sys
 
-CIRC = "99/26"
-MES = "2026-09"
+CIRC = "109/26"
+MES = "2026-10"
 R = []
 def add(codigo, nombre, tipo, siva, civa, cond, circ=None):
     R.append((codigo, nombre, tipo, siva, civa, cond, circ or CIRC))
 
 T50 = "50% objetivo"
-# ---------------- TACTICO (identico a agosto, al peso) ----------------
-add("BZ31T4","Polo Track MSI MT","tactico",5210129,6304256,T50)
+# ---------------- TACTICO (identico a septiembre, al peso) ----------------
+add("BZ31T4","Polo Track MSI MT","tactico",5210129,6304256,
+    "50% objetivo - sin PNT, vigente hasta 31/12/26")
+# ALTA oct: version "+ PNT" de la circular. Fila INERTE (no esta en catalogo_modelos).
+add("BZ31T4","Polo Track MSI MT + PNT","tactico",3900672,4719813,T50)
 add("BZ32D3","Polo COMFORTLINE 170TSI AT","tactico",4441445,5374149,T50)
 add("BZ33D3","Polo HIGHLINE 170TSI AT","tactico",2884515,3490263,T50)
 add("DF11T4","Tera Trend MSI MT","tactico",1931819,2337500,T50)
@@ -67,8 +92,9 @@ add("BF3XK3","T-Cross Extreme 200TSI AT","tactico",8837293,10693125,T50)
 add("CL23LZ","Taos Comfortline 250TSI AT","tactico",3863636,4675000,T50)
 add("CL24LZ","Taos Highline 250TSI AT","tactico",4917355,5950000,T50)
 add("CL24LZ","Taos Highline Bi Tono 250TSI AT","tactico",4917355,5950000,T50)
-# Amarok: facturadas desde lista 887 (05/05/26); historicas nov-abr van por Circ.40
-AMK = "50% objetivo - fact. desde lista 887"
+# Amarok: regimen UNICO desde octubre. La circ 40 (facturadas 01/11/25-30/04/26)
+# ya no figura entre las excepciones de la 109 -> vencio el 30/09/26.
+AMK = T50
 add("AGDA43","Amarok Trendline TDI MT 4x2 G2","tactico",1611584,1780800,AMK)
 add("AGDA34","Amarok Trendline TDI MT 4x4 G2","tactico",1827827,2019749,AMK)
 add("AGDB33","Amarok Comfortline TDI MT 4x2 SE G2","tactico",1611584,1780800,AMK)
@@ -81,10 +107,10 @@ add("AGDD8A","Amarok Extreme V6 AT 4x4 G2","tactico",6930534,7658240,AMK)
 add("AGDD8A","Amarok Unlimited V6 AT 4x4 G2","tactico",6930534,7658240,AMK)   # ALTA sep
 add("AGDD8A","Amarok Hero V6 AT 4x4 G2","tactico",6930534,7658240,AMK)
 add("AGDD8A","Amarok Black Style V6 AT 4x4 SE G2","tactico",6173638,6821870,AMK)
-# ---------------- ADICIONAL2 (tactico Tiguan/Vento) - identico a agosto -------
+# ---------------- ADICIONAL2 (tactico Tiguan/Vento) - identico a septiembre --
 add("RM14M7","Tiguan R-Line 250TSI DSG","adicional2",3951418,4781216,"tactico tiguan/vento")
 add("BU59UZ","Vento GLI 350TSI DSG","adicional2",5748043,6955132,"tactico tiguan/vento")
-# ---------------- WHOSALE (+1,50% vs agosto, los 14 de la circular) ----------
+# ---------------- WHOSALE (los 14 de la circular; SIN cambios vs septiembre) -
 W = "compra whosale"
 add("BZ31T4","Polo Track MSI MT","whosale",1173055,1419396,W)
 add("BZ32D3","Polo COMFORTLINE 170TSI AT","whosale",1340365,1621842,W)
@@ -106,17 +132,21 @@ add("CH24K3","Nivus Outfit 200TSI AT","whosale",1133915,1372038,W)
 # Desde la circular 89/26 el "Incentivo Tactico Incremental Polo/Tera/Nivus" quedo
 # consolidado DENTRO del tactico -> para esos modelos NO se carga aparte (seria
 # contarlo dos veces: el motor suma tactico+whosale+adicional1+adicional2+cupo).
-# El 10/09/26 VW saca la circular 105/26 "Condiciones comerciales incrementales
-# Amarok - septiembre": tactico incremental para 3 versiones 4x2. Es plata NUEVA
-# (el tactico de la 99/26 es identico al de agosto al peso, no la traia adentro).
-# Wholesale s/Imp 1.381.357 -> c/Imp 1.526.400 (IVA 10,5% Amarok, cierra al peso).
-# La circular NO pide 50% de objetivo ni restringe por fecha de factura: dice solo
-# "validas para los patentamientos del mes de septiembre 2026".
-C105 = "105/26"
-INCR = "Patentamientos septiembre 2026 (sin requisito de objetivo)"
-add("AGDB33","Amarok Comfortline TDI MT 4x2 SE G2","adicional1",1381357,1526400,INCR,C105)
-add("AGDB3X","Amarok Comfortline TDI AT 4x2 SE G2","adicional1",1381357,1526400,INCR,C105)
-add("AGDC3X","Amarok Highline TDI AT 4x2 SE G2","adicional1",1381357,1526400,INCR,C105)
+# En septiembre el incremental llego suelto (circ 105/26 Amarok, 107/26 Nivus/Tera).
+# En octubre VW lo mete como PUNTO 8 de la propia circular mensual, con los mismos
+# montos. Verificado que NO quedo absorbido por el tactico: el tactico de octubre
+# es identico al de septiembre al peso -> se cargan los dos, sin doble conteo.
+# Wholesale s/Imp 1.053.719 -> c/Imp 1.275.000 (IVA 21%) y 1.381.357 -> 1.526.400
+# (IVA 10,5% Amarok); ambos cierran al peso.
+# Mejora vs septiembre: el de Nivus/Tera valia solo del 17 al 30; ahora todo el mes.
+INCR = "Patentamientos octubre 2026 - Canal Tradicional"
+add("CH22K3","Nivus Trendline 200TSI AT","adicional1",1053719,1275000,INCR)
+add("CH23K3","Nivus Comfortline 200TSI AT","adicional1",1053719,1275000,INCR)
+add("DF13D3","Tera Comfort 170TSI AT","adicional1",1053719,1275000,INCR)
+add("DF13D3","Tera Comfort 170TSI AT + Pack Safe II","adicional1",1053719,1275000,INCR)
+add("AGDB33","Amarok Comfortline TDI MT 4x2 SE G2","adicional1",1381357,1526400,INCR)
+add("AGDB3X","Amarok Comfortline TDI AT 4x2 SE G2","adicional1",1381357,1526400,INCR)
+add("AGDC3X","Amarok Highline TDI AT 4x2 SE G2","adicional1",1381357,1526400,INCR)
 # ---------------- PERFORMANCE (90%) y PERFORMANCE100 ----------------
 # La tabla viene como IMAGEN y solo sin IVA -> el c/IVA se calcula (21% / 10,5%).
 P90D50 = "90% objetivo (cobra desde 50%)"
@@ -146,6 +176,10 @@ add("AGDD8A","Amarok Unlimited V6 AT 4x4 G2","performance",1080000,1193400,P90) 
 add("AGDD8A","Amarok Unlimited V6 AT 4x4 G2","performance100",1200000,1326000,P100)
 add("BZ31T4","Polo Track MSI MT","performance",1000000,1210000,P90D50)
 add("BZ31T4","Polo Track MSI MT","performance100",1000000,1210000,P100D50)
+add("BZ31T4","Polo Track MSI MT + PNT","performance",1000000,1210000,P90D50)        # ALTA oct (inerte)
+add("BZ31T4","Polo Track MSI MT + PNT","performance100",1000000,1210000,P100D50)
+add("BZ3RT4","Polo Robust MSI MT","performance",1000000,1210000,P90D50)             # ALTA oct
+add("BZ3RT4","Polo Robust MSI MT","performance100",1000000,1210000,P100D50)
 add("DF11T4","Tera Trend MSI MT","performance",1000000,1210000,P90D50)
 add("DF11T4","Tera Trend MSI MT","performance100",1000000,1210000,P100D50)
 add("DF11T4","Tera Trend MSI MT + Pack Safe I","performance",1000000,1210000,P90D50)

@@ -2,6 +2,15 @@
 """Carga una lista PROVISORIA derivada del mes anterior aplicando los aumentos
 que pasa el Gerente Zonal por WhatsApp, mientras VW no manda la lista oficial.
 
+Octubre 2026 (circular 109/26, 24-sep): VW NO mando lista nueva y el zonal no
+    paso aumentos -> octubre corre con los MISMOS precios de la #897, 0% en todo.
+    No es un capricho administrativo: el motor elige el mes de INCENTIVOS segun
+    el mes que exista en precios_lista (mesUsado en getMotor), asi que sin una
+    fila de 2026-10 se seguirian aplicando los incentivos de septiembre y las
+    altas de la 109 (Polo Robust) nunca se cobrarian.
+    OJO con el lista_num: el upsert es por (lista_num, modelo). Reusar 897 para
+    octubre pisaria las filas de septiembre y le cambiaria el mes -> va 202610.
+
 Septiembre 2026 (Pablo Camacho, 3-sep, 14:40):
     PKW 1,5%  ·  Amarok 0% (salvo Trendline 4x2 MT, 1%)  ·  Tacticos siguen igual
     Saveiro va 1,5% como el resto (confirmado por Fer, no lo aclaraba el zonal).
@@ -26,14 +35,12 @@ EXEC = "https://script.google.com/macros/s/AKfycby13NRmtve2ojB0IMZgFPnKh3HsLSBLD
 # del repo, que es publico). El viejo tga-gestion-... quedo muerto el 18-sep-2026.
 TOKEN = [l.split("=", 1)[1].strip() for l in open(r"C:\proyectos\.secrets\gestion.env", encoding="utf-8")
          if l.startswith("GESTION_SERVER_TOKEN=")][0]
-MES_BASE, MES, LISTA_NUM = "2026-08", "2026-09", 202609
+MES_BASE, MES, LISTA_NUM = "2026-09", "2026-10", 202610
 
 def aumento(nombre_corto):
-    """% de aumento de septiembre-26 segun el zonal."""
-    n = nombre_corto.lower()
-    if n.startswith("amarok"):
-        return 0.01 if "trendline tdi mt 4x2" in n else 0.0
-    return 0.015   # PKW + Saveiro
+    """% de aumento de octubre-26: ninguno. VW no mando lista y el zonal no paso
+    aumentos, asi que octubre replica la #897 tal cual."""
+    return 0.0
 
 pat = None
 for line in open(r"C:\proyectos\.secrets\supabase.env", encoding="utf8"):
