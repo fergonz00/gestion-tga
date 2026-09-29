@@ -2759,7 +2759,16 @@ function getBaratitoMotor() {
   }
   const mesesBt = Object.keys(btPorMes).sort();
   if (!mesesBt.length) return { error: 'sin precios_lista cargados' };
-  const mesUsado = btPorMes[mesActual] ? mesActual : mesesBt[mesesBt.length - 1];
+  // Mes de trabajo = el ULTIMO mes cargado en precios_lista, NO el del calendario
+  // (pedido de Fer 29-sep-2026). Apenas llega la circular del mes que viene, todo
+  // lo que se vende ya patenta en ese mes, asi que el motor tiene que proyectar
+  // con ESAS condiciones. Antes se quedaba en el mes corriente hasta el dia 1 y,
+  // por ejemplo, el Polo Robust -que estrena incentivo en la circular 109/26 de
+  // octubre- aparecia sin ningun incentivo hasta el 1/10.
+  // OJO: esto es solo la PROYECCION. Las ventas ya hechas se siguen valuando con
+  // la lista/incentivos de SU mes (btPorMes[vd.mes]) y el desglose "Vend. mes"
+  // sigue atado a mesActual.
+  const mesUsado = mesesBt[mesesBt.length - 1];
   const precByNc = btPorMes[mesUsado];
 
   // 2) catálogo, 3) incentivos de TODOS los meses, 4) dto
