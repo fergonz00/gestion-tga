@@ -805,6 +805,38 @@ function _pagoVWdeVenta(sld, fechaRecepcion, fechaVenta) {
   return null;
 }
 
+// Patentamiento EFECTIVO de una carpeta. Oversoft MANDA siempre; el manual de
+// la adm solo existe para anticipar lo que Oversoft todavía no deja ver.
+//
+// El caso: cuando la unidad no llegó físicamente (sin fechaderecepcion),
+// Oversoft NO deja cargarle la patente, aunque el auto ya esté patentado de
+// verdad ante el registro — pasa seguido en reventas, donde se factura y se
+// patenta antes de que la unidad entre. La carpeta quedaba como "pendiente de
+// patentar" y no sumaba al objetivo del mes. Con `patentada_manual` la adm
+// marca la fecha real y la carpeta cuenta; apenas Oversoft carga la suya,
+// gana Oversoft y el manual queda de histórico (`patDifiere` si no coinciden).
+function _patEfectiva(u, m) {
+  const fOv = u.fechapatentamiento ? String(u.fechapatentamiento).slice(0, 10) : '';
+  const dOv = String(u.patente || '').trim();
+  if (fOv) {
+    const fMan = String((m && m.patentada_manual) || '').slice(0, 10);
+    return {
+      fecha: fOv, dominio: dOv, origen: 'oversoft',
+      // la adm había anticipado OTRA fecha que la que terminó cargando Oversoft
+      difiere: !!(fMan && fMan !== fOv), fechaManual: fMan,
+    };
+  }
+  const fMan = String((m && m.patentada_manual) || '').slice(0, 10);
+  if (!fMan) return { fecha: '', dominio: dOv, origen: '', difiere: false, fechaManual: '' };
+  return {
+    fecha: fMan,
+    // el dominio manual es opcional: en reventa muchas veces la adm sabe que se
+    // patentó pero todavía no tiene la chapa
+    dominio: String((m && m.dominio_manual) || '').trim().toUpperCase() || dOv,
+    origen: 'adm', difiere: false, fechaManual: fMan,
+  };
+}
+
 function getAdmVentas() {
   const h = { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true };
   const get = (path) => {
@@ -911,6 +943,7 @@ function getAdmVentas() {
     const especial = _esEspecial(p.numero);   // excepción manual: PV abierta/especial
     const us = (usByPv[p.numero] || [])[0];
     const sld = saldoBySerie[String(u.serie || '').trim()];
+    const pat = _patEfectiva(u, m);
     return {
       preventa: key,
       pvId: Number(p.prevtaid) || 0,   // orden de creación (id secuencial Oversoft)
@@ -924,8 +957,17 @@ function getAdmVentas() {
       chasis: String(u.vin || '').trim(),
       motor: String(u.motor || '').trim(),
       certificado: String(u.certificado || '').trim(),
-      dominio: String(u.patente || '').trim(),
-      fechaPatentamiento: u.fechapatentamiento ? String(u.fechapatentamiento).slice(0, 10) : '',
+      // Patentamiento EFECTIVO (ver _patEfectiva): Oversoft si lo tiene, si no
+      // lo que anticipó la adm a mano. Todo lo que cuenta patentadas mira acá.
+      dominio: pat.dominio,
+      fechaPatentamiento: pat.fecha,
+      patOrigen: pat.origen,                    // 'oversoft' | 'adm' | ''
+      patDifiere: pat.difiere,                  // Oversoft cargó otra fecha que la anticipada
+      dominioOv: String(u.patente || '').trim(),
+      fechaPatentamientoOv: u.fechapatentamiento ? String(u.fechapatentamiento).slice(0, 10) : '',
+      // Sin fecha de recepción Oversoft no deja cargar la patente → es el caso
+      // donde la grilla habilita la carga manual.
+      recibida: !!String(u.fechaderecepcion || '').trim(),
       // Entrega programada y si ya retiró → directo de Oversoft (unidades), no se carga a mano.
       entregaFecha: u.fechaprogramada ? String(u.fechaprogramada).slice(0, 10) : '',
       entregaHora: String(u.horaprogramada || '').slice(0, 5),
@@ -972,6 +1014,10 @@ function getAdmVentas() {
         // Fecha en que el cliente retiró la documentación (cédula/título).
         // La carga a mano la adm; vacío = todavía no la retiró.
         retiro_doc:         m.retiro_doc || '',
+        // Patentamiento anticipado por la adm cuando Oversoft no deja cargarlo
+        // (unidad sin recibir). Oversoft le gana apenas tiene la fecha real.
+        patentada_manual:   m.patentada_manual || '',
+        dominio_manual:     m.dominio_manual || '',
         notas:              m.notas || '',
         // Reemplazo de administrativa: la titular (`admin`) NO se toca; aca va
         // quien tuvo que absorber la carpeta y por que (ej. ausencia).
@@ -1446,6 +1492,22 @@ function getVentasV2(targetMes) {
   }
   const ncDe = (codFull) => { const d = desc[String(codFull || '').trim()]; return d ? (catByNorm[_ntrim(d)] || null) : null; };
 
+  // Patentamientos ANTICIPADOS por la adm (adm_ventas.patentada_manual): unidades
+  // ya patentadas de verdad que Oversoft no deja marcar porque todavía no las
+  // recibió físicamente. Cuentan igual que las de Oversoft — para el alcance del
+  // objetivo (tramo 90/100) y para el mes de las condiciones comerciales —, pero
+  // Oversoft le gana apenas carga la suya. Ver _patEfectiva en getAdmVentas.
+  const patManPorPv = {};
+  try {
+    for (const r of _supaGet('/adm_ventas?select=preventa,patentada_manual&patentada_manual=not.is.null')) {
+      const f = String(r.patentada_manual || '').slice(0, 10);
+      if (f) patManPorPv[_normPv(r.preventa)] = f;
+    }
+  } catch (e) {}
+  // Fecha de patentamiento efectiva de una PV: Oversoft manda, la adm anticipa.
+  const fechaPatDe = (p) => String((unis[p.unidadid] || {}).fechapatentamiento || '').slice(0, 10)
+    || patManPorPv[_normPv(p.numero)] || '';
+
   // ── Ajuste automático al tramo 100% del Performance Bonus (pedido 3-jul) ──
   // Durante el mes la ganancia se estima con el tramo 90% (fila `performance`).
   // Cuando un mes CIERRA con alcance >= 100% del objetivo de patentamientos, las
@@ -1458,7 +1520,7 @@ function getVentasV2(targetMes) {
   const patPorMes = {};
   for (const p of pvs) {
     if (_esEspecial(p.numero)) continue;
-    const fp = String((unis[p.unidadid] || {}).fechapatentamiento || '').slice(0, 7);
+    const fp = fechaPatDe(p).slice(0, 7);
     if (fp) patPorMes[fp] = (patPorMes[fp] || 0) + 1;
   }
   let objPat = {};
@@ -1516,7 +1578,7 @@ function getVentasV2(targetMes) {
     if (!p.fecha) continue;
     const mesKey = String(p.fecha).slice(0, 7);
     if (!calcPorFormula(p)) continue;   // mes actual + meses cerrados sin congelar (no patentados)
-    const patentado = !!((unis[p.unidadid] || {}).fechapatentamiento);
+    const patentado = !!fechaPatDe(p);
     seenPv[_normPv(p.numero)] = true;
     cuentaPorMes[mesKey] = (cuentaPorMes[mesKey] || 0) + 1;
 
@@ -1555,7 +1617,7 @@ function getVentasV2(targetMes) {
     // queda con el mes de la venta. Fallback: si el mes objetivo todavía no
     // tiene condiciones cargadas (circular no llegó), se usan las del mes de
     // venta. Los PRECIOS (lista/costo) siempre van por mes de venta (btMes).
-    const fpat = String(u.fechapatentamiento || '').slice(0, 7);
+    const fpat = fechaPatDe(p).slice(0, 7);
     let mesInc = (patentado && fpat) ? fpat : (mesActualV > mesKey ? mesActualV : mesKey);
     if (mesInc < mesKey) mesInc = mesKey;      // dato raro: patentada "antes" de la venta
     if (!incPorMes[mesInc]) mesInc = mesKey;   // ese mes aún sin condiciones cargadas
@@ -1968,7 +2030,7 @@ function _admCachePatch(pv, campos) {
 function saveAdmVenta(body) {
   const pv = String(body.preventa || '').trim();
   if (!pv) return { error: 'falta preventa' };
-  const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'credito_liquidado', 'credito_liquidado_ts', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'retiro_doc', 'notas', 'admin_apoyo', 'motivo_apoyo', 'etapas',
+  const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'credito_liquidado', 'credito_liquidado_ts', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'retiro_doc', 'patentada_manual', 'dominio_manual', 'notas', 'admin_apoyo', 'motivo_apoyo', 'etapas',
                       'prioridad_certificado', 'prioridad_nota', 'prioridad_ts', 'prioridad_por', 'prioridad_serie', 'prioridad_listo_ts', 'prioridad_listo_por'];
   const row = { preventa: pv, updated_at: new Date().toISOString(), updated_by: String(body.usuario || '') };
   const campos = body.campos || {};
@@ -3518,8 +3580,10 @@ function getPatentamientos() {
       mesKey = null;
       mesKeyOrigen = 'especial';
     } else if (v.fechaPatentamiento) {
+      // fechaPatentamiento ya viene resuelta: Oversoft si la tiene, si no la que
+      // anticipó la adm a mano (unidad sin recibir, ver _patEfectiva).
       mesKey = String(v.fechaPatentamiento).slice(0, 7);
-      mesKeyOrigen = 'oversoft';
+      mesKeyOrigen = (v.patOrigen === 'adm') ? 'patmanual' : 'oversoft';
     } else if (m.mes_patentamiento) {
       mesKey = String(m.mes_patentamiento).slice(0, 7);
       mesKeyOrigen = 'adm';
@@ -3569,8 +3633,9 @@ function getPatentamientos() {
       fechaPatIso:        v.fechaPatentamiento,
       fechaPatStr:        _dmaFromIso(v.fechaPatentamiento),
       patentada:          !!v.fechaPatentamiento,
-      mesKeyOrigen:       mesKeyOrigen,                              // 'oversoft' | 'adm'
-      patOrigen:          v.fechaPatentamiento ? 'oversoft' : '',
+      mesKeyOrigen:       mesKeyOrigen,                              // 'oversoft' | 'patmanual' | 'adm'
+      patOrigen:          v.patOrigen || '',                         // 'oversoft' | 'adm' (anticipado) | ''
+      patDifiere:         !!v.patDifiere,
       dominio:            v.dominio,
     });
   }

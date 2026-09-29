@@ -2910,6 +2910,52 @@ function _revPartDeducido(patentaRaw) {
   if (p.indexOf('CL') === 0) return 'PARTICULAR';
   return '';
 }
+// Dominio y fecha de patentamiento: las pone Oversoft y NO se editan... salvo
+// cuando Oversoft no deja. Si la unidad todavía no llegó físicamente (sin fecha
+// de recepción), Oversoft bloquea la carga de la patente aunque el auto ya esté
+// patentado de verdad ante el registro — típico de reventas, que se facturan y
+// patentan antes de que entre la unidad. En ese caso la adm lo anticipa acá a
+// mano y la carpeta cuenta como patentada (objetivo del mes incluido).
+// Apenas Oversoft carga la fecha real, gana Oversoft y el manual queda atrás.
+function _admPatEditable(v) { return !v.fechaPatentamientoOv; }
+
+function _admDominioCell(v, key) {
+  if (!_admPatEditable(v)) {
+    return v.dominio ? '<b style="color:#0a7a30">' + escapeHtml(v.dominio) + '</b>'
+                     : '<span style="color:#cc6600">pend.</span>';
+  }
+  const val = (v.manual && v.manual.dominio_manual) || '';
+  return '<input type="text" id="adm_dominio_manual_' + key + '" value="' + escapeHtml(val) + '"'
+    + ' onchange="guardarAdmVenta(\'' + v.preventa + '\')" maxlength="10" placeholder="chapa"'
+    + ' title="Oversoft no deja cargar la patente porque la unidad todavía no llegó. Si ya se patentó, poné la chapa acá (opcional: alcanza con la fecha)."'
+    + ' style="width:74px;padding:3px 5px;border:1px solid #b9770e;border-radius:5px;font-size:12px;text-transform:uppercase;color:#b9770e">';
+}
+
+function _admFechaPatCell(v, key) {
+  if (!_admPatEditable(v)) {
+    let h = _fechaDMA(v.fechaPatentamiento);
+    // Oversoft terminó cargando una fecha distinta de la que había anticipado
+    // la adm: se muestra la de Oversoft y se avisa para que revise el mes.
+    if (v.patDifiere) {
+      h += ' <span title="La adm había anticipado ' + escapeHtml(_fechaDMA((v.manual || {}).patentada_manual))
+         + ' y Oversoft cargó ' + escapeHtml(_fechaDMA(v.fechaPatentamientoOv))
+         + '. Manda Oversoft — revisá el mes de la carpeta." style="color:#b9770e;cursor:help">⚠</span>';
+    }
+    return h;
+  }
+  const val = (v.manual && v.manual.patentada_manual) || '';
+  let h = '<input type="date" id="adm_patentada_manual_' + key + '" value="' + escapeHtml(val) + '"'
+    + ' onchange="guardarAdmVenta(\'' + v.preventa + '\')"'
+    + ' title="' + (v.recibida
+        ? 'La unidad no tiene patentamiento cargado en Oversoft. Si ya se patentó, poné acá la fecha real.'
+        : 'La unidad todavía no llegó, por eso Oversoft no deja cargar la patente. Si ya se patentó, poné acá la fecha real: la carpeta cuenta como patentada del mes hasta que Oversoft la confirme.')
+    + '" style="width:112px;padding:3px 5px;border:1px solid #b9770e;border-radius:5px;font-size:12px">';
+  h += val
+    ? '<br><small style="color:#b9770e" title="Anticipado por administración: todavía no está en Oversoft">a mano · s/confirmar</small>'
+    : '<br><small style="color:var(--vw-grey-3)">' + (v.recibida ? 'sin patentar' : 'unidad no recibida') + '</small>';
+  return h;
+}
+
 // '2026-06-11' → '11/06/26' (día/mes/año corto — gana ancho en la grilla)
 function _fechaDMA(iso) {
   const s = String(iso || '').slice(0, 10);
@@ -3097,8 +3143,8 @@ function renderAdmVentas() {
              : '<span style="color:var(--vw-grey-3)">s/d</span>')
          + _admPrioCell(v, key)
        + '</td>'
-       + '<td data-label="Dominio">' + (v.dominio ? '<b style="color:#0a7a30">' + escapeHtml(v.dominio) + '</b>' : '<span style="color:#cc6600">pend.</span>') + '</td>'
-       + '<td data-label="F. patent.">' + (v.fechaPatentamiento ? _fechaDMA(v.fechaPatentamiento) : '<span style="color:var(--vw-grey-3)">—</span>') + '</td>'
+       + '<td data-label="Dominio">' + _admDominioCell(v, key) + '</td>'
+       + '<td data-label="F. patent.">' + _admFechaPatCell(v, key) + '</td>'
        + '<td data-label="Patenta">' + sel(v.preventa, key, 'patenta', m.patenta, ['TG', 'CL', 'RE'], 58) + '</td>'
        + '<td data-label="Admin" style="white-space:nowrap">'
          + sel(v.preventa, key, 'admin', m.admin, ADMINS_ADM, 78)
@@ -3161,7 +3207,7 @@ function renderAdmVentas() {
          ? 'No hay ningún pedido de prioridad abierto. Para pedir uno, tocá la <b>☆</b> que está al lado del N° de PV (sale solo en las unidades que todavía no están pagadas a VW): escribís el motivo, Enter, y le llega a tesorería.'
          : 'Sin carpetas para ese filtro.') + '</td></tr>';
   h += '</tbody></table></div></div>';
-  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio, fecha de patentamiento, la <b>entrega programada</b> (fecha y hora) y el <b>retiró ✓</b> salen de Oversoft en vivo (no se editan acá: la fecha/hora la programa la administrativa en Oversoft y el ✓ se prende cuando la unidad figura como entregada). El resto se completa acá y <b>se guarda solo al cambiar cada campo</b> (el ✓ de la fila se pone verde cuando guardó bien; si algo falla, avisa y podés reintentar con el ✓). La columna <b>Facturada</b> también es automática (factura del auto al cliente en Oversoft): <b>NO</b> mientras no se facturó, o la fecha de la factura. Al lado, <b>Retiró doc</b> es manual: poné la fecha en que el cliente se llevó la documentación (cédula/título) y queda en <b>NO</b> hasta que la cargues. Las dos se ven — y se pueden filtrar — en la subsolapa <b>Patentamientos</b>. El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes. El mes de cada carpeta (selector de arriba, mismo criterio que Patentamientos) = fecha real de Oversoft o, si aún no está patentada, el "Mes pat. ✔adm" — las ventas nuevas sin ninguno de los dos entran al mes en curso (cambiale el "Mes pat." si va para otro mes).</div>';
+  h += '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:10px">PV, fecha, modelo, cliente, vendedor, serie, dominio, fecha de patentamiento, la <b>entrega programada</b> (fecha y hora) y el <b>retiró ✓</b> salen de Oversoft en vivo (no se editan acá: la fecha/hora la programa la administrativa en Oversoft y el ✓ se prende cuando la unidad figura como entregada). <b>Excepción — patentamiento anticipado:</b> cuando la unidad todavía no llegó, Oversoft no deja cargarle la patente aunque el auto ya esté patentado (típico de reventas). En esas filas <b>Dominio</b> y <b>F. patent.</b> quedan editables en naranja: poné la fecha real (la chapa es opcional) y la carpeta pasa a contar como patentada del mes, objetivo incluido. Queda marcada como <i>a mano · s/confirmar</i> hasta que Oversoft cargue la suya; ahí manda Oversoft y, si la fecha no coincide, la fila avisa con ⚠. El resto se completa acá y <b>se guarda solo al cambiar cada campo</b> (el ✓ de la fila se pone verde cuando guardó bien; si algo falla, avisa y podés reintentar con el ✓). La columna <b>Facturada</b> también es automática (factura del auto al cliente en Oversoft): <b>NO</b> mientras no se facturó, o la fecha de la factura. Al lado, <b>Retiró doc</b> es manual: poné la fecha en que el cliente se llevó la documentación (cédula/título) y queda en <b>NO</b> hasta que la cargues. Las dos se ven — y se pueden filtrar — en la subsolapa <b>Patentamientos</b>. El campo "Mes pat. ✔adm" en naranja = Oversoft ya registró el patentamiento pero falta que administración confirme el mes. El mes de cada carpeta (selector de arriba, mismo criterio que Patentamientos) = fecha real de Oversoft o, si aún no está patentada, el "Mes pat. ✔adm" — las ventas nuevas sin ninguno de los dos entran al mes en curso (cambiale el "Mes pat." si va para otro mes).</div>';
   // El re-render recrea el <input> de búsqueda y le saca el foco (antes había
   // que volver a clickear tras cada letra). Guardo si estaba enfocado + la
   // posición del cursor y lo restauro después de reescribir el HTML.
@@ -3326,9 +3372,12 @@ async function guardarAdmVenta(preventa) {
   const campos = {};
   // OJO: credito_liquidado / fecha_liquidacion NO se guardan acá — los maneja
   // saveLiq() (control compartido con la solapa Financiaciones).
-  for (const c of ['patenta', 'admin', 'tipo_carpeta', 'mes_patentamiento', 'reventa_particular', 'fecha_pago_vw', 'retiro_doc', 'notas']) {
+  // patentada_manual / dominio_manual solo existen en las filas donde Oversoft
+  // todavía no dejó cargar la patente (ver _admPatEditable) — el `if (el)` las saltea.
+  for (const c of ['patenta', 'admin', 'tipo_carpeta', 'mes_patentamiento', 'reventa_particular', 'fecha_pago_vw', 'retiro_doc', 'patentada_manual', 'dominio_manual', 'notas']) {
     const el = document.getElementById('adm_' + c + '_' + key);
-    if (el) campos[c] = el.value.trim();
+    if (!el) continue;
+    campos[c] = (c === 'dominio_manual') ? el.value.trim().toUpperCase() : el.value.trim();
   }
   const btn = document.getElementById('admsave_' + key);
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
@@ -3352,11 +3401,26 @@ async function guardarAdmVenta(preventa) {
     if (data && data.error) throw new Error(data.error);
     // refrescar copia local
     const v = (admVentasData.ventas || []).find(x => x.preventa === preventa);
+    const patCambio = v && _admPatEditable(v)
+      && (((v.manual || {}).patentada_manual || '') !== (campos.patentada_manual || '')
+        || ((v.manual || {}).dominio_manual || '') !== (campos.dominio_manual || ''));
     if (v) v.manual = Object.assign({}, v.manual, campos);
     // Si cambio la administrativa titular, el panel de etapas (que la usa como
     // default de todas) y su boton tienen que reflejarlo sin recargar.
     try { _etapasRepintar(preventa); } catch (e) {}
     if (btn) { btn.disabled = false; btn.textContent = '✓'; btn.style.background = '#0a7a30'; setTimeout(() => { btn.style.background = ''; }, 1200); }
+    // El patentamiento anticipado cambia el valor EFECTIVO que mira toda la
+    // pantalla (filtros pendientes/patentadas, mes de la carpeta, contadores) y
+    // del que se derivan Patentamientos/Resumen/Industria. Lo recalculamos igual
+    // que _patEfectiva del back, tiramos el cache de patentamientos y repintamos.
+    if (patCambio) {
+      v.fechaPatentamiento = campos.patentada_manual || '';
+      v.dominio = (campos.dominio_manual || '') || v.dominioOv || '';
+      v.patOrigen = campos.patentada_manual ? 'adm' : '';
+      patentData = null;
+      lsCacheDrop('patentamientos');
+      setTimeout(renderAdmVentas, 900);   // que se llegue a ver el ✓ verde
+    }
   } catch (e) {
     if (btn) { btn.disabled = false; btn.textContent = '✓'; }
     alert('No se pudo guardar la carpeta ' + preventa + ': ' + e.message);
@@ -5120,6 +5184,11 @@ function lsCacheGet(tipo) {
     const raw = localStorage.getItem(LS_CACHE_KEYS[tipo]);
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
+}
+// Tirar un cache: lo usa el guardado que invalida datos derivados (ej. un
+// patentamiento anticipado a mano cambia la cuenta de Patentamientos).
+function lsCacheDrop(tipo) {
+  try { localStorage.removeItem(LS_CACHE_KEYS[tipo]); } catch { /* nada */ }
 }
 function lsCacheSet(tipo, data) {
   try { localStorage.setItem(LS_CACHE_KEYS[tipo], JSON.stringify(data)); }
@@ -12076,8 +12145,15 @@ function _tipoOperTxt(c, ov) {
 
 function filaPatent(c, admMap, hit) {
   const ov = admMap ? admMap[_pvKey(c.pv)] : null;
+  // patOrigen 'adm' = patentamiento ANTICIPADO por la adm: la unidad todavía no
+  // llegó, Oversoft no deja cargar la patente y ella puso la fecha real desde
+  // Adm. ventas. Cuenta como patentada, pero se muestra distinto (naranja) hasta
+  // que Oversoft la confirme. Ver _patEfectiva en el back.
+  const patAnticipada = c.patentada && c.patOrigen === 'adm';
   const patBadge = c.patentada
-    ? '<span class="badge paga">' + escapeHtml(c.fechaPatStr || fmtFechaCorta(c.fechaPatIso)) + '</span>'
+    ? '<span class="badge ' + (patAnticipada ? 'impaga' : 'paga') + '"'
+      + (patAnticipada ? ' title="Anticipado por administración: la unidad todavía no llegó y Oversoft no deja cargar la patente. Cuenta como patentada hasta que Oversoft la confirme."' : '')
+      + '>' + escapeHtml(c.fechaPatStr || fmtFechaCorta(c.fechaPatIso)) + (patAnticipada ? ' · a mano' : '') + '</span>'
     : '<span class="badge impaga">Pendiente</span>';
   const patentaBadge = c.patentaA
     ? '<span class="badge ' + _patentaCls(c.patentaA) + '">' + escapeHtml(c.patentaA) + '</span>'
