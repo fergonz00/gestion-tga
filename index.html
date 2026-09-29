@@ -2917,7 +2917,13 @@ function _revPartDeducido(patentaRaw) {
 // patentan antes de que entre la unidad. En ese caso la adm lo anticipa acá a
 // mano y la carpeta cuenta como patentada (objetivo del mes incluido).
 // Apenas Oversoft carga la fecha real, gana Oversoft y el manual queda atrás.
-function _admPatEditable(v) { return !v.fechaPatentamientoOv; }
+function _admPatEditable(v) {
+  // Backend viejo (todavia sin los campos nuevos): no habilitamos la carga y la
+  // grilla se comporta como antes. Sin esto, `undefined` haria editables TODAS
+  // las filas mientras el front esta publicado y el back aun no.
+  if (v.fechaPatentamientoOv === undefined) return false;
+  return !v.fechaPatentamientoOv;
+}
 
 function _admDominioCell(v, key) {
   if (!_admPatEditable(v)) {
