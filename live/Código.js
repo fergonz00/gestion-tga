@@ -2027,9 +2027,40 @@ function _admCachePatch(pv, campos) {
   } catch (e) { try { _cacheDrop('admventas'); } catch (e2) {} }
 }
 
+// Campos que SOLO puede tocar Monica (mas los duenios, que administran todo).
+//
+// El patentamiento anticipado no es un dato administrativo cualquiera: hace que
+// la carpeta cuente para el objetivo del mes, y el alcance del objetivo define
+// el tramo del Performance Bonus (90% vs 100%) de TODAS las ventas de ese mes.
+// Los meses cierran al filo (ago-26: 53 contra objetivo 53), asi que una carpeta
+// marcada de mas mueve plata. USUARIOS_SESION es una lista plana para TODO el
+// doPost e incluye a marianom (vendedor) y vreyna (tesoreria), que no tienen
+// nada que ver con patentamientos: por eso el permiso va por campo.
+//
+// Monica = mgerez. OJO: `megerez` es Mercedes Gerez (Mechi), otra persona.
+const CAMPOS_PATENTAMIENTO = ['patentada_manual', 'dominio_manual'];
+const PUEDEN_PATENTAR = ['mgerez', 'fngonzalez', 'fgonzalez', 'cgonzalez'];
+
+// Usuario del pedido segun la FIRMA de la sesion (no lo que diga el body, que
+// lo pone el cliente). '' = token de servidor o sesion invalida.
+function _usuarioDe_(tok) {
+  tok = String(tok || '').trim();
+  if (!tok) return '';
+  const srv = _appConfig_('gestion_server_token');
+  if (srv && tok === srv) return '__server__';
+  return String(verificarSesionTGA_(tok) || '').toLowerCase();
+}
+
 function saveAdmVenta(body) {
   const pv = String(body.preventa || '').trim();
   if (!pv) return { error: 'falta preventa' };
+  const quien = _usuarioDe_(body.token);
+  if (quien !== '__server__' && PUEDEN_PATENTAR.indexOf(quien) === -1) {
+    const c = body.campos || {};
+    for (const k of CAMPOS_PATENTAMIENTO) {
+      if (c[k] !== undefined) return { error: 'el patentamiento lo carga administracion (Monica)' };
+    }
+  }
   const permitidos = ['mes_patentamiento', 'patenta', 'admin', 'tipo_carpeta', 'credito_liquidado', 'credito_liquidado_ts', 'fecha_liquidacion', 'reventa_particular', 'fecha_pago_vw', 'retiro_doc', 'patentada_manual', 'dominio_manual', 'notas', 'admin_apoyo', 'motivo_apoyo', 'etapas',
                       'prioridad_certificado', 'prioridad_nota', 'prioridad_ts', 'prioridad_por', 'prioridad_serie', 'prioridad_listo_ts', 'prioridad_listo_por'];
   const row = { preventa: pv, updated_at: new Date().toISOString(), updated_by: String(body.usuario || '') };

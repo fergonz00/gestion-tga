@@ -2917,18 +2917,34 @@ function _revPartDeducido(patentaRaw) {
 // patentan antes de que entre la unidad. En ese caso la adm lo anticipa acá a
 // mano y la carpeta cuenta como patentada (objetivo del mes incluido).
 // Apenas Oversoft carga la fecha real, gana Oversoft y el manual queda atrás.
+// El patentamiento anticipado lo carga SOLO administracion (Monica). No es un
+// campo administrativo cualquiera: hace contar la carpeta para el objetivo del
+// mes, y el objetivo define el tramo del Performance Bonus de todo el mes. El
+// backend lo rechaza igual — esto es para que al resto ni le aparezca el campo.
+// Monica = mgerez. OJO: megerez es Mercedes Gerez (Mechi), otra persona.
+const USUARIOS_CARGAN_PATENTAMIENTO = ['mgerez', 'fngonzalez', 'fgonzalez', 'cgonzalez'];
+function _puedeCargarPatentamiento() {
+  return USUARIOS_CARGAN_PATENTAMIENTO.includes(String(window._tgaUser || '').toLowerCase());
+}
+
 function _admPatEditable(v) {
   // Backend viejo (todavia sin los campos nuevos): no habilitamos la carga y la
   // grilla se comporta como antes. Sin esto, `undefined` haria editables TODAS
   // las filas mientras el front esta publicado y el back aun no.
   if (v.fechaPatentamientoOv === undefined) return false;
+  if (!_puedeCargarPatentamiento()) return false;
   return !v.fechaPatentamientoOv;
 }
 
 function _admDominioCell(v, key) {
   if (!_admPatEditable(v)) {
-    return v.dominio ? '<b style="color:#0a7a30">' + escapeHtml(v.dominio) + '</b>'
-                     : '<span style="color:#cc6600">pend.</span>';
+    // Anticipado por administracion: se ve, pero en naranja, para que no pase por
+    // un dato confirmado de Oversoft (le llega asi a quien no puede editarlo).
+    const anticipado = v.patOrigen === 'adm';
+    if (!v.dominio) return '<span style="color:#cc6600">pend.</span>';
+    return '<b style="color:' + (anticipado ? '#b9770e' : '#0a7a30') + '"'
+      + (anticipado ? ' title="Cargado a mano por administracion: Oversoft todavia no lo confirmo"' : '')
+      + '>' + escapeHtml(v.dominio) + '</b>';
   }
   const val = (v.manual && v.manual.dominio_manual) || '';
   return '<input type="text" id="adm_dominio_manual_' + key + '" value="' + escapeHtml(val) + '"'
@@ -2939,7 +2955,12 @@ function _admDominioCell(v, key) {
 
 function _admFechaPatCell(v, key) {
   if (!_admPatEditable(v)) {
-    let h = _fechaDMA(v.fechaPatentamiento);
+    if (!v.fechaPatentamiento) return '<span style="color:var(--vw-grey-3)">—</span>';
+    const anticipado = v.patOrigen === 'adm';
+    let h = anticipado
+      ? '<span style="color:#b9770e" title="Cargado a mano por administracion: Oversoft todavia no lo confirmo">'
+        + _fechaDMA(v.fechaPatentamiento) + '<br><small>a mano · s/confirmar</small></span>'
+      : _fechaDMA(v.fechaPatentamiento);
     // Oversoft terminó cargando una fecha distinta de la que había anticipado
     // la adm: se muestra la de Oversoft y se avisa para que revise el mes.
     if (v.patDifiere) {
