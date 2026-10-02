@@ -1842,10 +1842,14 @@ function _fyfVigente(fecha) {
   const f = String(fecha || '').slice(0, 10);
   return (f && f >= FYF_CAMBIO_DESDE) ? FYF_NUEVO : FYF_VIEJO;
 }
-// ¿El importe es el FyF estándar de esa PV? Sin fecha a mano acepta ambos.
+// ¿El importe es el FyF estándar de esa PV? Sin fecha a mano, o con PV de antes del
+// fin de la transición (octubre-2026, decisión de Fer), acepta ambos valores: así los
+// primeros días no salen falsas alarmas si se carga el FyF viejo en una PV nueva o al revés.
+const FYF_TRANSICION_HASTA = '2026-11-01';
 function _esFyfStd(imp, fecha) {
   const n = Math.round(Number(imp) || 0);
-  if (!String(fecha || '').slice(0, 10)) return Math.abs(n - FYF_VIEJO) <= 1 || Math.abs(n - FYF_NUEVO) <= 1;
+  const f = String(fecha || '').slice(0, 10);
+  if (!f || f < FYF_TRANSICION_HASTA) return Math.abs(n - FYF_VIEJO) <= 1 || Math.abs(n - FYF_NUEVO) <= 1;
   return Math.abs(n - _fyfVigente(fecha)) <= 1;
 }
 function _fyfTxt(fecha) { return '$' + _fyfVigente(fecha).toLocaleString('es-AR'); }
