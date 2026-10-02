@@ -1831,8 +1831,24 @@ async function oversoft(tabla, qs, opts) {
 const PORTAL_OFERTAS_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTD40FCkAXCrVNslz1OtxnYm1DRhDulVOHaCxJ81-kiQL17KnfimCOPn3hJDHAvJsF9ROEZdePuRw2E/pub?gid=1432576316&single=true&output=csv';
 
 // Flete y Formularios: total fijo que la oferta del portal trae incluido.
-// Mirror de la constante FYF en apps-script.gs.
-const FYF = 1_110_000;
+// Mirror de la constante FYF en live/Código.js. Desde el 02-10-2026 el FyF
+// estándar pasa de 1.110.000 a 1.300.000: FYF = el VIGENTE (vidriera de hoy).
+// Para comparar contra una PV existente usar _fyfVigente(fechaPV) / _esFyfStd.
+const FYF_CAMBIO_DESDE = '2026-10-02';
+const FYF_VIEJO = 1_110_000;
+const FYF_NUEVO = 1_300_000;
+const FYF = FYF_NUEVO;
+function _fyfVigente(fecha) {
+  const f = String(fecha || '').slice(0, 10);
+  return (f && f >= FYF_CAMBIO_DESDE) ? FYF_NUEVO : FYF_VIEJO;
+}
+// ¿El importe es el FyF estándar de esa PV? Sin fecha a mano acepta ambos.
+function _esFyfStd(imp, fecha) {
+  const n = Math.round(Number(imp) || 0);
+  if (!String(fecha || '').slice(0, 10)) return Math.abs(n - FYF_VIEJO) <= 1 || Math.abs(n - FYF_NUEVO) <= 1;
+  return Math.abs(n - _fyfVigente(fecha)) <= 1;
+}
+function _fyfTxt(fecha) { return '$' + _fyfVigente(fecha).toLocaleString('es-AR'); }
 const BARATITO_TOLERANCIA = 10_000;
 
 // =======================================================================
@@ -3887,9 +3903,10 @@ function renderVentasOv() {
     const btnCom = v.comentario ? ' <button onclick="toggleVentasOvCom(\'' + key + '\')" title="Ver comentario de la PV" style="border:0;background:none;cursor:pointer;font-size:13px;padding:0 2px">💬' + _ar(comAbierto) + '</button>' : '';
     // Gasto real por PV (mapa compartido con Adm. ventas). Se resuelve acá arriba
     // porque también alimenta el cartelito "acc": menciona accesorios en el
-    // comentario, o el "Costo Unidad" del gasto difiere del estándar $1.110.000.
+    // comentario, o el "Costo Unidad" del gasto difiere del FyF estándar de la PV
+    // ($1.110.000 si es anterior al 02-10-2026, $1.300.000 desde).
     const gasto = _gastoDe(v.preventaNum);
-    const mencionaAcc = v.mencionaAcc || _gastoMencionaAcc(gasto);
+    const mencionaAcc = v.mencionaAcc || _gastoMencionaAcc(gasto, v.fechaPvIso);
     // El nag "acc" solo si menciona accesorios y NO hay monto cargado todavía (si
     // el acc del gasto 468 ya se autodetectó y sumó, no hace falta avisar).
     // Monto de accesorios que NO se cargo a mano: sale del gasto 468 o del "Acc
@@ -3898,8 +3915,8 @@ function renderVentasOv() {
     const accAutoDet = v.accAuto || v.accCom;
     const accAutoTit = v.accCom
       ? 'Leído del comentario de la PV (el «Acc» va en miles) — se suma solo como ingreso, sin IVA porque no se factura. Editá para fijarlo a mano.'
-      : 'Detectado del gasto (Costo Unidad ≠ $1.110.000) — se suma solo como ingreso. Edita para fijarlo a mano.';
-    const accFlag = (mencionaAcc && !(v.accesorios > 0)) ? ' <span title="Menciona accesorios en el comentario, o el Costo Unidad del gasto difiere de $1.110.000 — cargá el monto" style="background:#cc6600;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">acc</span>' : '';
+      : 'Detectado del gasto (Costo Unidad ≠ ' + _fyfTxt(v.fechaPvIso) + ') — se suma solo como ingreso. Edita para fijarlo a mano.';
+    const accFlag = (mencionaAcc && !(v.accesorios > 0)) ? ' <span title="Menciona accesorios en el comentario, o el Costo Unidad del gasto difiere de ' + _fyfTxt(v.fechaPvIso) + ' — cargá el monto" style="background:#cc6600;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">acc</span>' : '';
     // Badge del circuito reventas/FyF/costo unidad. Ámbar = pendiente que Valeria
     // confirme cobrado; verde OK = Valeria confirmó → hay que moverlo en Oversoft.
     const _rv = reventasMap[_normPvKey(v.preventaNum)];
@@ -3910,7 +3927,7 @@ function renderVentasOv() {
         const c = est === 'cerrado' ? '#0a7a30' : (est === 'confirmado' ? '#d99200' : (est === 'alerta' ? '#c2185b' : '#cc3300'));
         const t = est === 'cerrado' ? 'Completo: Valeria confirmó, salió de gastos y quedó anotado en comentarios'
                 : est === 'confirmado' ? 'Valeria confirmó cobrado — falta que lo muevas en Oversoft y lo anotes en el comentario'
-                : est === 'alerta' ? 'REVENTA SIN COSTO UNIDAD — preventa mal hecha: falta cargar el FyF $1.110.000 como costo unidad'
+                : est === 'alerta' ? 'REVENTA SIN COSTO UNIDAD — preventa mal hecha: falta cargar el FyF ' + _fyfTxt(v.fechaPvIso) + ' como costo unidad'
                 : 'Pendiente de cobro: falta que Valeria confirme';
         const suf = est === 'cerrado' ? ' ✓' : (est === 'confirmado' ? ' OK' : (est === 'alerta' ? ' ⚠' : ''));
         return ' <span title="' + t + '" style="background:' + c + ';color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700">' + label + suf + '</span>';
@@ -4883,7 +4900,7 @@ function _ajusteDe(m, color) {
 }
 // Ganancia recalculada para un precio de oferta dado (con FYF incluido).
 function _gciaConPrecio(m, precioConFyf) {
-  const C = (preciosData && preciosData.constantes) || { fyf:1110000, iibb:0.0135, comision:0.014, cheque:0, iva:1.21 };
+  const C = (preciosData && preciosData.constantes) || { fyf:FYF, iibb:0.0135, comision:0.014, cheque:0, iva:1.21 };
   const lista = Number(m.sim && m.sim.lista) || 0;
   if (lista <= 0) return null;
   const dto = 1 - (precioConFyf - C.fyf) / lista;
@@ -4892,7 +4909,7 @@ function _gciaConPrecio(m, precioConFyf) {
 function _colorKey(c) { return encodeURIComponent(c).replace(/[^a-zA-Z0-9]/g, '_'); }
 // Dto implícito (vs lista) de un precio de oferta con FYF.
 function _dtoDePrecio(m, precioConFyf) {
-  const C = (preciosData && preciosData.constantes) || { fyf: 1110000 };
+  const C = (preciosData && preciosData.constantes) || { fyf: FYF };
   const lista = Number(m.sim && m.sim.lista) || 0;
   if (lista <= 0) return 0;
   return 1 - (precioConFyf - C.fyf) / lista;
@@ -4907,7 +4924,7 @@ function syncPrecioColor(key, colorEnc, origen) {
   const inpD = document.getElementById('cd_' + key + '_' + ck);
   const out  = document.getElementById('cg_' + key + '_' + ck);
   if (!inpP || !inpD) return;
-  const C = (preciosData && preciosData.constantes) || { fyf: 1110000 };
+  const C = (preciosData && preciosData.constantes) || { fyf: FYF };
   const lista = Number(m.sim && m.sim.lista) || 0;
   let precio;
   if (origen === 'dto') {
@@ -5715,17 +5732,17 @@ function _gastoDe(pv) {
   return m[_pvKey(pv)] || null;
 }
 // Accesorios "escondidos" en el gasto: el concepto "Costo Unidad" viene con un
-// monto distinto al estándar $1.110.000 (FYF). Esa diferencia suele ser accesorios
+// monto distinto al FyF estándar de la PV (1.110.000 si la PV es anterior al
+// 02-10-2026, 1.300.000 desde; sin fecha acepta ambos). Esa diferencia suele ser accesorios
 // que el vendedor metió ahí en vez del comentario, así que marca la PV igual que
 // mencionaAcc (cartelito "acc"). Es uno u otro: o lo aclara en el comentario, o
 // lo carga acá; en ambos casos hay que cargar el monto de accesorios.
-const _GASTO_COSTO_UNIDAD_STD = 1110000;
-function _gastoMencionaAcc(g) {
+function _gastoMencionaAcc(g, fechaPv) {
   if (!g || !g.lineas) return false;
   return g.lineas.some(l => {
     if (!/costo\s*unidad/i.test(String(l.concepto || ''))) return false;
     const monto = Number(l.cobrado != null ? l.cobrado : l.importe) || 0;
-    return monto > 0 && Math.abs(monto - _GASTO_COSTO_UNIDAD_STD) > 1;
+    return monto > 0 && !_esFyfStd(monto, fechaPv);
   });
 }
 function _gKv(label, val) {
@@ -6413,7 +6430,7 @@ function _repPrecioDeMargen(pct, sim) {
   }
   return Math.round((lo + hi) / 2);
 }
-const REPARTO_FYF = 1110000;   // el precio de vidriera lleva flete y formularios
+const REPARTO_FYF = FYF;   // el precio de vidriera lleva flete y formularios (vigente: 1.300.000 desde 02-10-2026)
 
 // "Vendido" del reparto: ventas del modelo en los MISMOS 4 meses que usa la
 // sección Rotación — mes EN CURSO + los 3 anteriores (repartoData.rotacion.meses,

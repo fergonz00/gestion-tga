@@ -87,7 +87,24 @@ function _autorizado_(tok) {
 
 // Flete y Formularios: total fijo que la oferta del portal trae incluido.
 // Para comparar contra factura+accesorios hay que descontárselo a la oferta.
-const FYF = 1110000;
+// Desde el 02-10-2026 el FyF estándar pasa de 1.110.000 a 1.300.000. FYF es el
+// VIGENTE (precio de vidriera / reparto de hoy). Para comparar contra una PV
+// existente usar _fyfVigente(fechaPV) / _esFyfStd(importe, fechaPV): las PVs
+// anteriores al cambio siguen con 1.110.000.
+const FYF_CAMBIO_DESDE = '2026-10-02';
+const FYF_VIEJO = 1110000;
+const FYF_NUEVO = 1300000;
+const FYF = FYF_NUEVO;
+function _fyfVigente(fecha) {
+  const f = String(fecha || '').slice(0, 10);
+  return (f && f >= FYF_CAMBIO_DESDE) ? FYF_NUEVO : FYF_VIEJO;
+}
+// ¿El importe es el FyF estándar de esa PV? Sin fecha a mano acepta ambos.
+function _esFyfStd(imp, fecha) {
+  const n = Math.round(Number(imp) || 0);
+  if (!String(fecha || '').slice(0, 10)) return Math.abs(n - FYF_VIEJO) <= 1 || Math.abs(n - FYF_NUEVO) <= 1;
+  return Math.abs(n - _fyfVigente(fecha)) <= 1;
+}
 
 // Tolerancia en pesos para considerar "vendió al baratito" (igual). Fuera de
 // este margen cae a 'mejor' (cliente pagó más) o 'peor' (cliente pagó menos).
@@ -241,11 +258,11 @@ const MADRE_SHEETS_OK = [
 //   AH=33 precioOferta(con fyf) · AM=38 gcia s/lista · AN=39 gcia neta $ · AO=40 gcia/lista
 //
 // Fórmulas del Sheet (ventaNeta = lista*(1-dtoTG)):
-//   AH = ventaNeta + FYF(1.110.000)
+//   AH = ventaNeta + FYF(1.300.000 desde 02-10-2026; antes 1.110.000)
 //   AM = (ventaNeta - costoRep + cc90Iva + otros*lista) / lista
 //   AN = AM*lista - 0,0135*(ventaNeta/1,21) - 0,014*(ventaNeta/1,21)   (cheque = 0 desde 09-09-2026)
 //   AO = AN / lista        (IIBB 1,35% y comisión 1,40% sobre neto de IVA)
-const PRECIOS_FYF      = 1110000;   // flete y formularios, sumado en AH
+const PRECIOS_FYF      = FYF_NUEVO; // flete y formularios VIGENTE (1.300.000 desde 02-10-2026), sumado en AH
 const PRECIOS_IIBB     = 0.0135;    // 1,35% sobre ventaNeta/1,21
 const PRECIOS_COMISION = 0.014;     // 1,40% sobre ventaNeta/1,21
 // 0 desde el 09-09-2026. Era una PRECAUCION: se le cargaba 0,6% a TODAS las ventas
@@ -1546,22 +1563,25 @@ function getVentasV2(targetMes) {
 
   // Acc "escondido" en el gasto: el accesorio ingresa sin facturar y el vendedor
   // lo carga como una línea extra de Costo Unidad (gastoid 468) con importe ≠
-  // 1.110.000 (el FyF estándar bonificado). Lo detectamos y lo tomamos como
+  // FyF estándar bonificado (1.110.000 PVs < 02-10-2026; 1.300.000 desde). Lo detectamos y lo tomamos como
   // accesorios EN VIVO — la fórmula lo suma como ingreso PLENO (sin netear IVA:
-  // al no facturarse, el IVA no se paga, y queda a favor). El FyF de 1.110.000 NO
+  // al no facturarse, el IVA no se paga, y queda a favor). El FyF estándar NO
   // cuenta (es costo bonificado). "Manual manda": solo aplica si NO se cargó
   // accesorios a mano (>0). Fuente: gastoxprevta sin facturar (factura vacía).
-  const FYF_STD = 1110000;
-  const accDet = {};   // normPv -> suma de líneas 468 ≠ 1.110.000 (sin facturar)
+  // FyF estándar POR FECHA DE LA PV: < 02-10-2026 → 1.110.000; desde → 1.300.000
+  // (_esFyfStd). Sin fecha de la PV a mano acepta ambos.
+  const accDet = {};   // normPv -> suma de líneas 468 ≠ FyF estándar (sin facturar)
   try {
+    const fechaPvAcc = {};
+    pvs.forEach((p) => { const k = _normPv(p.numero); if (k) fechaPvAcc[k] = String(p.fecha || '').slice(0, 10); });
     const idsAcc = pvs.filter(calcPorFormula).map((p) => p.prevtaid).filter((x) => x || x === 0);
     for (let i = 0; i < idsAcc.length; i += 25) {
       const rows = get('/gastoxprevta?gastoid=eq.468&prevtaid=in.(' + idsAcc.slice(i, i + 25).join(',') + ')&select=prevtanro,importe,factura&limit=3000');
       rows.forEach((r) => {
         if (String(r.factura || '') !== '') return;                 // ya facturado → no aplica
         const imp = Math.round(Number(r.importe) || 0);
-        if (imp <= 0 || Math.abs(imp - FYF_STD) <= 1) return;       // FyF estándar no cuenta
         const pv = _normPv(r.prevtanro); if (!pv) return;
+        if (imp <= 0 || _esFyfStd(imp, fechaPvAcc[pv])) return;      // FyF estándar (según fecha PV) no cuenta
         accDet[pv] = (accDet[pv] || 0) + imp;
       });
     }
