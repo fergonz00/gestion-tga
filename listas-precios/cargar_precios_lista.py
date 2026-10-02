@@ -5,7 +5,11 @@ concesionario y sugerido, validados con (S/IMP-INCENT)*IVA: 21% autos, 10,5%
 Saveiro/Amarok) y actualizar mes/listaNum del body. Dry-run primero; --go aplica.
 Circuito completo: skill circular-vw (C:\\proyectos\\.claude\\skills).
 
-Ultima corrida: 2026-09 lista #897 (circular 98), Excel. Vento GLI: MY26.
+Ultima corrida: 2026-10 lista #898 (circular 113, vig. 03/10), Excel. Vento GLI: MY26.
+Octubre: PKW sin cambios salvo Nivus Comfortline/Highline/Outfit, que bajan lista y
+costo por el wholesale que pasa a la lista (circular 112/26). Amarok Trendline +0,80%,
+V6 +0,30%, 4x2 TDI igual. Reemplaza la provisoria lista_num=202610.
+Anterior: 2026-09 lista #897 (circular 98).
 Septiembre: PKW y Saveiro +1,50%, Amarok CONGELADA salvo Trendline 4x2 MT +1,00%
 (coincide al peso con lo que adelanto el zonal). Alta: Amarok Unlimited V6 AT 4x4
 G2 MY27 (AGDD8A), sin unidades en Oversoft.
@@ -17,10 +21,10 @@ EXEC = "https://script.google.com/macros/s/AKfycby13NRmtve2ojB0IMZgFPnKh3HsLSBLD
 # del repo, que es publico). El viejo tga-gestion-... quedo muerto el 18-sep-2026.
 TOKEN = [l.split("=", 1)[1].strip() for l in open(r"C:\proyectos\.secrets\gestion.env", encoding="utf-8")
          if l.startswith("GESTION_SERVER_TOKEN=")][0]
-MES, LISTA_NUM, MES_ANT = "2026-09", 897, "2026-08"
+MES, LISTA_NUM, MES_ANT = "2026-10", 898, "2026-09"
 
-# (cod, desc_pdf, my, neto_conc, neto_sug) — PREC.NETO agosto, lista #895
-SEP = [
+# (cod, desc_pdf, my, neto_conc, neto_sug) — PREC.NETO octubre, lista #898 (Excel)
+OCT = [
  ("BZ3RT4","Polo Robust MSI MT","26",26293618.00,30222550.00),
  ("BZ31T4","Polo Track MSI MT","26",34175862.00,39282600.00),
  ("BZ32D3","Polo COMFORTLINE 170TSI AT","26",38901440.00,45766400.00),
@@ -39,9 +43,9 @@ SEP = [
  ("CH21R4","Nivus Sense 170TSI MT","27",29580807.00,34800950.00),
  ("CH23R4","Nivus 170TSI MT","26",38711550.00,45543000.00),
  ("CH22K3","Nivus Trendline 200TSI AT","26/27",41091890.00,48343400.00),
- ("CH23K3","Nivus Comfortline 200TSI AT","26/27",43474865.00,51146900.00),
- ("CH24K3","Nivus Highline 200TSI AT","26/27",46942780.00,55226800.00),
- ("CH24K3","Nivus Outfit 200TSI AT","26/27",48021345.00,56495700.00),
+ ("CH23K3","Nivus Comfortline 200TSI AT","26/27",42232718.00,49685550.00),
+ ("CH24K3","Nivus Highline 200TSI AT","26/27",45601565.00,53648900.00),
+ ("CH24K3","Nivus Outfit 200TSI AT","26/27",46649318.00,54881550.00),
  ("BF3PD4","T-Cross Sense 170TSI MT","26",33699312.00,39646250.00),
  ("BF32D4","T-Cross Trendline 170TSI MT","26",45121570.00,53084200.00),
  ("BF32K3","T-Cross Trendline 200TSI AT","26",47444280.00,55816800.00),
@@ -58,27 +62,27 @@ SEP = [
  ("5URTT4","Saveiro Trendline CS MSI MT","26/27",28020803.00,32965650.00),
  ("5UKWT4","Saveiro Comfortline CD MSI MT","26/27",30878758.00,36327950.00),
  ("5UK8T4","Saveiro Extreme CD MSI MT","26/27",34245735.00,40289100.00),
- ("AGDA43","Amarok Trendline TDI MT 4x2 G2","25/26",44476837.00,52449100.00),
- ("AGDA34","Amarok Trendline TDI MT 4x4 G2","25/26",52486918.00,61894950.00),
- ("AGDB33","Amarok Comfortline TDI MT 4x2 G2","25/26",50514520.00,59569010.00),
- ("AGDB33","Amarok Comfortline TDI MT 4x2 SE G2","25/26",50514520.00,59569010.00),
- ("AGDB3X","Amarok Comfortline TDI AT 4x2 G2","25/26",53887209.00,63546237.00),
- ("AGDB3X","Amarok Comfortline TDI AT 4x2 SE G2","25/26",53887209.00,63546237.00),
- ("AGDC33","Amarok Highline TDI MT 4x2 G2","25/26",54472161.00,64236039.00),
- ("AGDC3X","Amarok Highline TDI AT 4x2 G2","25/26",59749115.00,70458862.00),
- ("AGDC3X","Amarok Highline TDI AT 4x2 SE G2","25/26",59749115.00,70458862.00),
- ("AGDB8A","Amarok Comfortline V6 AT 4x4 G2","25/26",62159827.00,73301683.00),
- ("AGDB8A","Amarok Comfortline V6 AT 4x4 SE G2","25/26",62159827.00,73301683.00),
- ("AGDC8A","Amarok Highline V6 AT 4x4 G2","25/26",73265311.00,86397773.00),
- ("AGDC8A","Amarok Highline V6 AT 4x4 SE G2","25/26",73265311.00,86397773.00),
- ("AGDD8A","Amarok Extreme V6 AT 4x4 G2","25/26",78378877.00,92427921.00),
- ("AGDD8A","Amarok Extreme V6 AT 4x4 SE G2","25/26",78378877.00,92427921.00),
- ("AGDD8A","Amarok Hero V6 AT 4x4 G2","25/26",78378877.00,92427921.00),
- ("AGDD8A","Amarok Black Style V6 AT 4x4 G2","25/26",79229269.00,93430742.00),
- ("AGDD8A","Amarok Black Style V6 AT 4x4 SE G2","25/26",79229269.00,93430742.00),
- ("AGDD8A","Amarok Unlimited V6 AT 4x4 G2","27",79653270.00,93930743.00),
+ ("AGDA43","Amarok Trendline TDI MT 4x2 G2","25/26/27",44832658.00,52868700.00),
+ ("AGDA34","Amarok Trendline TDI MT 4x4 G2","25/26/27",52906805.00,62390100.00),
+ ("AGDB33","Amarok Comfortline TDI MT 4x2 G2","25/26/27",50514512.00,59569000.00),
+ ("AGDB33","Amarok Comfortline TDI MT 4x2 SE G2","25/26/27",50514512.00,59569000.00),
+ ("AGDB3X","Amarok Comfortline TDI AT 4x2 G2","25/26/27",53887220.00,63546250.00),
+ ("AGDB3X","Amarok Comfortline TDI AT 4x2 SE G2","25/26/27",53887220.00,63546250.00),
+ ("AGDC33","Amarok Highline TDI MT 4x2 G2","25/26",54472170.00,64236050.00),
+ ("AGDC3X","Amarok Highline TDI AT 4x2 G2","25/26/27",59749105.00,70458850.00),
+ ("AGDC3X","Amarok Highline TDI AT 4x2 SE G2","25/26/27",59749105.00,70458850.00),
+ ("AGDB8A","Amarok Comfortline V6 AT 4x4 G2","25/26/27",62346317.00,73521600.00),
+ ("AGDB8A","Amarok Comfortline V6 AT 4x4 SE G2","25/26/27",62346317.00,73521600.00),
+ ("AGDC8A","Amarok Highline V6 AT 4x4 G2","25/26/27",73485094.00,86656950.00),
+ ("AGDC8A","Amarok Highline V6 AT 4x4 SE G2","25/26/27",73485094.00,86656950.00),
+ ("AGDD8A","Amarok Extreme V6 AT 4x4 G2","25/26/27",78614010.00,92705200.00),
+ ("AGDD8A","Amarok Extreme V6 AT 4x4 SE G2","25/26/27",78614010.00,92705200.00),
+ ("AGDD8A","Amarok Hero V6 AT 4x4 G2","25/26/27",78613996.00,92705184.00),
+ ("AGDD8A","Amarok Black Style V6 AT 4x4 G2","25/26/27",79467013.00,93711100.00),
+ ("AGDD8A","Amarok Black Style V6 AT 4x4 SE G2","25/26/27",79467013.00,93711100.00),
+ ("AGDD8A","Amarok Unlimited V6 AT 4x4 G2","27",79892242.00,94212550.00),
 ]
-JUL = SEP   # nombre historico que usa el resto del script
+JUL = OCT   # nombre historico que usa el resto del script
 
 def norm(s):
     return (s.lower().replace("bi-tono", "bi tono").replace("+ pack", "+pack")
