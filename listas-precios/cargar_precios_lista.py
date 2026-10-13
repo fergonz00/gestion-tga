@@ -5,7 +5,10 @@ concesionario y sugerido, validados con (S/IMP-INCENT)*IVA: 21% autos, 10,5%
 Saveiro/Amarok) y actualizar mes/listaNum del body. Dry-run primero; --go aplica.
 Circuito completo: skill circular-vw (C:\\proyectos\\.claude\\skills).
 
-Ultima corrida: 2026-10 lista #898 (circular 113, vig. 03/10), Excel. Vento GLI: MY26.
+Ultima corrida: 2026-10 lista #898 v2 (circular 117, vig. 14/10): igual a la v1 salvo la Amarok
+Hero (+$14 costo / +$16 lista, igualada a la Extreme). Trae ademas el T-Cross MY27 (C118):
+NO se carga mientras el stock sea MY26 -- ver nota en reference_vw_lista_precios_formato.
+Antes: 2026-10 lista #898 (circular 113, vig. 03/10), Excel. Vento GLI: MY26.
 Octubre: PKW sin cambios salvo Nivus Comfortline/Highline/Outfit, que bajan lista y
 costo por el wholesale que pasa a la lista (circular 112/26). Amarok Trendline +0,80%,
 V6 +0,30%, 4x2 TDI igual. Reemplaza la provisoria lista_num=202610.
@@ -78,7 +81,7 @@ OCT = [
  ("AGDC8A","Amarok Highline V6 AT 4x4 SE G2","25/26/27",73485094.00,86656950.00),
  ("AGDD8A","Amarok Extreme V6 AT 4x4 G2","25/26/27",78614010.00,92705200.00),
  ("AGDD8A","Amarok Extreme V6 AT 4x4 SE G2","25/26/27",78614010.00,92705200.00),
- ("AGDD8A","Amarok Hero V6 AT 4x4 G2","25/26/27",78613996.00,92705184.00),
+ ("AGDD8A","Amarok Hero V6 AT 4x4 G2","25/26/27",78614010.00,92705200.00),   # v2 (C117, 14/10): igualada a la Extreme
  ("AGDD8A","Amarok Black Style V6 AT 4x4 G2","25/26/27",79467013.00,93711100.00),
  ("AGDD8A","Amarok Black Style V6 AT 4x4 SE G2","25/26/27",79467013.00,93711100.00),
  ("AGDD8A","Amarok Unlimited V6 AT 4x4 G2","27",79892242.00,94212550.00),
