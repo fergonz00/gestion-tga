@@ -1846,11 +1846,13 @@ function _fyfVigente(fecha) {
 // fin de la transición (octubre-2026, decisión de Fer), acepta ambos valores: así los
 // primeros días no salen falsas alarmas si se carga el FyF viejo en una PV nueva o al revés.
 const FYF_TRANSICION_HASTA = '2026-11-01';
+// ±5.000: un FyF redondeado para cerrar el total de la PV no es accesorio (PV 08173/1: 1.300.264). Fer, 20-10-2026. Espejo de gestion-next lib/fyf.ts.
+const FYF_TOLERANCIA = 5000;
 function _esFyfStd(imp, fecha) {
   const n = Math.round(Number(imp) || 0);
   const f = String(fecha || '').slice(0, 10);
-  if (!f || f < FYF_TRANSICION_HASTA) return Math.abs(n - FYF_VIEJO) <= 1 || Math.abs(n - FYF_NUEVO) <= 1;
-  return Math.abs(n - _fyfVigente(fecha)) <= 1;
+  if (!f || f < FYF_TRANSICION_HASTA) return Math.abs(n - FYF_VIEJO) <= FYF_TOLERANCIA || Math.abs(n - FYF_NUEVO) <= FYF_TOLERANCIA;
+  return Math.abs(n - _fyfVigente(fecha)) <= FYF_TOLERANCIA;
 }
 function _fyfTxt(fecha) { return '$' + _fyfVigente(fecha).toLocaleString('es-AR'); }
 const BARATITO_TOLERANCIA = 10_000;
