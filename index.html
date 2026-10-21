@@ -4131,22 +4131,24 @@ function renderVentasOvAnalisis(cont) {
 
   // ---- 2. 1ra vs 2da quincena por mes ----
   let q = legendQ;
+  const maxTot = Math.max(1, ...mesesData.map(mk => porMes[mk].total));  // largo de la barra = unidades del mes vs el mes más alto
   for (const mk of mesesData) {
     const s = porMes[mk];
     const p1 = s.total ? Math.round(s.q1 / s.total * 100) : 0;
     const p2 = 100 - p1;
+    const wTot = s.total / maxTot * 100;
     const win = s.q1 > s.q2 ? '1ra' : (s.q2 > s.q1 ? '2da' : '=');
     q += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px' + (mk === ventasOvMes ? ';background:#eef4ff;border-radius:6px;padding:2px 4px' : '') + '">'
       + '<div style="width:74px;font-size:12px;color:#333;font-weight:' + (mk === ventasOvMes ? '700' : '500') + '">' + escapeHtml(mesCorto(mk)) + '</div>'
-      + '<div style="flex:1;display:flex;height:22px;border-radius:5px;overflow:hidden;background:#eee">'
-      + '<div title="1ra quincena (1–15): ' + s.q1 + '" style="width:' + p1 + '%;background:' + C1 + ';color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden">' + (p1 >= 12 ? s.q1 + ' · ' + p1 + '%' : '') + '</div>'
-      + '<div title="2da quincena (16–fin): ' + s.q2 + '" style="width:' + p2 + '%;background:' + C2 + ';color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden">' + (p2 >= 12 ? s.q2 + ' · ' + p2 + '%' : '') + '</div>'
-      + '</div>'
+      + '<div style="flex:1;height:22px"><div title="' + s.total + ' unidades" style="width:' + wTot + '%;display:flex;height:22px;border-radius:5px;overflow:hidden;background:#eee">'
+      + '<div title="1ra quincena (1–15): ' + s.q1 + '" style="width:' + p1 + '%;background:' + C1 + ';color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden">' + (p1 * wTot / 100 >= 12 ? s.q1 + ' · ' + p1 + '%' : '') + '</div>'
+      + '<div title="2da quincena (16–fin): ' + s.q2 + '" style="width:' + p2 + '%;background:' + C2 + ';color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden">' + (p2 * wTot / 100 >= 12 ? s.q2 + ' · ' + p2 + '%' : '') + '</div>'
+      + '</div></div>'
       + '<div style="width:66px;font-size:11px;text-align:right;color:' + (win === '2da' ? '#b26a00' : (win === '1ra' ? C1 : '#777')) + ';font-weight:700">' + (win === '=' ? 'empate' : win + ' ▲') + '</div>'
       + '</div>';
   }
   h += card('¿1ra o 2da quincena? (por mes)', q,
-    'Proporción de ventas de cada quincena, mes a mes. La columna de la derecha marca qué quincena ganó. Si la 2da quincena manda de forma constante, hay margen para adelantar cierres con campañas a principio de mes.');
+    'Proporción de ventas de cada quincena, mes a mes. El largo de cada barra es proporcional a las unidades del mes (el mes más alto ocupa todo el ancho). La columna de la derecha marca qué quincena ganó. Si la 2da quincena manda de forma constante, hay margen para adelantar cierres con campañas a principio de mes.');
 
   // ---- 3. Distribución por día del mes (scope) ----
   const dayItems = [];
