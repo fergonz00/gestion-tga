@@ -4023,6 +4023,8 @@ function toggleVentasOvAnalisis() { ventasOvAnalisis = !ventasOvAnalisis; render
 let ventasHist = null;            // null | {cargando} | {error} | {hasta, dias, familias}
 let ventasAnPer = 'todo';         // 'todo' | '5a' | '3a' | '12m' | 'yyyy' | 'yyyy-mm'
 let ventasAnMesComp = '';         // '01'..'12' para "mismo mes a través de los años"
+let ventasAnMedida = 'netas';     // 'netas' (sin anuladas, Oversoft) | 'boletos' (incluye anuladas, desde 1972)
+let ventasAnMarca = 'todas';      // medida boletos: 'todas' (Ford, Ford+VW, VW) | 'vw'
 
 async function loadVentasHist() {
   ventasHist = { cargando: true };
@@ -4037,6 +4039,8 @@ async function loadVentasHist() {
 }
 function setVentasAnPer(v) { ventasAnPer = v; renderVentasOv(); }
 function setVentasAnMesComp(v) { ventasAnMesComp = v; renderVentasOv(); }
+function setVentasAnMedida(v) { ventasAnMedida = v; renderVentasOv(); }
+function setVentasAnMarca(v) { ventasAnMarca = v; renderVentasOv(); }
 
 // "VW Nuevo Polo Track MSI" → "Polo". Misma regla que se usó al congelar el histórico.
 function _famModelo(nombre) {
@@ -4064,9 +4068,14 @@ function renderVentasOvAnalisis(cont) {
   if (!ventasHist) loadVentasHist();
   const hist = (ventasHist && ventasHist.dias) ? ventasHist : null;
   const HASTA = hist ? hist.hasta : '';
-  // Oversoft arrancó el 25-03-2010: mar-2010 tiene 2 PV y ene/feb nada. Se arranca
-  // en el primer mes completo para que no tire abajo promedios ni comparaciones.
-  const INICIO = '2010-04-01';
+  // Oversoft arrancó el 25-03-2010 y hasta jun-2010 le faltan boletos contra la
+  // planilla histórica (abr 168 vs 219, may 144 vs 189, jun 176 vs 184); desde
+  // jul-2010 coincide exacto. Las netas arrancan ahí.
+  const INICIO = '2010-07-01';
+  // Medida BOLETOS: mes a mes desde 1972 (planilla BOLETOS DESDE 1972 + Oversoft
+  // contando anuladas). Solo mensual: no hay detalle por día antes de 2010.
+  const BOL = ventasAnMedida === 'boletos' && !!(hist && hist.boletos);
+  const MARCA_VW = BOL && ventasAnMarca === 'vw';
 
   // ---- ventas por día (histórico + vivo) y familia por mes ----
   const porDia = {}, famMes = {};
@@ -4099,14 +4108,41 @@ function renderVentasOvAnalisis(cont) {
     a.total += n;
     if (mo < moHoy || (mo === moHoy && d <= diaHoy)) a.ytd += n;
   }
+  const marcasAnio = {};
+  if (BOL) {
+    // Se descarta lo armado por día y se arma por mes desde la tabla de boletos.
+    for (const k in porMes) delete porMes[k];
+    for (const k in porAnio) delete porAnio[k];
+    const corte = HASTA.slice(0, 7);
+    const sumar = (mk, n, marca) => {
+      const s = porMes[mk] || (porMes[mk] = { q1: 0, q2: 0, total: 0, dias: {}, dow: [0, 0, 0, 0, 0, 0, 0] });
+      s.total += n;
+      const y = Number(mk.slice(0, 4)), mo = Number(mk.slice(5, 7));
+      const a = porAnio[y] || (porAnio[y] = { total: 0, ytd: 0 });
+      a.total += n;
+      if (mo < moHoy) a.ytd += n;                       // "a la fecha" = meses completos (ene → mes anterior)
+      (marcasAnio[y] = marcasAnio[y] || {})[marca] = true;
+    };
+    for (const r of hist.boletos) {
+      if (r.mes >= corte) continue;
+      if (MARCA_VW && r.marca !== 'VW') continue;
+      sumar(r.mes, Number(r.boletos) || 0, r.marca);
+    }
+    // desde el corte: netas en vivo + anuladas en vivo = boletos
+    for (const iso in porDia) if (iso >= HASTA) sumar(iso.slice(0, 7), porDia[iso], 'VW');
+    const anV = hist.anuladasVivo || {};
+    for (const mk in anV) if (mk >= corte) sumar(mk, anV[mk], 'VW');
+  }
   const mesesData = Object.keys(porMes).sort();
   const primerMes = mesesData[0] || mesHoy;
+  // Años completos (los 12 meses con dato y ya cerrados): base de promedios y estacionalidad.
+  const anioCompleto = y => y < anioHoy && [1,2,3,4,5,6,7,8,9,10,11,12].every(m => porMes[y + '-' + pad(m)]);
   const anioIni = Number(primerMes.slice(0, 4));
   const anios = []; for (let y = anioHoy; y >= anioIni; y--) anios.push(y);
 
   // ---- período elegido ----
   let per = ventasAnPer;
-  if (/^\d{4}-\d{2}$/.test(per) && !porMes[per]) per = 'todo';
+  if ((/^\d{4}-\d{2}$/.test(per) && !porMes[per]) || (/^\d{4}$/.test(per) && !porAnio[per])) per = 'todo';
   let scope, scopeLabel;
   if (per === '5a' || per === '3a' || per === '12m') {
     const n = per === '5a' ? 60 : (per === '3a' ? 36 : 12);
@@ -4186,10 +4222,17 @@ function renderVentasOvAnalisis(cont) {
   const volver = '<button onclick="toggleVentasOvAnalisis()" style="padding:5px 10px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--vw-grey-2);background:#fff;color:#333">← Volver a la tabla</button>';
 
   let h = _ovsSyncBanner(ventasOvData.syncOversoft);
-  h += '<div style="margin:6px 0 10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">' + volver + sel
+  let selMed = '<select onchange="setVentasAnMedida(this.value)" style="' + selStyle + '">'
+    + '<option value="netas"' + (!BOL ? ' selected' : '') + '>Ventas netas (sin anuladas · desde jul-2010)</option>'
+    + '<option value="boletos"' + (BOL ? ' selected' : '') + (hist && hist.boletos ? '' : ' disabled') + '>Boletos desde 1972 (incluye anuladas)</option></select>';
+  if (BOL) selMed += '<select onchange="setVentasAnMarca(this.value)" style="' + selStyle + '">'
+    + '<option value="todas"' + (!MARCA_VW ? ' selected' : '') + '>Todas las marcas (Ford, Ford+VW, VW)</option>'
+    + '<option value="vw"' + (MARCA_VW ? ' selected' : '') + '>Solo VW (desde 2008)</option></select>';
+  h += '<div style="margin:6px 0 10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">' + volver + selMed + sel
     + '<span style="font-size:13px;color:var(--vw-grey-3)">Análisis por <b>fecha de preventa</b> · ' + escapeHtml(scopeLabel) + '</span></div>';
   let fuente;
-  if (hist) fuente = 'Histórico congelado de Oversoft (' + mesCorto(primerMes) + ' → ' + mesCorto(mkAdd(HASTA.slice(0, 7), -1)) + ', ' + fmtN(hist.total) + ' preventas) + en vivo desde ' + mesCorto(HASTA.slice(0, 7)) + '.';
+  if (BOL) fuente = 'Boletos 0km hechos en el mes, <b>incluidos los que después se anularon</b> (la misma cuenta que las planillas viejas). Hasta jun-2010: planilla "BOLETOS DESDE 1972" (2008 VW: Stock-Ventas). Desde jul-2010: Oversoft. Ford 1972–1990 · Ford+VW sin separar 1991–2007 · VW y Ford separados 2008–jul-2011 · solo VW después. Faltan ene–may 1978 en la planilla. Solo hay detalle por mes: quincenas, días y modelos se ven en "Ventas netas".';
+  else if (hist) fuente = 'Histórico congelado de Oversoft (' + mesCorto(primerMes) + ' → ' + mesCorto(mkAdd(HASTA.slice(0, 7), -1)) + ', ' + fmtN(hist.total) + ' preventas) + en vivo desde ' + mesCorto(HASTA.slice(0, 7)) + '.';
   else if (ventasHist && ventasHist.error) fuente = '⚠️ No se pudo cargar el histórico (' + escapeHtml(ventasHist.error) + '). Se muestra solo lo vivo, desde ' + mesCorto(primerMes) + '.';
   else fuente = '⏳ Cargando histórico desde 2010… mientras tanto, solo lo vivo.';
   h += '<div style="font-size:11px;color:var(--vw-grey-3);margin:0 0 14px">' + fuente + ' Mes en curso parcial (al ' + diaHoy + '/' + moHoy + ').</div>';
@@ -4209,43 +4252,46 @@ function renderVentasOvAnalisis(cont) {
     + '<div style="font-size:20px;font-weight:800;color:' + (color || NAVY) + ';line-height:1.1">' + val + '</div>'
     + '<div style="font-size:11px;color:var(--vw-grey-3);margin-top:4px">' + lbl + '</div></div>';
   h += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">'
-    + tile(fmtN(agg.total), 'unidades vendidas', '#0a7a30')
+    + tile(fmtN(agg.total), BOL ? 'boletos' : 'unidades vendidas', '#0a7a30')
     + (scope.length > 1 ? tile(_rotFmt(agg.total / scope.length), 'promedio por mes', '#0a7a30') : '')
     + (scope.length > 1 ? tile(escapeHtml(mesCorto(mejorMes)), 'mejor mes (' + fmtN(mejorN) + ')', NAVY) : '')
-    + tile(pct1 + '% / ' + pct2 + '%', '1ra vs 2da quincena', pct2 >= pct1 ? C2 : C1)
+    + (BOL ? '' : tile(pct1 + '% / ' + pct2 + '%', '1ra vs 2da quincena', pct2 >= pct1 ? C2 : C1)
     + tile(_rotFmt(prom1) + ' / ' + _rotFmt(prom2), 'ventas por día (1ra / 2da)', C2)
     + tile(ratio ? ('×' + _rotFmt(ratio)) : '—', 'ritmo 2da vs 1ra quincena', ratio >= 1 ? C2 : C1)
     + tile('Día ' + (diaPico || '—'), 'día del mes más fuerte', NAVY)
-    + tile(DOW[dowTop], 'día de semana más fuerte', NAVY)
+    + tile(DOW[dowTop], 'día de semana más fuerte', NAVY))
     + '</div>';
 
   // ---- 1. Año por año (año completo y a la misma fecha) ----
   {
     const maxA = Math.max(1, ...anios.map(y => (porAnio[y] || {}).total || 0));
-    let x = legend([sw('#9cc3ea', 'año completo'), sw(NAVY, 'a la misma fecha (1-ene → ' + diaHoy + '-' + MES[moHoy - 1].toLowerCase() + ')')]);
+    const alaFecha = BOL ? (moHoy > 1 ? 'ene → ' + MES[moHoy - 2].toLowerCase() + ', meses completos' : 'sin meses completos todavía') : ('1-ene → ' + diaHoy + '-' + MES[moHoy - 1].toLowerCase());
+    let x = legend([sw('#9cc3ea', 'año completo'), sw(NAVY, 'a la misma fecha (' + alaFecha + ')')]);
+    const marcaTxt = y => { const m = marcasAnio[y] || {}; return m['FORD+VW'] ? 'Ford+VW' : (m.FORD && m.VW ? 'VW + Ford' : (m.FORD ? 'Ford' : 'VW')); };
     for (const y of anios) {
       const a = porAnio[y] || { total: 0, ytd: 0 }, prev = porAnio[y - 1];
       const enCurso = y === anioHoy;
-      const prevIncompleto = y - 1 === anioIni && primerMes.slice(5) !== '01';   // 2010 arranca en abril: no sirve de base
+      const prevIncompleto = !anioCompleto(y - 1);   // un año cortado (ej. 2010 desde julio, 1978 sin ene–may) no sirve de base
       const varYtd = prev && prev.ytd && !prevIncompleto ? Math.round((a.ytd / prev.ytd - 1) * 100) : null;
       const varTxt = varYtd == null ? '' : ' <span style="color:' + (varYtd >= 0 ? '#0a7a30' : '#cc3300') + '">' + (varYtd >= 0 ? '+' : '') + varYtd + '%</span>';
-      const nota = y === anioIni && primerMes.slice(5) !== '01' ? ' (desde ' + _mesLabelCorto(primerMes) + ')' : (enCurso ? ' (en curso)' : '');
+      const nota = (BOL ? ' ' + marcaTxt(y) : '') + (enCurso ? ' (en curso)' : (!anioCompleto(y) ? ' (incompleto)' : ''));
       x += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">' + filaLbl(y, enCurso)
         + '<div style="flex:1;height:18px;position:relative">'
         + '<div title="' + y + ' completo: ' + a.total + '" style="position:absolute;left:0;top:0;height:18px;border-radius:4px;background:#9cc3ea;width:' + (a.total / maxA * 100) + '%"></div>'
-        + '<div title="' + y + ' al ' + diaHoy + '/' + moHoy + ': ' + a.ytd + '" style="position:absolute;left:0;top:4px;height:10px;border-radius:3px;background:' + NAVY + ';width:' + (a.ytd / maxA * 100) + '%"></div>'
+        + '<div title="' + y + ' a la fecha (' + alaFecha + '): ' + a.ytd + '" style="position:absolute;left:0;top:4px;height:10px;border-radius:3px;background:' + NAVY + ';width:' + (a.ytd / maxA * 100) + '%"></div>'
         + '</div>'
         + '<div style="width:230px;flex:none;font-size:11px;color:#333;text-align:right;white-space:nowrap"><b>' + fmtN(a.total) + '</b>' + escapeHtml(nota)
         + (enCurso ? '' : ' · a la fecha ' + fmtN(a.ytd)) + varTxt + '</div></div>';
     }
     h += card('Año por año', x,
-      'Barra clara = año completo. Barra oscura = lo vendido del 1 de enero al ' + diaHoy + '/' + moHoy + ' de cada año, para comparar el año en curso contra los anteriores a la misma altura. El % compara "a la fecha" contra el año anterior.');
+      'Barra clara = año completo. Barra oscura = lo ' + (BOL ? 'boleteado' : 'vendido') + ' a la misma altura del año (' + alaFecha + '), para comparar el año en curso contra los anteriores. El % compara "a la fecha" contra el año anterior (no se calcula contra un año incompleto).'
+      + (BOL ? ' Al lado de cada año, qué marcas se vendían.' : ''));
   }
 
   // ---- 2. Mapa año × mes ----
   {
     let maxC = 1; for (const mk of mesesData) if (porMes[mk].total > maxC) maxC = porMes[mk].total;
-    const completos = anios.filter(y => y < anioHoy && !(y === anioIni && primerMes.slice(5) !== '01'));
+    const completos = anios.filter(anioCompleto);
     const th = 'padding:4px 6px;font-size:11px;color:var(--vw-grey-3);font-weight:600;text-align:center';
     let x = '<div style="overflow-x:auto"><table style="border-collapse:separate;border-spacing:2px;width:100%;min-width:640px"><thead><tr><th style="' + th + ';text-align:left">Año</th>';
     for (const m of MES) x += '<th style="' + th + '">' + m + '</th>';
@@ -4254,7 +4300,7 @@ function renderVentasOvAnalisis(cont) {
       x += '<tr><td style="font-size:12px;font-weight:' + (y === anioHoy ? 700 : 500) + ';color:#333;padding:3px 6px">' + y + '</td>';
       for (let m = 1; m <= 12; m++) {
         const mk = y + '-' + pad(m), s = porMes[mk];
-        if (!s || mk > mesHoy) { x += '<td style="text-align:center;font-size:11px;color:#bbb;padding:5px 2px;background:#fafafa;border-radius:4px">' + (mk > mesHoy || mk < primerMes ? '' : '0') + '</td>'; continue; }
+        if (!s || mk > mesHoy) { x += '<td style="text-align:center;font-size:11px;color:#bbb;padding:5px 2px;background:#fafafa;border-radius:4px">' + '' + '</td>'; continue; }
         const al = 0.08 + 0.92 * s.total / maxC;
         const enScope = scope.indexOf(mk) >= 0 && per !== 'todo';
         x += '<td title="' + escapeHtml(mesLargo(mk)) + ': ' + s.total + (mk === mesHoy ? ' (parcial)' : '') + '" style="text-align:center;font-size:11px;font-weight:600;padding:5px 2px;border-radius:4px;background:rgba(10,102,194,' + al.toFixed(2) + ');color:' + (al > 0.5 ? '#fff' : '#123') + (mk === mesHoy ? ';outline:2px dashed ' + C2 + ';outline-offset:-2px' : '') + (enScope ? ';box-shadow:inset 0 0 0 2px ' + NAVY : '') + '">' + s.total + '</td>';
@@ -4278,14 +4324,14 @@ function renderVentasOvAnalisis(cont) {
   // ---- 3. Mismo mes a través de los años ----
   {
     const mc = /^(0[1-9]|1[0-2])$/.test(ventasAnMesComp) ? ventasAnMesComp : pad(moHoy);
-    const esMesCurso = Number(mc) === moHoy;
+    const esMesCurso = Number(mc) === moHoy && !BOL;   // en boletos no hay días: no se puede cortar "al día de hoy"
     let s2 = '<select onchange="setVentasAnMesComp(this.value)" style="' + selStyle + ';margin-bottom:8px">';
     for (let m = 1; m <= 12; m++) s2 += '<option value="' + pad(m) + '"' + (pad(m) === mc ? ' selected' : '') + '>' + _MESES_NOMBRES_LARGOS[m - 1] + '</option>';
     s2 += '</select>';
     const items = [];
     for (let i = anios.length - 1; i >= 0; i--) {
       const y = anios[i], mk = y + '-' + mc, s = porMes[mk];
-      if (mk > mesHoy || mk < primerMes) continue;
+      if (mk > mesHoy || mk < primerMes || !s) continue;
       let parcial = 0;
       if (s && esMesCurso) for (const dd in s.dias) if (Number(dd) <= diaHoy) parcial += s.dias[dd];
       items.push({ label: String(y), value: s ? s.total : 0, color: y === anioHoy ? NAVY : C1,
@@ -4295,12 +4341,12 @@ function renderVentasOvAnalisis(cont) {
     h += card('Mismo mes a través de los años', s2 + colChart(items, { minw: 40, h: 130, sub: esMesCurso }),
       esMesCurso
         ? 'Es el mes en curso: debajo de cada año figura cuánto se había vendido del 1 al ' + diaHoy + ', para comparar contra hoy (' + ((porMes[mesHoy] || {}).total || 0) + ').'
-        : 'Unidades de ese mes en cada año.');
+        : ((BOL ? 'Boletos' : 'Unidades') + ' de ese mes en cada año.' + (BOL && Number(mc) === moHoy ? ' El año en curso está incompleto (al ' + diaHoy + '/' + moHoy + ').' : '')));
   }
 
   // ---- 4. Estacionalidad ----
   {
-    const completos = anios.filter(y => y < anioHoy && !(y === anioIni && primerMes.slice(5) !== '01') && porAnio[y] && porAnio[y].total);
+    const completos = anios.filter(y => anioCompleto(y) && porAnio[y].total);
     const ult3 = completos.slice(0, 3);
     const share = ys => { const r = []; for (let m = 1; m <= 12; m++) { let acc = 0; for (const y of ys) acc += ((porMes[y + '-' + pad(m)] || {}).total || 0) / porAnio[y].total; r.push(ys.length ? acc / ys.length * 100 : 0); } return r; };
     if (completos.length) {
@@ -4320,7 +4366,7 @@ function renderVentasOvAnalisis(cont) {
   }
 
   // ---- 5. 1ra vs 2da quincena (por mes o por año según el largo del período) ----
-  {
+  if (!BOL) {
     const porAnioQ = scope.length > 24;
     const filas = [];
     if (porAnioQ) {
@@ -4357,6 +4403,7 @@ function renderVentasOvAnalisis(cont) {
   }
 
   // ---- 7. Día del mes y 8. día de la semana (período vs todo el histórico) ----
+  if (!BOL) {
   const vsHist = (n, base, nT, baseT) => per === 'todo' ? '' : ' · histórico ' + _rotFmt(baseT ? nT / baseT * 100 : 0) + '%';
   const dayItems = [];
   for (let d = 1; d <= 31; d++) {
@@ -4374,8 +4421,10 @@ function renderVentasOvAnalisis(cont) {
   h += card('Día de la semana · ' + escapeHtml(scopeLabel), colChart(dowItems, { minw: 48, h: 120, sub: true }),
     'En qué día de la semana se firman más preventas. Útil para guardias de vendedores y para elegir el día de envío de campañas.');
 
+  }
+
   // ---- 9. Mix de modelos por año ----
-  {
+  if (!BOL) {
     const ys = [...new Set(scope.map(mk => mk.slice(0, 4)))].sort().reverse();
     const famY = {}, famTot = {};
     for (const mk of scope) {
