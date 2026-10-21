@@ -4064,12 +4064,15 @@ function renderVentasOvAnalisis(cont) {
   if (!ventasHist) loadVentasHist();
   const hist = (ventasHist && ventasHist.dias) ? ventasHist : null;
   const HASTA = hist ? hist.hasta : '';
+  // Oversoft arrancó el 25-03-2010: mar-2010 tiene 2 PV y ene/feb nada. Se arranca
+  // en el primer mes completo para que no tire abajo promedios ni comparaciones.
+  const INICIO = '2010-04-01';
 
   // ---- ventas por día (histórico + vivo) y familia por mes ----
   const porDia = {}, famMes = {};
   if (hist) {
-    for (const k in hist.dias) if (k < HASTA) porDia[k] = hist.dias[k];
-    for (const mk in hist.familias) if (mk + '-01' < HASTA) famMes[mk] = Object.assign({}, hist.familias[mk]);
+    for (const k in hist.dias) if (k >= INICIO && k < HASTA) porDia[k] = hist.dias[k];
+    for (const mk in hist.familias) if (mk + '-01' >= INICIO && mk + '-01' < HASTA) famMes[mk] = Object.assign({}, hist.familias[mk]);
   }
   let sinFecha = 0;
   for (const v of (ventasOvData.ventas || [])) {
@@ -4223,7 +4226,8 @@ function renderVentasOvAnalisis(cont) {
     for (const y of anios) {
       const a = porAnio[y] || { total: 0, ytd: 0 }, prev = porAnio[y - 1];
       const enCurso = y === anioHoy;
-      const varYtd = prev && prev.ytd ? Math.round((a.ytd / prev.ytd - 1) * 100) : null;
+      const prevIncompleto = y - 1 === anioIni && primerMes.slice(5) !== '01';   // 2010 arranca en abril: no sirve de base
+      const varYtd = prev && prev.ytd && !prevIncompleto ? Math.round((a.ytd / prev.ytd - 1) * 100) : null;
       const varTxt = varYtd == null ? '' : ' <span style="color:' + (varYtd >= 0 ? '#0a7a30' : '#cc3300') + '">' + (varYtd >= 0 ? '+' : '') + varYtd + '%</span>';
       const nota = y === anioIni && primerMes.slice(5) !== '01' ? ' (desde ' + _mesLabelCorto(primerMes) + ')' : (enCurso ? ' (en curso)' : '');
       x += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">' + filaLbl(y, enCurso)
