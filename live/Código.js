@@ -1341,7 +1341,20 @@ function getGastosMap() {
     // "a facturar" igual que lo emitido (sellado vs provincia, etc). Keyeado por
     // _normPv para matchear con las PVs de gastoxprevta.
     const metaAf = {};
-    ovs('/comprobantes?tipo=ilike.Automoviles*&fecha=gte.' + GASTOS_DESDE + '&select=referencia,provincia,fecha&limit=5000').forEach((r) => {
+    // PAGINADO: la replica corta en 1000 filas por respuesta y el limit=5000 se
+    // ignoraba EN SILENCIO (28-10-2026: 1266 comprobantes, volvian 1000; las 266
+    // PVs que faltaban quedaban "sin dato" en la auditoria). El order es
+    // obligatorio: sin orden estable el offset repite o saltea filas.
+    const ovsPag = (path) => {
+      const out = [];
+      for (let off = 0; off <= 50000; off += 1000) {
+        const ch = ovs(path + '&limit=1000&offset=' + off);
+        out.push.apply(out, ch);
+        if (ch.length < 1000) break;
+      }
+      return out;
+    };
+    ovsPag('/comprobantes?tipo=ilike.Automoviles*&fecha=gte.' + GASTOS_DESDE + '&select=referencia,provincia,fecha&order=comprobanteid.asc').forEach((r) => {
       const ref = String(r.referencia || ''); if (ref.indexOf('PV ') !== 0) return;
       const k = _normPv(ref); if (!metaAf[k]) metaAf[k] = { prov: String(r.provincia || ''), fecha: String(r.fecha || '').slice(0, 10) };
     });
