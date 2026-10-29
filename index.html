@@ -1647,6 +1647,7 @@ table.patent-tbl tr.tbl-sep.pat:hover td  { background: var(--green-soft); }
         <button class="subtab active" data-subtab="admventas"      onclick="setAdmSubtab('admventas')">Adm. ventas</button>
         <button class="subtab"        data-subtab="patentamientos" onclick="setAdmSubtab('patentamientos')">Patentamientos</button>
         <button class="subtab"        data-subtab="trimestre"      onclick="setAdmSubtab('trimestre')">Trimestre</button>
+        <button class="subtab"        data-subtab="anual"          onclick="setAdmSubtab('anual')">Anual</button>
         <button class="subtab"        data-subtab="financiaciones"  onclick="setAdmSubtab('financiaciones')">Financiaciones</button>
       </div>
 
@@ -1678,6 +1679,16 @@ table.patent-tbl tr.tbl-sep.pat:hover td  { background: var(--green-soft); }
           </div>
         </div>
         <div id="trimestreContent"></div>
+      </div>
+
+      <div class="subpanel" id="subpanelAdmVentasAnual">
+        <div class="toolbar">
+          <div class="updated">Cómo nos fue en el año: objetivos de patentamiento y de compra a VW, mes a mes</div>
+          <div class="actions">
+            <button class="refresh" onclick="loadPatentamientos(true); loadComprasVW(true).then(renderAnual); loadObjetivosCompras().then(renderAnual)">Actualizar</button>
+          </div>
+        </div>
+        <div id="anualContent"></div>
       </div>
 
       <div class="subpanel" id="subpanelAdmVentasFin">
@@ -2136,6 +2147,7 @@ async function loadIndustria() {
       // visible hay que repintarlo, sino se queda con el 0% que pinto antes de este fetch.
       const subTriInd = document.getElementById('subpanelAdmVentasTrimestre');
       if (subTriInd && subTriInd.classList.contains('active')) renderTrimestre();
+      if (document.getElementById('subpanelAdmVentasAnual')?.classList.contains('active')) renderAnual();
     }
   } catch (e) { console.error('loadIndustria:', e); }
 }
@@ -5646,7 +5658,8 @@ function startAutoRefresh() {
       // patentData: si alguna está abierta, refrescamos patentamientos.
       const subP = document.getElementById('subpanelAdmVentasPatent')?.classList.contains('active');
       const subT = document.getElementById('subpanelAdmVentasTrimestre')?.classList.contains('active');
-      if (subP || subT) _fetchPatentSilent();
+      const subA = document.getElementById('subpanelAdmVentasAnual')?.classList.contains('active');
+      if (subP || subT || subA) _fetchPatentSilent();
     } else if (activo === 'incentivos') {
       _fetchIncentivosSilent();
     } else if (activo === 'industria') {
@@ -5715,12 +5728,19 @@ function setAdmSubtab(name) {
   document.getElementById('subpanelAdmVentasMain').classList.toggle('active',      name === 'admventas');
   document.getElementById('subpanelAdmVentasPatent').classList.toggle('active',    name === 'patentamientos');
   document.getElementById('subpanelAdmVentasTrimestre').classList.toggle('active', name === 'trimestre');
+  document.getElementById('subpanelAdmVentasAnual').classList.toggle('active',     name === 'anual');
   document.getElementById('subpanelAdmVentasFin').classList.toggle('active',       name === 'financiaciones');
   if (name === 'admventas'      && _admVentasVencida()) loadAdmVentas(false);
   if (name === 'patentamientos' && !patentData)    loadPatentamientos(false);
   if (name === 'trimestre') {
     if (!patentData) loadPatentamientos(false);  // al llegar la data, el hook de
     else             renderTrimestre();          // loadPatentamientos pinta Trimestre.
+  }
+  if (name === 'anual') {
+    renderAnual();
+    if (!patentData) loadPatentamientos(false);   // el hook de loadPatentamientos repinta Anual
+    if (!comprasVWData) loadComprasVW(false).then(renderAnual);
+    loadObjetivosCompras().then(renderAnual);
   }
   if (name === 'financiaciones') loadAdmFinanciaciones(false);
 }
@@ -10300,6 +10320,7 @@ async function loadPatentamientos(forzar) {
     // Trimestre es subtab de Adm. ventas y depende de patentData: si está visible, pintarla.
     const subTri = document.getElementById('subpanelAdmVentasTrimestre');
     if (subTri && subTri.classList.contains('active')) renderTrimestre();
+    if (document.getElementById('subpanelAdmVentasAnual')?.classList.contains('active')) renderAnual();
   } catch (e) {
     console.error(e);
     wrap.innerHTML = '<div class="errbox"><div class="ttl">⚠️ No se pudieron cargar los patentamientos</div>'
@@ -10332,6 +10353,7 @@ async function _fetchPatentSilent() {
     // Trimestre (subtab de Adm. ventas): si está visible, re-render con la data nueva.
     const subTri = document.getElementById('subpanelAdmVentasTrimestre');
     if (subTri && subTri.classList.contains('active')) renderTrimestre();
+    if (document.getElementById('subpanelAdmVentasAnual')?.classList.contains('active')) renderAnual();
   } catch { /* silencioso */ }
 }
 
@@ -12092,6 +12114,147 @@ function renderTrimestre() {
     html += '</div>';
   }
   // qStatus === 'future' → no mostramos bloque, ya basta con el toolbar.
+
+  wrap.innerHTML = html;
+}
+
+// =======================================================================
+// ANUAL · cómo nos fue en el año (pedido de Fer 29-10-2026)
+// Patentamiento: objetivosPat vs _patentadasMes (misma fuente que Trimestre).
+// Compra: objetivosCompras vs facturas de compras_vw por mes (misma regla que
+// Reparto: las MAN- no cuentan; en el mes en curso se suma lo marcado comprado
+// en el reparto que todavía no está facturado).
+// El acumulado "a la fecha" toma solo los meses ya cerrados + el mes en curso.
+// =======================================================================
+let anioSelAnual = null;
+function setAnioAnual(y) { anioSelAnual = Number(y) || null; renderAnual(); }
+
+function _compradasPorMes() {
+  const porMes = {};
+  if (comprasVWData && Array.isArray(comprasVWData.compras)) {
+    comprasVWData.compras.forEach(c => {
+      if (String(c.serie || '').toUpperCase().startsWith('MAN-')) return;
+      const mk = _cvwMesToKey(c.mes);
+      if (mk) porMes[mk] = (porMes[mk] || 0) + 1;
+    });
+    const mesHoy = _mesKeyHoy();
+    const items = (repartoData && repartoData.items) || [];
+    if (items.length) {
+      const factHoy = new Set(comprasVWData.compras
+        .filter(c => _cvwMesToKey(c.mes) === mesHoy && c.serie)
+        .map(c => String(c.serie).trim().toUpperCase()));
+      const extra = items.filter(i =>
+        (i.estado_compra === 'comprado' || i.estado_compra === 'ok') &&
+        !factHoy.has(String(i.vin || '').slice(-8).toUpperCase())).length;
+      if (extra) porMes[mesHoy] = (porMes[mesHoy] || 0) + extra;
+    }
+  }
+  return porMes;
+}
+
+function renderAnual() {
+  const wrap = document.getElementById('anualContent');
+  if (!wrap) return;
+  const anioHoy = new Date().getFullYear();
+  const compradas = _compradasPorMes();
+  const anios = new Set([anioHoy]);
+  Object.keys(objetivosPat || {}).concat(Object.keys(objetivosCompras || {}), Object.keys(compradas))
+    .forEach(mk => { const y = Number(String(mk).slice(0, 4)); if (y > 2000) anios.add(y); });
+  const y = anioSelAnual || anioHoy;
+
+  const fmtPct = p => p == null ? '—' : (p * 100).toLocaleString('es-AR', { maximumFractionDigits: 1 }) + '%';
+  const cls = p => p == null ? '' : (p >= 1 ? 'good' : (p >= 0.9 ? 'warn' : 'bad'));
+  const colorTxt = p => p == null ? 'var(--vw-grey-3)' : (p >= 1 ? 'var(--green-dark)' : (p >= 0.9 ? 'var(--orange-dark)' : 'var(--red-dark)'));
+  const cargandoCompras = !comprasVWData;
+
+  const meses = [];
+  for (let m = 1; m <= 12; m++) {
+    const mk = y + '-' + String(m).padStart(2, '0');
+    const est = _mesEstado(mk);
+    const objP = objetivosPat[mk] || 0;
+    const objC = objetivosCompras[mk] || 0;
+    const pat = est === 'future' ? 0 : _patentadasMes(mk);
+    const com = est === 'future' ? 0 : (compradas[mk] || 0);
+    meses.push({ mk, m, est, objP, objC, pat, com,
+      alcP: (objP > 0 && est !== 'future') ? pat / objP : null,
+      alcC: (objC > 0 && est !== 'future') ? com / objC : null });
+  }
+  // Acumulado a la fecha: meses cerrados + en curso. Solo suman al % los meses
+  // con objetivo cargado (si un mes no tiene objetivo, sus unidades no inflan el %).
+  const ytd = meses.filter(x => x.est !== 'future');
+  const sum = (arr, f) => arr.reduce((a, x) => a + f(x), 0);
+  const ytdP = ytd.filter(x => x.objP > 0), ytdC = ytd.filter(x => x.objC > 0);
+  const aP = { obj: sum(ytdP, x => x.objP), real: sum(ytdP, x => x.pat), total: sum(ytd, x => x.pat),
+               objAnio: sum(meses, x => x.objP), sinObj: meses.filter(x => !x.objP).length };
+  const aC = { obj: sum(ytdC, x => x.objC), real: sum(ytdC, x => x.com), total: sum(ytd, x => x.com),
+               objAnio: sum(meses, x => x.objC), sinObj: meses.filter(x => !x.objC).length };
+  aP.alc = aP.obj > 0 ? aP.real / aP.obj : null;
+  aC.alc = aC.obj > 0 ? aC.real / aC.obj : null;
+
+  let html = '<div class="q-toolbar">';
+  html += '  <label for="anioSel">Año:</label>';
+  html += '  <select id="anioSel" onchange="setAnioAnual(this.value)">';
+  Array.from(anios).sort().forEach(a => { html += '<option value="' + a + '"' + (a === y ? ' selected' : '') + '>' + a + '</option>'; });
+  html += '  </select>';
+  html += '  <span class="q-status ' + (y < anioHoy ? 'closed' : (y > anioHoy ? 'future' : 'live')) + '">' + (y < anioHoy ? 'Cerrado' : (y > anioHoy ? 'Próximo' : 'En curso')) + '</span>';
+  html += '</div>';
+
+  const tarjeta = (titulo, a, unidad, cargando) => {
+    const pend = a.objAnio - a.total;
+    return '<div class="q-tot ' + (cargando ? '' : cls(a.alc)) + '">'
+      + '<div class="lab">' + titulo + ' · a la fecha</div>'
+      + '<div class="val">' + (cargando ? '…' : fmtPct(a.alc)) + '</div>'
+      + '<div class="sub">' + (cargando ? 'Cargando compras…'
+          : (a.real + ' / ' + a.obj + ' ' + unidad + ' en los meses con objetivo'
+            + (a.objAnio ? ' · objetivo del año cargado: <b>' + a.objAnio + '</b>' + (pend > 0 ? ' (faltan ' + pend + ')' : ' ✓') : '')
+            + (a.sinObj ? ' · ' + a.sinObj + (a.sinObj === 1 ? ' mes' : ' meses') + ' sin objetivo' : '')))
+      + '</div></div>';
+  };
+  html += '<div class="q-totales">';
+  html += tarjeta('Patentamiento', aP, 'patentadas', false);
+  html += tarjeta('Compra a VW', aC, 'unidades', cargandoCompras);
+  html += '</div>';
+
+  // Tabla mes a mes + subtotal por trimestre (con el estado del recupero VW).
+  const th = (t, num) => '<th' + (num ? ' class="num"' : '') + '>' + t + '</th>';
+  const celdaPct = p => '<td class="num" style="font-weight:700;color:' + colorTxt(p) + '">' + fmtPct(p) + '</td>';
+  html += '<div class="table-wrap"><div class="table-scroll"><table class="reparto-tabla" style="width:100%;min-width:640px">';
+  html += '<thead><tr>' + th('Mes') + th('Obj. patent.', 1) + th('Patentadas', 1) + th('% patent.', 1)
+       +  th('Obj. compra', 1) + th('Compradas', 1) + th('% compra', 1) + '</tr></thead><tbody>';
+  for (let q = 0; q < 4; q++) {
+    const qm = meses.slice(q * 3, q * 3 + 3);
+    for (const x of qm) {
+      const fut = x.est === 'future';
+      html += '<tr' + (x.est === 'current' ? ' style="background:#eef4fb"' : '') + '>'
+        + '<td>' + escapeHtml(_mesLabel(x.mk)) + (x.est === 'current' ? ' <span class="muted">(en curso)</span>' : '')
+        + (!fut && _patentadasEsManual(x.mk) ? ' <span class="muted" title="Patentadas de la carga manual de Industria">· manual</span>' : '') + '</td>'
+        + '<td class="num">' + (x.objP || '—') + '</td>'
+        + '<td class="num">' + (fut ? '—' : x.pat) + '</td>' + celdaPct(x.alcP)
+        + '<td class="num">' + (x.objC || '—') + '</td>'
+        + '<td class="num">' + (fut || cargandoCompras ? '—' : x.com) + '</td>' + celdaPct(cargandoCompras ? null : x.alcC)
+        + '</tr>';
+    }
+    const qk = y + '-Q' + (q + 1);
+    const vis = qm.filter(x => x.est !== 'future');
+    if (!vis.length) continue;
+    const qP = vis.filter(x => x.objP > 0), qC = vis.filter(x => x.objC > 0);
+    const qAlcP = sum(qP, x => x.objP) > 0 ? sum(qP, x => x.pat) / sum(qP, x => x.objP) : null;
+    const qAlcC = sum(qC, x => x.objC) > 0 ? sum(qC, x => x.com) / sum(qC, x => x.objC) : null;
+    const cri = _evalCriteriosTrimestre(_resumenTrimestre(qk));
+    const rec = cri.recupero ? '✓ recupero' : ((cri.A === 'fail' || cri.B === 'fail' || cri.C === 'fail') ? '✗ sin recupero' : '⏳ recupero pendiente');
+    html += '<tr style="background:var(--vw-grey-1);font-weight:700">'
+      + '<td>' + escapeHtml(_quarterLabel(qk)) + ' <span style="font-weight:500;font-size:11px;color:' + (cri.recupero ? 'var(--green-dark)' : (rec.startsWith('✗') ? 'var(--red-dark)' : 'var(--vw-grey-4)')) + '">' + rec + '</span></td>'
+      + '<td class="num">' + sum(qm, x => x.objP) + '</td><td class="num">' + sum(vis, x => x.pat) + '</td>' + celdaPct(qAlcP)
+      + '<td class="num">' + sum(qm, x => x.objC) + '</td><td class="num">' + (cargandoCompras ? '—' : sum(vis, x => x.com)) + '</td>' + celdaPct(cargandoCompras ? null : qAlcC)
+      + '</tr>';
+  }
+  html += '<tr style="background:var(--vw-blue);color:#fff;font-weight:700">'
+    + '<td>Total ' + y + ' a la fecha</td>'
+    + '<td class="num">' + aP.obj + '</td><td class="num">' + aP.total + '</td><td class="num">' + fmtPct(aP.alc) + '</td>'
+    + '<td class="num">' + aC.obj + '</td><td class="num">' + (cargandoCompras ? '—' : aC.total) + '</td><td class="num">' + (cargandoCompras ? '—' : fmtPct(aC.alc)) + '</td>'
+    + '</tr>';
+  html += '</tbody></table></div></div>';
+  html += '<div class="muted" style="font-size:11.5px;margin-top:8px">El % de cada trimestre y del año se calcula solo sobre los meses que tienen objetivo cargado. Compradas = facturas de VW del mes (Compras VW); en el mes en curso se suma lo marcado como comprado en el Reparto que todavía no está facturado. Los objetivos se editan en Trimestre (patentamiento) y en Reparto (compra).</div>';
 
   wrap.innerHTML = html;
 }
