@@ -383,6 +383,21 @@ function _supaGet(path) {
   return JSON.parse(res.getContentText());
 }
 
+// Igual que _supaGet pero pagina de a 1000: PostgREST corta en 1000 filas SIN avisar.
+// Pasó el 3-nov-2026: `incentivos` llegó a 1016 filas con noviembre y el motor perdió
+// 16 al azar (la Tera Comfort quedó sin adicional, la Tera Trend sin wholesale...).
+// Ordena por id para que las páginas no se pisen.
+function _supaGetAll(path) {
+  const out = [];
+  const sep = path.indexOf('?') >= 0 ? '&' : '?';
+  for (let desde = 0; desde < 100000; desde += 1000) {
+    const p = _supaGet(path + sep + 'order=id&limit=1000&offset=' + desde);
+    for (const r of p) out.push(r);
+    if (p.length < 1000) break;
+  }
+  return out;
+}
+
 // Normaliza un nombre de modelo para matchear la descripción de Oversoft contra
 // el catálogo (saca VW/Nuevo, MY, generación, packs; bi-tono→bitono).
 function _ntrim(s) {
@@ -1521,7 +1536,7 @@ function getVentasV2(targetMes) {
     btPorMes[p.mes][p.modelo] = p;
   }
   const incPorMes = {};
-  for (const r of _supaGet('/incentivos?select=mes,nombre_corto,tipo,monto_civa')) {
+  for (const r of _supaGetAll('/incentivos?select=mes,nombre_corto,tipo,monto_civa')) {
     if (!incPorMes[r.mes]) incPorMes[r.mes] = {};
     if (!incPorMes[r.mes][r.nombre_corto]) incPorMes[r.mes][r.nombre_corto] = {};
     incPorMes[r.mes][r.nombre_corto][r.tipo] = Number(r.monto_civa) || 0;
@@ -2907,7 +2922,7 @@ function getBaratitoMotor() {
   const cat = _supaGet('/catalogo_modelos?select=codigo,nombre_corto,nombre_bt,familia&activo=eq.true&order=orden.asc.nullslast,nombre_corto.asc');
   const incPorMes = {};  // mes → nc → {tipo: civa}
   const incDetPorMes = {};  // mes → nc → [ {tipo, montoCiva, montoSiva, condicion, circular} ]  (para mostrar de qué circular viene cada incentivo)
-  for (const r of _supaGet('/incentivos?select=mes,nombre_corto,tipo,monto_civa,monto_siva,condicion,circular')) {
+  for (const r of _supaGetAll('/incentivos?select=mes,nombre_corto,tipo,monto_civa,monto_siva,condicion,circular')) {
     if (!incPorMes[r.mes]) incPorMes[r.mes] = {};
     if (!incPorMes[r.mes][r.nombre_corto]) incPorMes[r.mes][r.nombre_corto] = {};
     incPorMes[r.mes][r.nombre_corto][r.tipo] = Number(r.monto_civa) || 0;

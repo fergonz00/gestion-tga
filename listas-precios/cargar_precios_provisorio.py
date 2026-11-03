@@ -2,6 +2,8 @@
 """Carga una lista PROVISORIA derivada del mes anterior aplicando los aumentos
 que pasa el Gerente Zonal por WhatsApp, mientras VW no manda la lista oficial.
 
+Noviembre 2026 (circular 129/26, 3-nov): sin lista nueva -> 0% sobre la #898.
+
 Octubre 2026 (circular 109/26, 24-sep): VW NO mando lista nueva y el zonal no
     paso aumentos -> octubre corre con los MISMOS precios de la #897, 0% en todo.
     No es un capricho administrativo: el motor elige el mes de INCENTIVOS segun
@@ -35,11 +37,11 @@ EXEC = "https://script.google.com/macros/s/AKfycby13NRmtve2ojB0IMZgFPnKh3HsLSBLD
 # del repo, que es publico). El viejo tga-gestion-... quedo muerto el 18-sep-2026.
 TOKEN = [l.split("=", 1)[1].strip() for l in open(r"C:\proyectos\.secrets\gestion.env", encoding="utf-8")
          if l.startswith("GESTION_SERVER_TOKEN=")][0]
-MES_BASE, MES, LISTA_NUM = "2026-09", "2026-10", 202610
+MES_BASE, MES, LISTA_NUM = "2026-10", "2026-11", 202611
 
 def aumento(nombre_corto):
-    """% de aumento de octubre-26: ninguno. VW no mando lista y el zonal no paso
-    aumentos, asi que octubre replica la #897 tal cual."""
+    """% de aumento de noviembre-26: ninguno. Con la circular 129/26 (3-nov) VW no
+    mando lista nueva, asi que noviembre replica la #898 tal cual (lista_num 202611)."""
     return 0.0
 
 pat = None

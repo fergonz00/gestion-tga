@@ -8,7 +8,26 @@ catalogo (SE); tramos performance distintos de 90/100 se anotan en condicion;
 filas en $0 no se cargan.
 Circuito completo: skill circular-vw (C:\proyectos\.claude\skills).
 
-Ultima corrida: 2026-10 circular 109/26.
+Ultima corrida: 2026-11 circular 129/26 (3-nov-26).
+
+De la 129/26: tacticos, Tiguan/Vento, wholesale y performance IDENTICOS al peso a
+octubre. Cambios:
+ - El punto 8 (tactico adicional) junta lo que en octubre vino en 3 circulares
+   (109 + 112 + 128) y ahora vale TODO noviembre: Tera las 4 versiones (la Comfort
+   incluida), Nivus Trendline/Comfortline, Polo Track sin PNT, Polo Comfortline y
+   Highline, T-Cross Trendline 200 AT MY26, Amarok Comfortline TDI MT/AT y Highline
+   TDI AT. Mismos montos que octubre.
+ - Nivus sigue SIN wholesale (desde la lista 898 va como descuento en la lista).
+ - ALTA tabla de tactico T-Cross MY27 (Trendline/Comfortline/Highline/Bi-tono 200
+   AT, menor que MY26). NO se carga: catalogo_modelos no distingue MY27 y hoy no hay
+   ninguna MY27 en Oversoft. Si entran, hay que separar la version en el catalogo.
+ - Gastos: fletes +0,5%, seguros +0,5%, admin +0,5%, form. importados +0,6%,
+   nacionales +0,9%.
+ - "anula y reemplaza toda circular anterior": NO alcanza a la C123 (chasis no
+   patentables 2027, vigente al 30/11, tabla incentivos_unidad). Confirmado por Fer.
+ - Sin lista nueva -> lista provisoria 202611 al 0% sobre la #898.
+
+Corrida anterior: 2026-10 circular 109/26.
 
 De la 109/26 (24/09/26): el mes mas quieto del anio. Se compararon las 82 filas
 de la circular contra las 84 cargadas de septiembre: CERO cambios de monto.
@@ -57,8 +76,8 @@ Cambios reales del mes:
 """
 import json, urllib.request, sys
 
-CIRC = "109/26"
-MES = "2026-10"
+CIRC = "129/26"
+MES = "2026-11"
 R = []
 def add(codigo, nombre, tipo, siva, civa, cond, circ=None):
     R.append((codigo, nombre, tipo, siva, civa, cond, circ or CIRC))
@@ -110,7 +129,7 @@ add("AGDD8A","Amarok Black Style V6 AT 4x4 SE G2","tactico",6173638,6821870,AMK)
 # ---------------- ADICIONAL2 (tactico Tiguan/Vento) - identico a septiembre --
 add("RM14M7","Tiguan R-Line 250TSI DSG","adicional2",3951418,4781216,"tactico tiguan/vento")
 add("BU59UZ","Vento GLI 350TSI DSG","adicional2",5748043,6955132,"tactico tiguan/vento")
-# ---------------- WHOSALE (los 14 de la circular; SIN cambios vs septiembre) -
+# ---------------- WHOSALE (los 11 de la circular 129; Nivus ya no tiene) -----
 W = "compra whosale"
 add("BZ31T4","Polo Track MSI MT","whosale",1173055,1419396,W)
 add("BZ32D3","Polo COMFORTLINE 170TSI AT","whosale",1340365,1621842,W)
@@ -125,9 +144,6 @@ add("DF11T4","Tera Trend MSI MT","whosale",514258,622252,W)
 add("DF11T4","Tera Trend MSI MT + Pack Safe I","whosale",514258,622252,W)
 add("DF13D3","Tera Comfort 170TSI AT","whosale",581508,703624,W)
 add("DF13D3","Tera Comfort 170TSI AT + Pack Safe II","whosale",581508,703624,W)
-add("CH23K3","Nivus Comfortline 200TSI AT","whosale",1026562,1242140,W)
-add("CH24K3","Nivus Highline 200TSI AT","whosale",1108449,1341223,W)
-add("CH24K3","Nivus Outfit 200TSI AT","whosale",1133915,1372038,W)
 # ---------------- ADICIONAL1 (incremental) ----------------
 # Desde la circular 89/26 el "Incentivo Tactico Incremental Polo/Tera/Nivus" quedo
 # consolidado DENTRO del tactico -> para esos modelos NO se carga aparte (seria
@@ -139,7 +155,7 @@ add("CH24K3","Nivus Outfit 200TSI AT","whosale",1133915,1372038,W)
 # Wholesale s/Imp 1.053.719 -> c/Imp 1.275.000 (IVA 21%) y 1.381.357 -> 1.526.400
 # (IVA 10,5% Amarok); ambos cierran al peso.
 # Mejora vs septiembre: el de Nivus/Tera valia solo del 17 al 30; ahora todo el mes.
-INCR = "Patentamientos octubre 2026 - Canal Tradicional"
+INCR = "Patentamientos noviembre 2026 - Canal Tradicional"
 add("CH22K3","Nivus Trendline 200TSI AT","adicional1",1053719,1275000,INCR)
 add("CH23K3","Nivus Comfortline 200TSI AT","adicional1",1053719,1275000,INCR)
 add("DF13D3","Tera Comfort 170TSI AT","adicional1",1053719,1275000,INCR)
@@ -147,6 +163,15 @@ add("DF13D3","Tera Comfort 170TSI AT + Pack Safe II","adicional1",1053719,127500
 add("AGDB33","Amarok Comfortline TDI MT 4x2 SE G2","adicional1",1381357,1526400,INCR)
 add("AGDB3X","Amarok Comfortline TDI AT 4x2 SE G2","adicional1",1381357,1526400,INCR)
 add("AGDC3X","Amarok Highline TDI AT 4x2 SE G2","adicional1",1381357,1526400,INCR)
+# Nov (C129 punto 8): se suman las que en octubre vinieron por la 112 y la 128.
+add("DF11T4","Tera Trend MSI MT","adicional1",1053719,1275000,INCR)
+add("DF11T4","Tera Trend MSI MT + Pack Safe I","adicional1",1053719,1275000,INCR)
+add("DF14D3","Tera High 170TSI AT","adicional1",1053719,1275000,INCR)
+add("DF14D3","Tera Outfit 170TSI AT","adicional1",1053719,1275000,INCR)
+add("BZ31T4","Polo Track MSI MT","adicional1",862810,1044000,INCR + " - sin PNT")
+add("BZ32D3","Polo COMFORTLINE 170TSI AT","adicional1",842975,1020000,INCR)
+add("BZ33D3","Polo HIGHLINE 170TSI AT","adicional1",842975,1020000,INCR)
+add("BF32K3","T-Cross Trendline 200TSI AT","adicional1",1053719,1275000,INCR + " - solo MY26")
 # ---------------- PERFORMANCE (90%) y PERFORMANCE100 ----------------
 # La tabla viene como IMAGEN y solo sin IVA -> el c/IVA se calcula (21% / 10,5%).
 P90D50 = "90% objetivo (cobra desde 50%)"
