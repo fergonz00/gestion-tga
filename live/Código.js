@@ -411,7 +411,7 @@ function _ntrim(s) {
   // OJO: NO borrar pack/safe/i/ii — "Tera Trend MSI MT" y "... + Pack Safe I"
   // son productos DISTINTOS (precio/dto distintos) y Oversoft describe sin pack.
   // "se" sí se borra: los nombres "SE G2" de Amarok son el mismo producto.
-  s = s.replace(/\bph[ag]\b/g, '').replace(/\b(se|cd|l)\b/g, '');
+  s = s.replace(/\bph[ag]\b/g, '').replace(/\bpl[a-z]\b/g, '').replace(/\b(se|cd|l)\b/g, '');  // PLJ/PLK/PLM = opcionales de Oversoft (nov-26)
   return s.replace(/[^a-z0-9]/g, '');
 }
 
@@ -4616,7 +4616,7 @@ function _repartoNtrim(s) {
   s = String(s || '').toLowerCase();
   s = s.replace(/bi[\s-]*tono/g, 'bitono').replace(/\b(vw|nuevo)\b/g, '').replace(/\bmtg([123])\b/g, 'mt');
   s = s.replace(/\bmy\s*2[0-9]\b/g, '').replace(/\b20[0-9][0-9]\b/g, '').replace(/\bg[123]\b/g, '');
-  s = s.replace(/\bph[ag]\b/g, '').replace(/\b(se|cd|l)\b/g, '');
+  s = s.replace(/\bph[ag]\b/g, '').replace(/\bpl[a-z]\b/g, '').replace(/\b(se|cd|l)\b/g, '');  // PLJ/PLK/PLM = opcionales de Oversoft (nov-26)
   return s.replace(/[^a-z0-9]/g, '');
 }
 
