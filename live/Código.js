@@ -2385,6 +2385,26 @@ function saveCompraVW(body) {
   try { _cacheDrop('comprasvw'); } catch (e) {}
   return { ok: true, serie: serie };
 }
+// "PATENTA DICIEMBRE", "Patenta en Nov", "OFERTA PATENTANDO MES DE NOVIEMBRE"
+// → 'YYYY-MM' (el primer mes así desde la fecha de la preventa). '' si no dice.
+function _mesPatentaComentario(com, desde) {
+  const t = String(com || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const m = t.match(/PATENT[A-Z]*\s+(?:EN\s+|EL\s+)?(?:(?:EL\s+)?MES\s+DE\s+)?(ENE|FEB|MAR|ABR|MAY|JUN|JUL|AGO|SEP|SET|OCT|NOV|DIC)/);
+  if (!m) return '';
+  const idx = ['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'].indexOf(m[1] === 'SET' ? 'SEP' : m[1]) + 1;
+  const d = String(desde || '').slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(d)) return '';
+  let y = Number(d.slice(0, 4));
+  if (idx < Number(d.slice(5, 7))) y++;
+  return y + '-' + String(idx).padStart(2, '0');
+}
+// La fecha ISO, o el lunes siguiente si cae sábado/domingo.
+function _habilDesde(iso) {
+  const d = new Date(iso + 'T12:00:00');
+  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+  return _yyyyMmDd(d);
+}
+
 // FLUJO FINANCIERO: junta los cobros pendientes de las ventas vigentes
 // (ingresos esperados, de getAdmVentas: cada concepto no cobrado con su vto) y
 // los pagos pendientes a VW (egresos, de compras_vw impagas con su vence).
@@ -2408,6 +2428,11 @@ function saveCompraVW(body) {
 //    entrega programada para el 06/08. Regla: si el vto ya pasó, la unidad NO
 //    está entregada y hay entrega programada posterior, el cobro se proyecta a
 //    esa fecha. Queda `fechaOrig`/`reproyectado` para poder mostrarlo.
+//
+// 3) EL CRÉDITO SE COBRA AL PATENTAR (Fer, 24-11-2026). VW Credit y los bancos
+//    liquidan cuando la unidad se patenta, no en el vto de la preventa. La PV
+//    8210/1 tenía el crédito pactado al 27/11 con "OFERTA SOLO PATENTANDO
+//    DICIEMBRE" en el comentario. Queda `porPatente` para mostrarlo.
 function getFlujoFinanciero() {
   const ingresos = [];
   const hoy = _yyyyMmDd(new Date());
@@ -2418,7 +2443,7 @@ function getFlujoFinanciero() {
       const pos = [], negs = [];
       for (const c of (v.cuadro || [])) {
         const saldo = Math.round(((c.plan || 0) - (c.cobrado || 0)));
-        if (saldo > 1) pos.push({ vto: c.vto || '', monto: saldo, concepto: c.concepto || '' });
+        if (saldo > 1) pos.push({ vto: c.vto || '', monto: saldo, concepto: c.concepto || '', credito: !!_finInfo(c.motivo) });
         else if (saldo < -1) negs.push(-saldo);
       }
       if (!pos.length) continue;
@@ -2440,8 +2465,23 @@ function getFlujoFinanciero() {
           fecha = v.entregaFecha;
           reproy = true;
         }
+        // (3) el CRÉDITO (VW Credit, bancos) se liquida al patentar, no en el vto
+        // de la preventa (Fer, 24-11-2026). Medido: 189 VW Credit cobrados con
+        // mediana 0 días contra el patentamiento. Si ya está patentada, esa fecha;
+        // si no y el comentario dice "patenta <mes>" posterior al vto pactado, el
+        // 10 de ese mes (de 58 financiadas que pasaron de mes, solo 4 patentaron
+        // del 1 al 3 y el grueso del 4 al 15).
+        let porPatente = '';
+        if (p.credito) {
+          if (v.fechaPatentamiento) {
+            if (!fecha || v.fechaPatentamiento > fecha) { fecha = v.fechaPatentamiento; porPatente = 'patentada'; }
+          } else {
+            const mp = _mesPatentaComentario(v.comentario, v.fechaPv || p.vto);
+            if (mp && mp > String(fecha || '').slice(0, 7)) { fecha = _habilDesde(mp + '-10'); porPatente = 'patenta ' + mp; }
+          }
+        }
         ingresos.push({
-          fecha: fecha, fechaOrig: p.vto, reproyectado: reproy,
+          fecha: fecha, fechaOrig: p.vto, reproyectado: reproy, porPatente: porPatente,
           vencido: !!(fecha && fecha < hoy),
           monto: p.monto, pv: v.preventa, cliente: v.cliente || '', localidad: v.localidad || '',
           concepto: p.concepto, modelo: v.modelo || '',
@@ -3554,7 +3594,7 @@ function _norm(s) {
   // Lowercase, sin acentos, trim. Uso \u escape para que el regex sea claro
   // y no dependa de encoding del archivo.
   return String(s || '').toLowerCase()
-    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .trim();
 }
 
@@ -4779,7 +4819,7 @@ function _repartoCompradasMes(items, mesKey, catByNorm) {
 // Normaliza un nombre de color para cruzar dos sistemas de naming (Oversoft vs
 // reparto): minusculas, sin acentos, solo alfanumerico.
 function _stockColNorm(s) {
-  return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
 }
 // Busca en un objeto {nombreColor: ...} la clave que normalice igual a `name`.
 function _stockColKey(obj, name) {
@@ -5366,7 +5406,7 @@ function getReparto() {
   // lo carga Oversoft) y "Volcán" (como viene el reparto de VW) quedaban "volcan"
   // vs "volcn" → colorMatch false → ⚠ revisá eterno por una sola tilde. Mismo
   // criterio que _stockColNorm.
-  var norm = function (s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, ''); };
+  var norm = function (s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, ''); };
   var incl = function (a, b) { a = norm(a); b = norm(b); return !!a && !!b && (a === b || a.indexOf(b) >= 0 || b.indexOf(a) >= 0); };
 
   rows.sort(function (a, b) { return (a.familia || '').localeCompare(b.familia || '') || (a.descripcion || '').localeCompare(b.descripcion || ''); });
@@ -5528,7 +5568,7 @@ function getFacturas(params) {
   var repById = {};
   (_repartoRead('/reparto_vw?select=vin,descripcion,modelo_codigo,color_codigo,estado_compra') || []).forEach(function (r) { repById[String(r.vin || '').toUpperCase().slice(-8)] = r; });
 
-  var colNorm = function (s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, ''); };
+  var colNorm = function (s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, ''); };
   // Igualdad de código tolerante: Oversoft a veces agrega una variante (" B") al
   // código base que la factura no trae (ej factura "AGDD8A" vs Oversoft "AGDD8A B").
   // Como además el chasis YA identifica la misma unidad, basta que el más corto sea
