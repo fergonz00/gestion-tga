@@ -2175,11 +2175,11 @@ function getComprasVW() {
   const fcVw = {};
   for (let i = 0; i < series.length; i += 60) {
     const lote = series.slice(i, i + 60).map(s => '"' + s + '"').join(',');
-    for (const d of get('/detcash?origen=eq.CPOKM&comprobante=like.FC-*&select=referencia,comprobante,fecha,importe&referencia=in.(' + encodeURIComponent(lote) + ')')) {
+    for (const d of get('/detcash?origen=eq.CPOKM&comprobante=like.FC-*&select=referencia,comprobante,fecha,importe,sujetoretganan&referencia=in.(' + encodeURIComponent(lote) + ')')) {
       const s = String(d.referencia || '').trim();
       if (!s) continue;
       const imp = Number(d.importe) || 0;
-      if (!fcVw[s] || imp < (fcVw[s].importe || 0)) fcVw[s] = { comprobante: String(d.comprobante || '').trim(), fecha: d.fecha ? String(d.fecha).slice(0, 10) : null, importe: imp };
+      if (!fcVw[s] || imp < (fcVw[s].importe || 0)) fcVw[s] = { comprobante: String(d.comprobante || '').trim(), fecha: d.fecha ? String(d.fecha).slice(0, 10) : null, importe: imp, neto: Math.abs(Number(d.sujetoretganan) || 0) };
     }
   }
   // mapa de modelo (código → descripción) y color (id → descripción)
@@ -2236,6 +2236,10 @@ function getComprasVW() {
       // N° de factura de compra VW→Tito (de Oversoft, cta cte VW). Solo lectura.
       fcVw: fcOv ? fcOv.comprobante : '',
       fcVwFecha: fcOv ? fcOv.fecha : null,
+      // Neto de la FC de VW en Oversoft (base imponible, sin IVA ni percepciones; trae
+      // adentro los gastos VW de flete/adm./seguro). Lo usa la solapa Facturacion VW.
+      fcVwNeto: fcOv && fcOv.neto > 0 ? fcOv.neto : null,
+      fcVwTotal: fcOv ? Math.abs(fcOv.importe) : null,
       // color oficial: el de Oversoft cuando está conciliada; si no, el de VW.
       color: (conc && colorOversoft) ? colorOversoft : String(r.color || ''),
       preventaOversoft: pvNum,
