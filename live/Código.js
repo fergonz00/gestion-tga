@@ -238,6 +238,55 @@ function reponerExposicion(params) {
   return { ok: true, serieVieja: serieVieja, serieNueva: serieNueva, salon: vieja.salon, avisado: avisado, aviso: aviso };
 }
 
+// Cambios manuales de exposición desde el portal (pedido de Fer 27-11-2026: "poder
+// decidir todo en el portal"). Sin WhatsApp: el aviso de venta lo sigue mandando el
+// cron del portal (cada 15 min) y el de reemplazo, "Reponer".
+//   op=agregar  serie, salon, unidad, color  → alta (falla si ya está activa en algún salón)
+//   op=sacar    serie                         → baja (activa=false), sin reemplazo
+//   op=mover    serie, salon                  → cambia el salón de la fila activa
+// No deja agregar una unidad vendida en Oversoft: el cron la tomaría como venta
+// nueva y mandaría el WhatsApp de "vendido" + los recordatorios de reposición.
+const EXPO_SALONES = ['ENTRE RIOS', 'INDEPENDENCIA'];
+function cambioExposicion(params) {
+  const op    = String(params.op || '').trim();
+  const serie = String(params.serie || '').trim().toUpperCase();
+  const salon = String(params.salon || '').trim().toUpperCase();
+  if (!serie) return { error: 'falta la serie' };
+  if ((op === 'agregar' || op === 'mover') && EXPO_SALONES.indexOf(salon) === -1) return { error: 'salón inválido: ' + salon };
+
+  const svc = PropertiesService.getScriptProperties().getProperty('SUPA_SERVICE');
+  if (!svc) return { error: 'SUPA_SERVICE no configurado' };
+  const hW = { apikey: svc, Authorization: 'Bearer ' + svc, 'Content-Type': 'application/json', Prefer: 'return=representation' };
+  const activa = _supaGet('/exposicion_unidades?select=serie,salon&serie=eq.' + encodeURIComponent(serie) + '&activa=eq.true&limit=1');
+  const filtro = SUPA_URL + '/exposicion_unidades?serie=eq.' + encodeURIComponent(serie) + '&activa=eq.true';
+
+  if (op === 'agregar') {
+    if (activa && activa.length) return { error: serie + ' ya está en exposición en ' + activa[0].salon };
+    const ov = JSON.parse(UrlFetchApp.fetch(OVERSOFT_URL + '/unidades?select=serie,asignada,preventa,entregada&serie=eq.' + encodeURIComponent(serie),
+      { headers: { apikey: OVERSOFT_KEY, Authorization: 'Bearer ' + OVERSOFT_KEY }, muteHttpExceptions: true }).getContentText() || '[]');
+    if (!Array.isArray(ov) || !ov.length) return { error: 'la serie ' + serie + ' no existe en Oversoft' };
+    const u = ov[0];
+    if (u.entregada || u.asignada || String(u.preventa || '').trim()) return { error: serie + ' está vendida en Oversoft (' + (String(u.preventa || '').trim() || 'asignada') + '): no se agrega a exposición' };
+    const r = UrlFetchApp.fetch(SUPA_URL + '/exposicion_unidades', { method: 'post', headers: hW, muteHttpExceptions: true,
+      payload: JSON.stringify([{ serie: serie, salon: salon, unidad: String(params.unidad || '').trim(), color: String(params.color || '').trim(), vendida: false, avisada_venta: false, activa: true }]) });
+    if (r.getResponseCode() >= 300) return { error: 'error al agregar: ' + r.getContentText().slice(0, 200) };
+    return { ok: true, op: op, serie: serie, salon: salon };
+  }
+  if (!activa || !activa.length) return { error: serie + ' no está activa en exposición' };
+  if (op === 'sacar') {
+    const r = UrlFetchApp.fetch(filtro, { method: 'patch', headers: hW, muteHttpExceptions: true, payload: JSON.stringify({ activa: false }) });
+    if (r.getResponseCode() >= 300) return { error: 'error al sacar: ' + r.getContentText().slice(0, 200) };
+    return { ok: true, op: op, serie: serie, salon: activa[0].salon };
+  }
+  if (op === 'mover') {
+    if (activa[0].salon === salon) return { ok: true, op: op, serie: serie, salon: salon, sinCambio: true };
+    const r = UrlFetchApp.fetch(filtro, { method: 'patch', headers: hW, muteHttpExceptions: true, payload: JSON.stringify({ salon: salon }) });
+    if (r.getResponseCode() >= 300) return { error: 'error al mover: ' + r.getContentText().slice(0, 200) };
+    return { ok: true, op: op, serie: serie, desde: activa[0].salon, salon: salon };
+  }
+  return { error: 'op desconocida: ' + op };
+}
+
 // Lectura cruda de una pestaña de la planilla MADRE (1Kvu...). La espejo tiene
 // acceso de lectura a la madre (por los IMPORTRANGE), así que openById funciona
 // corriendo "as Me". Sirve para auditar/migrar pestañas que no están espejadas
@@ -3212,6 +3261,7 @@ function doPost(e) {
     if (accion === 'resetbaratito')        return jsonResponse(resetBaratitoBaseline());
     if (accion === 'initbaratitobaseline') return jsonResponse(initBaratitoBaselineIfEmpty());
     if (accion === 'setajustecolor')       return jsonResponse(saveAjusteColor(body));
+    if (accion === 'expocambio')           return jsonResponse(cambioExposicion(body));  // agregar / sacar / mover una unidad de exposición (sin WhatsApp)
     if (accion === 'reponer')              return jsonResponse(reponerExposicion(body)); // repone una unidad de exposición vendida y avisa por WhatsApp
     if (accion === 'setadmventa')          return jsonResponse(saveAdmVenta(body));
     if (accion === 'setventamanual')       return jsonResponse(saveVentaManual(body));
@@ -3396,7 +3446,7 @@ function jsonResponse(obj) {
 const OVERSOFT_URL = 'https://lezxwesdsqgracawcwcy.supabase.co/rest/v1';
 const OVERSOFT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxlenh3ZXNkc3FncmFjYXdjd2N5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2MDE3ODcsImV4cCI6MjA5NjE3Nzc4N30.RU9P3pFpJSamsXQrinwWQpvmktBdYarUC3ksaqgw-JQ';
 // Whitelist de tablas que el proxy deja consultar (sumá acá cuando agreguen más).
-const OVERSOFT_TABLAS = ['detcash', 'servicios_ordenes', 'unidades', 'modelos'];
+const OVERSOFT_TABLAS = ['detcash', 'servicios_ordenes', 'unidades', 'modelos', 'colores'];
 
 // La réplica es de SOLO LECTURA y sincroniza cada ~5 min, asi que cachear los GET
 // del proxy (cache chunked, las unidades superan 100KB) evita pegarle en vivo en

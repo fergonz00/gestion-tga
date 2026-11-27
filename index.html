@@ -6532,83 +6532,289 @@ function renderAnalisisStock() {
 // =======================================================================
 let exposicionData = null;
 let expoSalonFiltro = 'todas';
+let expoControl = null;        // resultado del "Control del salón" (lo que te pasan del salón vs el portal)
+let expoSugSalon = 'INDEPENDENCIA';
+const EXPO_SALONES = ['ENTRE RIOS', 'INDEPENDENCIA'];
+
+// Estado REAL de cada unidad en Oversoft (pedido de Fer 27-11-2026: "ver en el portal
+// lo que figura en realidad, si está vendido"). La marca `vendida` de la tabla la pone
+// el cron cada 15 min; esto lo lee en vivo, así se ve aunque el cron no haya pasado.
+function _expoOvVendida(o) { return !!(o && (o.asignada || o.entregada || String(o.preventa || '').trim())); }
 
 async function loadExposicion(forzar) {
   const wrap = document.getElementById('exposicionContent');
   if (wrap && !exposicionData) wrap.innerHTML = '<div class="empty">Cargando…</div>';
   try {
     const data = await _fetchJson('exposicion', forzar);
+    const series = (data.unidades || []).map(u => u.serie).filter(Boolean);
+    data.ov = {};
+    if (series.length) {
+      try {
+        const rows = await oversoft('unidades', 'select=serie,asignada,preventa,entregada,fechaasignacion&serie=in.(' + series.join(',') + ')', { fresh: true });
+        for (const r of (Array.isArray(rows) ? rows : [])) data.ov[r.serie] = r;
+        data.ovOk = true;
+      } catch (e) { console.warn('expo oversoft:', e); data.ovOk = false; }
+    }
     exposicionData = data;
     renderExposicion();
     const upd = document.getElementById('updatedAtExpo');
-    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR');
+    if (upd && data.updatedAt) upd.textContent = 'Actualizado: ' + new Date(data.updatedAt).toLocaleString('es-AR') + ' · estado real leído de Oversoft';
+    // El stock libre hace falta para "Agregar" y para las sugerencias: se carga atrás.
+    if (!oversoftStockData) loadOversoftStock(false, true).then(() => renderExposicion()).catch(() => {});
   } catch (e) {
     if (wrap) wrap.innerHTML = '<div class="errbox"><div class="ttl">⚠️ No se pudo cargar exposición</div><div>' + escapeHtml(e.message || String(e)) + '</div></div>';
   }
 }
 
 function setExpoSalon(v) { expoSalonFiltro = v; renderExposicion(); }
+function setExpoSugSalon(v) { expoSugSalon = v; renderExposicion(); }
+function _expoQ(s) { return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+function _expoBtn(txt, onclick, primary) {
+  return '<button class="chip" style="padding:4px 10px;cursor:pointer;margin:2px;' + (primary ? 'background:#001e50;color:#fff;border-color:#001e50' : '') + '" onclick="' + onclick.replace(/"/g, '&quot;') + '">' + txt + '</button>';
+}
+
+function _expoEstado(u) {
+  const o = exposicionData.ov && exposicionData.ov[u.serie];
+  const pv = o && String(o.preventa || '').trim();
+  const fa = o && o.fechaasignacion ? ' ' + _fmtFechaDMY(String(o.fechaasignacion).slice(0, 10)) : '';
+  if (o && o.entregada) return { vendida: true, html: '<span class="badge" style="background:#fdecec;color:#c0392b">⚫ Entregada' + (pv ? ' · ' + escapeHtml(pv) : '') + ' — ya no puede estar en el salón</span>' };
+  if (u.vendida || _expoOvVendida(o)) {
+    const f = u.fecha_venta ? ' ' + _fmtFechaDMY(String(u.fecha_venta).slice(0, 10)) : fa;
+    const nota = u.vendida ? ' — reponer' : ' — recién vendida, el aviso sale solo en ≤15 min';
+    return { vendida: true, html: '<span class="badge" style="background:#fdecec;color:#c0392b">🔴 Vendida' + f + (pv ? ' · ' + escapeHtml(pv) : '') + nota + '</span>' };
+  }
+  if (exposicionData.ovOk && !o) return { vendida: false, html: '<span class="badge" style="background:#fff3cd;color:#a07000">⚠️ No está en Oversoft</span>' };
+  return { vendida: false, html: '<span class="badge" style="background:var(--green-soft);color:var(--green-dark)">🟢 Libre, en exposición</span>' };
+}
 
 function renderExposicion() {
   const wrap = document.getElementById('exposicionContent');
   if (!exposicionData || !Array.isArray(exposicionData.unidades)) { wrap.innerHTML = '<div class="empty">Sin datos.</div>'; return; }
-  const todas = exposicionData.unidades;
-  const vendidas = todas.filter(u => u.vendida);
-  const enExpo   = todas.filter(u => !u.vendida);
+  const todas = exposicionData.unidades.map(u => Object.assign({}, u, { _e: _expoEstado(u) }));
+  const vendidas = todas.filter(u => u._e.vendida);
+  const enExpo   = todas.filter(u => !u._e.vendida);
 
   let html = '';
+  if (exposicionData.ovOk === false) {
+    html += '<div class="aviso-reemplazar"><span class="ico">⚠️</span><span>No se pudo leer Oversoft: el estado de abajo es el de la tabla (lo marca el cron cada 15 min), no el vivo.</span></div>';
+  }
   html += '<div class="cards">';
-  html += kpi('En exposición', enExpo.length, 'sin vender', 'good');
+  html += kpi('En exposición', enExpo.length, 'libres', 'good');
   html += kpi('Vendidos a reponer', vendidas.length, vendidas.length ? 'pendientes de reemplazo' : 'al día', vendidas.length ? 'bad' : '');
-  html += kpi('Total', todas.length, 'en salones', '');
+  for (const s of EXPO_SALONES) html += kpi(s, todas.filter(u => u.salon === s).length, 'en el portal', '');
   html += '</div>';
 
-  // Filtro por salón
-  const salones = [...new Set(todas.map(u => u.salon).filter(Boolean))].sort();
-  const chip = (v, l, n) => '<button class="chip' + (expoSalonFiltro === v ? ' active' : '') + '" onclick="setExpoSalon(\'' + v.replace(/'/g, "\\'") + '\')">' + l + ' (' + n + ')</button>';
-  html += '<div class="filter-row" style="gap:6px;flex-wrap:wrap;align-items:center">'
-        + chip('todas', 'Todos los salones', todas.length);
-  for (const s of salones) html += chip(s, s, todas.filter(u => u.salon === s).length);
+  const chip = (v, l, n) => '<button class="chip' + (expoSalonFiltro === v ? ' active' : '') + '" onclick="setExpoSalon(\'' + _expoQ(v) + '\')">' + l + ' (' + n + ')</button>';
+  html += '<div class="filter-row" style="gap:6px;flex-wrap:wrap;align-items:center">' + chip('todas', 'Todos los salones', todas.length);
+  for (const s of EXPO_SALONES) html += chip(s, s, todas.filter(u => u.salon === s).length);
   html += '</div>';
 
   let lista = todas;
   if (expoSalonFiltro !== 'todas') lista = lista.filter(u => u.salon === expoSalonFiltro);
-  lista = lista.slice().sort((a, b) => (b.vendida ? 1 : 0) - (a.vendida ? 1 : 0)
+  lista = lista.slice().sort((a, b) => (b._e.vendida ? 1 : 0) - (a._e.vendida ? 1 : 0)
         || String(a.salon).localeCompare(String(b.salon), 'es')
-        || String(a.serie).localeCompare(String(b.serie)));
+        || String(a.unidad).localeCompare(String(b.unidad), 'es'));
 
   html += '<div class="table-wrap"><div class="table-head"><h3>Unidades en exposición</h3>'
         + '<div class="count">' + lista.length + ' unidades</div></div>'
         + '<div class="table-scroll"><table class="stock-tbl responsive-cards">'
-        + '<thead><tr><th>Estado</th><th>Serie</th><th>Unidad</th><th>Color</th><th>Salón</th><th>Acción</th></tr></thead><tbody>';
-  if (!lista.length) {
-    html += '<tr><td colspan="6" class="empty">No hay unidades.</td></tr>';
-  } else {
-    for (const u of lista) {
-      let estado;
-      if (u.vendida) {
-        const f = u.fecha_venta ? ' ' + _fmtFechaDMY(String(u.fecha_venta).slice(0, 10)) : '';
-        estado = '<span class="badge" style="background:#fdecec;color:#c0392b">🔴 Vendida' + f + ' — reponer</span>';
-      } else {
-        estado = '<span class="badge" style="background:var(--green-soft);color:var(--green-dark)">🟢 En exposición</span>';
-      }
-      html += '<tr>'
-            + '<td>' + estado + '</td>'
-            + '<td>' + escapeHtml(u.serie || '') + '</td>'
-            + '<td>' + escapeHtml(u.unidad || '') + '</td>'
-            + '<td>' + escapeHtml(u.color || '') + '</td>'
-            + '<td>' + escapeHtml(u.salon || '') + '</td>'
-            + '<td>' + (u.vendida ? '<button class="chip" style="padding:4px 10px;cursor:pointer" onclick="abrirReponer(\'' + String(u.serie).replace(/'/g, "\\'") + '\')">↻ Reponer</button>' : '—') + '</td>'
-            + '</tr>';
-    }
+        + '<thead><tr><th>Estado real (Oversoft)</th><th>Serie</th><th>Unidad</th><th>Color</th><th>Salón</th><th>Acciones</th></tr></thead><tbody>';
+  if (!lista.length) html += '<tr><td colspan="6" class="empty">No hay unidades.</td></tr>';
+  for (const u of lista) {
+    const q = _expoQ(u.serie);
+    const otro = EXPO_SALONES.find(s => s !== u.salon);
+    let acc = '';
+    if (u._e.vendida) acc += _expoBtn('↻ Reponer', "abrirReponer('" + q + "')", true);
+    if (otro) acc += _expoBtn('⇄ Pasar a ' + otro, "expoCambio('mover','" + q + "','" + _expoQ(otro) + "')");
+    acc += _expoBtn('✕ Sacar', "expoCambio('sacar','" + q + "')");
+    html += '<tr' + (u._e.vendida ? ' style="background:#fdf3f3"' : '') + '>'
+          + '<td>' + u._e.html + '</td>'
+          + '<td>' + escapeHtml(u.serie || '') + '</td>'
+          + '<td>' + escapeHtml(u.unidad || '') + '</td>'
+          + '<td>' + escapeHtml(u.color || '') + '</td>'
+          + '<td>' + escapeHtml(u.salon || '') + '</td>'
+          + '<td>' + acc + '</td></tr>';
   }
   html += '</tbody></table></div></div>';
+
+  html += _expoControlHtml();
+  html += _expoSugerenciasHtml(todas);
   wrap.innerHTML = html;
+}
+
+// ---------- Control del salón: pegar lo que te pasan del salón y comparar ----------
+function _expoControlHtml() {
+  const sel = (expoControl && expoControl.salon) || (expoSalonFiltro !== 'todas' ? expoSalonFiltro : 'ENTRE RIOS');
+  let h = '<div class="table-wrap" style="padding:14px"><h3 style="margin:0 0 4px">Control del salón</h3>'
+    + '<div style="font-size:12px;color:#666;margin-bottom:8px">Pegá lo que te mandan del salón (el WhatsApp tal cual). Se toman los números de serie (los 6 dígitos alcanzan) y se compara contra el portal y Oversoft.</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">'
+    + '<select id="expoCtlSalon" style="padding:8px;border:1px solid #ccc;border-radius:6px">'
+    + EXPO_SALONES.map(s => '<option' + (s === sel ? ' selected' : '') + '>' + s + '</option>').join('') + '</select>'
+    + '<textarea id="expoCtlTxt" rows="4" style="flex:1;min-width:240px;padding:8px;border:1px solid #ccc;border-radius:6px;font-family:inherit" placeholder="Polo 654074&#10;Nivus 057927&#10;Tera outfit gris platino TT 436440">' + escapeHtml((expoControl && expoControl.texto) || '') + '</textarea>'
+    + '<button class="refresh" onclick="expoControlar()">Comparar</button></div>';
+  if (expoControl && expoControl.cargando) h += '<div class="empty">Comparando…</div>';
+  else if (expoControl && expoControl.error) h += '<div class="errbox" style="margin-top:8px">' + escapeHtml(expoControl.error) + '</div>';
+  else if (expoControl && expoControl.items) {
+    const s = expoControl.salon, qs = _expoQ(s);
+    const grupos = [
+      ['ok',      '✅ Coinciden'],
+      ['mover',   '🔀 Están en el salón pero el portal las tiene en otro salón'],
+      ['agregar', '➕ Están en el salón y no figuran en el portal'],
+      ['vendida', '🔴 Están en el salón pero están VENDIDAS en Oversoft (esperan entrega)'],
+      ['falta',   '❓ El portal las tiene en ' + s + ' pero no están en lo que te pasaron'],
+      ['nada',    '⚠️ Números que no se encontraron en Oversoft'],
+    ];
+    let pend = 0;
+    for (const [k, titulo] of grupos) {
+      const its = expoControl.items.filter(i => i.tipo === k);
+      if (!its.length) continue;
+      if (k !== 'ok') pend += its.length;
+      h += '<div style="margin-top:12px"><b>' + titulo + ' (' + its.length + ')</b><ul style="margin:4px 0 0 18px;padding:0">';
+      for (const i of its) {
+        const q = _expoQ(i.serie || '');
+        let acc = '';
+        if (k === 'mover')   acc = _expoBtn('Pasar a ' + s, "expoCambio('mover','" + q + "','" + qs + "')", true);
+        if (k === 'agregar') acc = _expoBtn('Agregar a ' + s, "expoCambio('agregar','" + q + "','" + qs + "')", true);
+        if (k === 'falta') {
+          const otro = EXPO_SALONES.find(x => x !== s);
+          acc = _expoBtn('✕ Sacar de exposición', "expoCambio('sacar','" + q + "')") + _expoBtn('Pasar a ' + otro, "expoCambio('mover','" + q + "','" + _expoQ(otro) + "')");
+          if (i.vendida) acc = _expoBtn('↻ Reponer', "abrirReponer('" + q + "')", true) + acc;
+        }
+        h += '<li style="margin:3px 0">' + escapeHtml(i.texto) + ' ' + acc + '</li>';
+      }
+      h += '</ul></div>';
+    }
+    h += '<div style="margin-top:10px;font-size:13px;color:' + (pend ? '#c0392b' : 'var(--green-dark)') + '"><b>' + (pend ? pend + ' diferencia' + (pend === 1 ? '' : 's') + ' para resolver.' : 'El portal coincide con el salón. ✅') + '</b></div>';
+  }
+  return h + '</div>';
+}
+
+async function expoControlar() {
+  const salon = document.getElementById('expoCtlSalon').value;
+  const texto = document.getElementById('expoCtlTxt').value;
+  const nums = [...new Set((texto.toUpperCase().match(/\d{6}/g) || []))];
+  expoControl = { salon, texto, cargando: true };
+  renderExposicion();
+  if (!nums.length) { expoControl = { salon, texto, error: 'No encontré números de serie (6 dígitos) en el texto.' }; renderExposicion(); return; }
+  try {
+    const qs = 'select=serie,modelo,color,asignada,preventa,entregada,fechaasignacion&or=(' + nums.map(n => 'serie.like.*' + n).join(',') + ')';
+    const rows = await oversoft('unidades', qs, { fresh: true });
+    const ovs = Array.isArray(rows) ? rows : [];
+    // nombres de modelo y color para las que no están en exposición ni en el stock libre
+    const bases = [...new Set(ovs.map(r => String(r.modelo || '').trim().split(/\s+/)[0]).filter(Boolean))];
+    const colIds = [...new Set(ovs.map(r => r.color).filter(c => c != null))];
+    const [cat, cols] = await Promise.all([
+      bases.length ? oversoft('modelos', 'select=modelo,descripcionoperativa&or=(' + bases.map(b => 'modelo.like.' + b + '*').join(',') + ')&limit=500').catch(() => []) : [],
+      colIds.length ? oversoft('colores', 'select=colorid,descripcion&colorid=in.(' + colIds.join(',') + ')').catch(() => []) : [],
+    ]);
+    const catMap = new Map((cat || []).map(m => [_OVS_norm(m.modelo), m.descripcionoperativa]));
+    const colMap = new Map((cols || []).map(c => [c.colorid, c.descripcion]));
+    const activas = exposicionData.unidades;
+    const libres = new Map(((oversoftStockData && oversoftStockData.unidades) || []).map(x => [x.serie, x]));
+    const items = [], vistos = new Set();
+    for (const n of nums) {
+      const o = ovs.find(r => String(r.serie || '').endsWith(n));
+      if (!o) { items.push({ tipo: 'nada', texto: n + ': no existe ninguna unidad con esa serie' }); continue; }
+      vistos.add(o.serie);
+      const a = activas.find(x => x.serie === o.serie);
+      const lib = libres.get(o.serie);
+      const nombre = (a && a.unidad) || (lib && lib.modelo) || catMap.get(_OVS_norm(o.modelo)) || o.modelo;
+      const color = (a && a.color) || (lib && lib.color) || colMap.get(o.color) || '';
+      const desc = nombre + (color ? ' · ' + color : '') + ' · ' + o.serie;
+      const pv = String(o.preventa || '').trim();
+      if (_expoOvVendida(o)) {
+        items.push({ tipo: 'vendida', serie: o.serie, texto: desc + ' — ' + (o.entregada ? 'ENTREGADA' : 'vendida') + (pv ? ' ' + pv : '') + (o.fechaasignacion ? ' (asignada ' + _fmtFechaDMY(String(o.fechaasignacion).slice(0, 10)) + ')' : '') + (a ? ' · en el portal: ' + a.salon : ' · no la agrego al portal: dispararía el aviso de venta') });
+      } else if (a && a.salon === salon) items.push({ tipo: 'ok', serie: o.serie, texto: desc });
+      else if (a) items.push({ tipo: 'mover', serie: o.serie, texto: desc + ' — en el portal figura en ' + a.salon });
+      else items.push({ tipo: 'agregar', serie: o.serie, texto: desc + ' — libre en Oversoft' });
+    }
+    for (const a of activas.filter(x => x.salon === salon && !vistos.has(x.serie))) {
+      const o = exposicionData.ov && exposicionData.ov[a.serie];
+      const vend = a.vendida || _expoOvVendida(o);
+      items.push({ tipo: 'falta', serie: a.serie, vendida: vend, texto: a.unidad + (a.color ? ' · ' + a.color : '') + ' · ' + a.serie + (vend ? ' — VENDIDA' + (o && o.preventa ? ' ' + o.preventa : '') : ' — libre en Oversoft') + ' · ¿dónde está?' });
+    }
+    expoControl = { salon, texto, items };
+  } catch (e) {
+    expoControl = { salon, texto, error: 'No se pudo comparar: ' + (e.message || e) };
+  }
+  renderExposicion();
+}
+
+// ---------- Qué mandar a un salón: stock libre físico que no está en exposición ----------
+function _expoFamilia(nombre) {
+  const w = String(nombre || '').replace(/^VW\s+/i, '').replace(/^Nuev[oa]\s+/i, '').trim().split(/\s+/)[0] || '';
+  return w.toLowerCase();
+}
+function _expoSugerenciasHtml(todas) {
+  const s = expoSugSalon, qs = _expoQ(s);
+  let h = '<div class="table-wrap" style="padding:14px"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><h3 style="margin:0">Qué mandar a</h3>'
+    + '<select onchange="setExpoSugSalon(this.value)" style="padding:6px;border:1px solid #ccc;border-radius:6px">'
+    + EXPO_SALONES.map(x => '<option' + (x === s ? ' selected' : '') + '>' + x + '</option>').join('') + '</select></div>';
+  if (!oversoftStockData) return h + '<div class="empty">Cargando stock libre…</div></div>';
+  const enSalon = todas.filter(u => u.salon === s && !u._e.vendida);
+  const familiasSalon = new Set(enSalon.map(u => _expoFamilia(u.unidad)));
+  const familiasExpo = new Set(todas.filter(u => !u._e.vendida).map(u => _expoFamilia(u.unidad)));
+  const activas = new Set(todas.map(u => u.serie));
+  const libres = (oversoftStockData.unidades || []).filter(x => x.serie && x.tipo === 'fisico' && !activas.has(x.serie));
+  h += '<div style="font-size:12px;color:#666;margin:6px 0 8px">Hoy en ' + escapeHtml(s) + ' (libres): <b>' + (enSalon.length ? enSalon.map(u => escapeHtml(u.unidad + ' ' + (u.color || ''))).join(' · ') : 'ninguno') + '</b>. '
+    + 'Arriba van los modelos que no están en ese salón y, entre ellos, los que hace más tiempo están en stock (conviene exhibirlos para que roten). Solo stock físico libre.</div>';
+  const prio = x => (familiasSalon.has(_expoFamilia(x.modelo)) ? 2 : 0) + (familiasExpo.has(_expoFamilia(x.modelo)) ? 1 : 0);
+  // una por modelo+color (la más vieja), para que la lista no se llene de iguales
+  const vistos = new Set();
+  const cands = libres.slice().sort((a, b) => prio(a) - prio(b) || (b.antigDias || 0) - (a.antigDias || 0))
+    .filter(x => { const k = x.modelo + '|' + x.color; if (vistos.has(k)) return false; vistos.add(k); return true; });
+  h += '<div class="table-scroll"><table class="stock-tbl responsive-cards"><thead><tr><th>Unidad</th><th>Color</th><th>Serie</th><th>En stock</th><th>Por qué</th><th></th></tr></thead><tbody>';
+  for (const x of cands.slice(0, 12)) {
+    const p = prio(x);
+    const porque = p === 0 ? 'No hay ninguno en exposición' : p === 1 ? 'No está en ' + s + ' (sí en el otro salón)' : 'Ya hay uno en ' + s;
+    h += '<tr><td>' + escapeHtml(x.modelo || '') + '</td><td>' + escapeHtml(x.color || '') + '</td><td>' + escapeHtml(x.serie) + '</td>'
+       + '<td>' + (x.antigDias != null ? x.antigDias + ' días' : '—') + '</td><td style="font-size:12px">' + porque + '</td>'
+       + '<td>' + _expoBtn('Agregar a ' + s, "expoCambio('agregar','" + _expoQ(x.serie) + "','" + qs + "')", true) + '</td></tr>';
+  }
+  if (!cands.length) h += '<tr><td colspan="6" class="empty">No hay stock físico libre fuera de exposición.</td></tr>';
+  h += '</tbody></table></div>';
+  if (cands.length > 12) {
+    h += '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center"><span style="font-size:12px;color:#666">Otra unidad:</span>'
+       + '<select id="expoAgregarOtra" style="flex:1;min-width:220px;padding:6px;border:1px solid #ccc;border-radius:6px">'
+       + libres.slice().sort((a, b) => String(a.modelo).localeCompare(String(b.modelo), 'es')).map(x => '<option value="' + escapeHtml(x.serie) + '">' + escapeHtml(x.modelo + ' · ' + (x.color || '') + ' · ' + x.serie + (x.antigDias != null ? ' · ' + x.antigDias + ' d' : '')) + '</option>').join('')
+       + '</select>' + _expoBtn('Agregar a ' + s, "expoCambio('agregar',document.getElementById('expoAgregarOtra').value,'" + qs + "')", true) + '</div>';
+  }
+  return h + '</div>';
+}
+
+// ---------- agregar / sacar / mover (backend accion=expocambio) ----------
+async function expoCambio(op, serie, salon) {
+  if (!serie) return;
+  const u = (exposicionData.unidades || []).find(x => x.serie === serie);
+  const lib = ((oversoftStockData && oversoftStockData.unidades) || []).find(x => x.serie === serie);
+  const it = expoControl && expoControl.items && expoControl.items.find(i => i.serie === serie);
+  const desc = u ? (u.unidad + ' ' + (u.color || '') + ' (' + serie + ')') : lib ? (lib.modelo + ' ' + (lib.color || '') + ' (' + serie + ')') : serie;
+  const msg = op === 'sacar' ? '¿Sacar de exposición ' + desc + (u ? ' del salón ' + u.salon : '') + '?\n\nNo manda WhatsApp.'
+            : op === 'mover' ? '¿Pasar ' + desc + ' a ' + salon + '?'
+            : '¿Agregar ' + desc + ' al salón ' + salon + '?';
+  if (!confirm(msg)) return;
+  // Para agregar hace falta nombre y color legibles: del stock libre o del control.
+  let unidad = '', color = '';
+  if (op === 'agregar') {
+    if (lib) { unidad = lib.modelo || ''; color = lib.color || ''; }
+    else if (it) { const p = it.texto.split(' · '); unidad = p[0] || ''; color = p.length > 2 ? p[1] : ''; }
+  }
+  try {
+    const body = new URLSearchParams();
+    body.set('payload', JSON.stringify({ token: APPS_SCRIPT_TOKEN, accion: 'expocambio', op, serie, salon: salon || '', unidad, color }));
+    const res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    await loadExposicion(true);
+    if (expoControl && expoControl.items) await expoControlar();   // re-comparar con lo pegado
+  } catch (e) {
+    alert('No se pudo: ' + (e.message || e));
+  }
 }
 
 // --- Reposición: elegir una unidad del stock libre para reemplazar la vendida ---
 async function abrirReponer(serieVieja) {
-  const u = (exposicionData && exposicionData.unidades || []).find(x => x.serie === serieVieja && x.vendida);
+  const u = (exposicionData && exposicionData.unidades || []).find(x => x.serie === serieVieja);
   if (!u) { alert('No se encontró la unidad a reponer.'); return; }
   if (!oversoftStockData) { try { await loadOversoftStock(false); } catch (e) {} }
   const activas = new Set((exposicionData && exposicionData.unidades || []).filter(x => x.activa).map(x => x.serie));
